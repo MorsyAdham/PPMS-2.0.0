@@ -1,0 +1,102 @@
+export function renderSystemTestLayout() {
+    return `
+<main class="shell">
+        <section class="hero">
+            <div>
+                <span class="eyebrow">Standalone QA Page</span>
+                <h1>PPMS System Test Harness</h1>
+                <p class="hero-copy">
+                    Use this page after each update to verify that the PPMS data layer, KD1 baseline, and KD2 module structure are still healthy.
+                </p>
+            </div>
+            <div class="hero-actions">
+                <a class="ghost-link" href="index.html">Open Main PPMS</a>
+            </div>
+        </section>
+
+        <section class="panel controls-panel">
+            <div class="control-grid">
+                <label class="field">
+                    <span class="field-label">Update Label</span>
+                    <input id="updateLabel" type="text" placeholder="Example: after KD2 route update" />
+                </label>
+                <label class="field field-toggle">
+                    <span class="field-label">Auto Run On Load</span>
+                    <input id="autoRunToggle" type="checkbox" />
+                </label>
+            </div>
+            <div class="button-row">
+                <button id="btnRunChecks" class="btn btn-primary">Run Checks</button>
+                <button id="btnSaveSnapshot" class="btn btn-secondary" disabled>Save Snapshot</button>
+                <button id="btnClearHistory" class="btn btn-ghost">Clear History</button>
+            </div>
+            <div class="hint-strip">
+                The page uses the same Supabase project as PPMS, but it runs outside the main app flow so it can be used as an independent regression check.
+            </div>
+        </section>
+
+        <section class="summary-grid">
+            <article class="summary-card">
+                <span class="summary-label">Overall</span>
+                <strong class="summary-value" id="summaryOverall">Idle</strong>
+                <span class="summary-note" id="summaryTimestamp">No checks run yet.</span>
+            </article>
+            <article class="summary-card">
+                <span class="summary-label">Pass</span>
+                <strong class="summary-value" id="summaryPass">0</strong>
+                <span class="summary-note">Checks that passed cleanly.</span>
+            </article>
+            <article class="summary-card">
+                <span class="summary-label">Warn</span>
+                <strong class="summary-value" id="summaryWarn">0</strong>
+                <span class="summary-note">Checks that need review.</span>
+            </article>
+            <article class="summary-card">
+                <span class="summary-label">Fail</span>
+                <strong class="summary-value" id="summaryFail">0</strong>
+                <span class="summary-note">Checks that block confidence.</span>
+            </article>
+        </section>
+
+        <section class="panel">
+            <div class="panel-head">
+                <div>
+                    <h2>Latest Results</h2>
+                    <p>Run this after each change to verify that the core platform and KD2 additions are still behaving as expected.</p>
+                </div>
+                <span class="status-pill" id="runStatus">Waiting</span>
+            </div>
+            <div id="resultsList" class="results-list">
+                <div class="empty-state">Run the harness to load test results.</div>
+            </div>
+        </section>
+
+        <section class="two-column">
+            <section class="panel">
+                <div class="panel-head">
+                    <div>
+                        <h2>Recommended Follow-Up</h2>
+                        <p>Generated from the latest warning and failure signals.</p>
+                    </div>
+                </div>
+                <div id="recommendations" class="recommendations">
+                    <div class="empty-state">No recommendations yet.</div>
+                </div>
+            </section>
+
+            <section class="panel">
+                <div class="panel-head">
+                    <div>
+                        <h2>Saved Snapshots</h2>
+                        <p>Optional run history to compare health after each update.</p>
+                    </div>
+                </div>
+                <div id="historyList" class="history-list">
+                    <div class="empty-state">No saved snapshots yet.</div>
+                </div>
+            </section>
+        </section>
+    </main>
+`.trim();
+}
+
