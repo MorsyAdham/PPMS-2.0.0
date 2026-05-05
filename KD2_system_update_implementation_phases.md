@@ -93,6 +93,7 @@ The current `PPMS` system is already more advanced than a simple planning protot
   - `Assembly`
   - `Processing`
   - `Final Test`
+- current `KD1` already uses a category-to-station structure, where one category such as `Assembly` contains multiple detailed stations
 
 ### Important implication for KD2
 
@@ -128,6 +129,7 @@ The following direction remains valid after the system review:
   - `K9 = 18`
   - `K10 = 3`
   - `K11 = 4`
+- each `KD2` major step must be treated as a category that can contain multiple detailed stations or sub-steps, the same way `Assembly` in `KD1` contains multiple stations
 
 This means `KD2` should be implemented as a separate planning structure that can still reuse the PPMS interaction model already proven in `KD1`.
 
@@ -225,6 +227,9 @@ The current PPMS contains functions that may be reused directly, reused with cha
 
 - map current `KD1` PPMS functions against `KD2` needs
 - define the `KD2` user journey from planning input to progress follow-up
+- define the `KD2` hierarchy between:
+  - planning category
+  - detailed station or sub-step
 - determine whether `KD2` requires the same summary cards now used in `KD1`
 - determine whether `KD2` requires the same filter model
 - determine whether `KD2` requires the same Gantt editing behavior
@@ -284,6 +289,9 @@ The current PPMS tables are `KD1`-specific in naming and behavior. `KD2` should 
 - define the preferred table naming strategy
 - define battalion, vehicle, and unit identity rules for `KD2`
 - define `KD2` process-step storage
+- define the hierarchy between:
+  - major process category such as `cutting`, `part machining`, `sub weldment`, `main weldment`, `structure machining`, `qualifing`, `foam`, `pre processing`, `Assembly`, `Processing`, and `Final Test`
+  - detailed stations or sub-steps under each category
 - define storage for planning deadlines and lead times
 - define storage for calculated dates versus manual entries
 - define whether `KD2` needs separate unit-code mapping
@@ -299,9 +307,22 @@ The preferred design is separate `KD2` operational tables, while still reusing t
 - `kd2_progress`
 - `kd2_planning_inputs`
 - `kd2_process_routes`
+- `kd2_process_categories`
+- `kd2_process_stations`
 - `kd2_process_lead_times`
 - `kd2_battalions`
 - `kd2_vehicle_units` if unit mapping must be independent
+
+### Schema design principle
+
+`KD2` should not store only one flat process-step value if the business logic needs category-level and station-level planning. The schema should distinguish between:
+
+- process category
+- process station or detailed sub-step
+- sequence inside category
+- sequence across the full route
+
+This is required because a category such as `Assembly` can contain multiple detailed stations, and the same pattern may apply to other `KD2` categories.
 
 ### Shared-support tables that may stay common
 
@@ -343,7 +364,11 @@ The current PPMS scheduling behavior is task-based and already includes week der
   - `qualifing`
   - `foam`
   - `pre processing`
+- define the detailed stations or sub-steps under each major category
 - define step sequence logic
+- define sequence logic both:
+  - between major categories
+  - within each category across detailed stations
 - define lead-time rules by vehicle type and process step
 - define battalion quantity effect on planning
 - define backward scheduling from delivery deadline
@@ -358,6 +383,7 @@ The current PPMS scheduling behavior is task-based and already includes week der
 - date shifting during Gantt movement
 - status calculation from plan and actual dates
 - delay calculation rules
+- current `KD1` category mapping pattern where multiple stations roll up under one category such as `Assembly`
 
 ### Deliverables
 
@@ -388,6 +414,10 @@ The current PPMS interface is already structured around a `KD1` identity. `KD2` 
 - define branding and page identity so `KD2` is visually distinguishable from `KD1`
 - define which existing sections are reused in `KD2`
 - define how filters must change for battalion-based planning
+- define whether filters, tables, Gantt, and route views operate at:
+  - category level
+  - station level
+  - both levels
 - define how `KD2` summary cards should be calculated
 - define the `KD2` Gantt layout if included in release one
 - define the `KD2` matrix or route-visibility screen
@@ -491,6 +521,7 @@ This phase converts the data and rule design into working user behavior while pr
 
 - route generation
 - battalion-level calculations
+- category and station hierarchy handling
 - station or process-column definitions
 - date-calculation engine for `KD2`
 - import template and parser
@@ -512,37 +543,42 @@ This phase is complete when `KD2` can be used end to end in the PPMS interface w
 
 ### Objective
 
-Prepare `KD2` baseline data, imports, and startup configuration for first business use.
+Prepare the first-use `KD2` setup approach after the planning workflow is functionally complete.
 
 ### Why this phase is required
 
-The current PPMS already supports manual import and external Excel upload. `KD2` requires controlled startup data so the module begins with valid route definitions and not with incomplete system configuration.
+The current working direction is that `KD2` will not begin from a separate preload dataset. The `KD2` plan is expected to be created directly from the system workflow once the module is functionally complete, so this phase must define only the minimum startup setup still required for first business use.
+
+### Updated working assumption
+
+- there is no separate `KD2` source dataset ready for preload
+- the operational `KD2` plan will be created inside the application, not migrated from an existing plan file
+- `KD2` release one does not require a separate import path for plan creation
+- unresolved business values must remain blank or explicitly marked as pending until confirmed
 
 ### Main activities
 
-- load confirmed battalion baseline data
-- load confirmed vehicle and unit structures
-- load confirmed process routes
-- load confirmed lead times
-- prepare `KD2` import format if external loading is needed
-- decide whether the current Python uploader should be duplicated or adapted for `KD2`
+- decide what minimum setup data is still required before first `KD2` use
+- prepare any required empty-state startup records without inventing missing business values
+- keep `KD2` import out of release one unless a new business requirement appears later
+- treat the current Python uploader as not required for `KD2` release one plan creation
 - keep all unknown values blank or explicitly marked as pending
 - confirm default filter and startup views for `KD2`
 
 ### Data control rule
 
-Unconfirmed business assumptions must not be loaded into live `KD2` tables as if they were approved values.
+Unconfirmed business assumptions must not be loaded into live `KD2` tables as if they were approved values, and placeholder scaffolding must not be mistaken for approved operating data.
 
 ### Deliverables
 
-- initialized `KD2` baseline data
-- approved import template or upload method
+- approved first-use setup method for `KD2`
+- documented decision that `KD2` does not require an import or upload method for release one plan creation
 - controlled startup configuration
 - documented handling of pending values
 
 ### Exit criteria
 
-This phase is complete when pilot users can open `KD2` and begin planning without constructing the system setup manually from scratch.
+This phase is complete when pilot users can open `KD2`, enter the module in its intended empty or seeded startup state, and begin building the first plan directly in the system without manual database intervention.
 
 ---
 
@@ -629,12 +665,12 @@ This phase is complete when `KD2` is live, owned, supportable, and managed under
 The following items remain open and should not be invented during implementation:
 
 - lead time for each `KD2` process step by vehicle type
+- detailed station breakdown under each confirmed `KD2` category
 - final deadline rules by battalion
 - whether `KD2` uses the same non-working-day rule as current `KD1`
 - whether `KD2` requires a VPX-style matrix in release one
 - whether unit-code mapping is shared with `KD1` or separated
 - whether current PPMS roles are sufficient for `KD2`
-- whether `KD2` import must follow the current `KD1` import style
 - whether `KD2` reporting must match current `KD1` PDF and Excel output scope
 
 ---

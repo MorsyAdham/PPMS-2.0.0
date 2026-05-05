@@ -59,6 +59,12 @@ async function auditLog(action, table, recId, before, after) {
     }
 }
 
+window.__ppmsShared = {
+    auditLog: (...args) => auditLog(...args),
+    getCurrentUser,
+    getCachedIP,
+};
+
 function populateNavbar() {
     const user = getCurrentUser();
     if (!user) return;
@@ -217,11 +223,282 @@ const STATION_DEFAULTS = {
 function getCategory(processStation) {
     return CATEGORY_MAP[processStation] || 'Other';
 }
+
+function getModuleRuntime() {
+    return window.PPMSModuleRuntime || null;
+}
+
+function getActiveModuleId() {
+    return getModuleRuntime()?.getActiveModule?.() || 'kd1';
+}
+
+function isKD2Module() {
+    return getActiveModuleId() === 'kd2';
+}
+
+function getActiveModuleConfig() {
+    return getModuleRuntime()?.getActiveConfig?.() || null;
+}
+
+function getModuleBadge() {
+    return getActiveModuleConfig()?.badge || (isKD2Module() ? 'KD2' : 'KD1');
+}
+
+function getModuleReportTitle() {
+    return isKD2Module() ? 'Battalion Planning and Progress Control' : 'Assembly Control System';
+}
+
+function getModuleReportSubtitle() {
+    return isKD2Module() ? 'Manual and generated plan export' : 'Plan vs Actual Tracking System';
+}
+
+function getModuleCategory(processStation, row = null) {
+    return getModuleRuntime()?.getCategory?.(processStation, row) || getCategory(processStation);
+}
+
+function syncReportCategoryOptions() {
+    const source = document.getElementById('filterCategory');
+    const target = document.getElementById('reportCategory');
+    if (!source || !target) return;
+    const currentVal = target.value;
+    target.innerHTML = source.innerHTML;
+    if ([...target.options].some(opt => opt.value === currentVal)) {
+        target.value = currentVal;
+    }
+}
+
+function populateCategorySelect(values) {
+    const sel = document.getElementById('filterCategory');
+    if (!sel) return;
+    const currentVal = sel.value;
+    sel.innerHTML = '<option value="">All Categories</option>';
+    values.forEach(value => {
+        const opt = document.createElement('option');
+        opt.value = value;
+        opt.textContent = value;
+        sel.appendChild(opt);
+    });
+    if ([...sel.options].some(opt => opt.value === currentVal)) {
+        sel.value = currentVal;
+    }
+}
+
+function getModuleProgressTable() {
+    return isKD2Module() ? 'kd2_progress' : 'assembly_progress';
+}
+
+function getModulePlanTable() {
+    return isKD2Module() ? 'kd2_plan' : 'assembly_plan';
+}
+
+function getModulePlanDatePayload(startDate, endDate, remark = undefined) {
+    const payload = isKD2Module()
+        ? {
+            planned_start_date: startDate,
+            planned_end_date: endDate,
+            schedule_week: weekLabel(startDate),
+        }
+        : {
+            start_date: startDate,
+            end_date: endDate,
+            week: weekLabel(startDate),
+        };
+    if (remark !== undefined) {
+        payload.remark = remark;
+    }
+    return payload;
+}
+
+function samePlanLane(a, b) {
+    if (!a || !b) return false;
+    if (isKD2Module() && (a.battalion_code || '') !== (b.battalion_code || '')) return false;
+    return a.vehicle === b.vehicle && a.vehicle_no === b.vehicle_no;
+}
+
+function getKd2ForwardMoveRows(anchorTask, rows = []) {
+    const helper = getModuleRuntime()?.getPlanMoveRowsFromAnchor;
+    if (typeof helper !== 'function') return anchorTask ? [anchorTask] : [];
+    const moveRows = helper(anchorTask, rows);
+    return moveRows?.length ? moveRows : (anchorTask ? [anchorTask] : []);
+}
+
+function normalizeKd2PlanRowForGantt(row) {
+    return {
+        ...row,
+        vehicle: row.vehicle ?? row.vehicle_type,
+        vehicle_no: row.vehicle_no ?? row.unit_serial,
+        start_date: row.start_date ?? row.planned_start_date,
+        end_date: row.end_date ?? row.planned_end_date,
+    };
+}
+
+async function fetchKd2LaneRowsForGantt(task) {
+    if (!db || !task?.battalion_id || !(task.vehicle_type || task.vehicle)) return [];
+    let query = db
+        .from('kd2_plan')
+        .select('id, battalion_id, vehicle_type, unit_serial, route_sequence, station_sequence_in_category, station_code, planned_start_date, planned_end_date')
+        .eq('battalion_id', task.battalion_id)
+        .eq('vehicle_type', task.vehicle_type || task.vehicle);
+    query = task.unit_serial === null
+        ? query.is('unit_serial', null)
+        : query.eq('unit_serial', task.unit_serial);
+    const { data, error } = await query;
+    if (error) throw error;
+    return (data || []).map(normalizeKd2PlanRowForGantt);
+}
+
+async function resolveGanttMoveSet(task) {
+    if (!task) return [];
+    if (_ganttMoveMode === 'lane') {
+        if (isKD2Module()) {
+            const laneRows = await fetchKd2LaneRowsForGantt(task);
+            if (laneRows.length) return laneRows;
+        }
+        return currentData.filter(row => samePlanLane(row, task));
+    }
+    if (_ganttMoveMode === 'from-block') {
+        if (isKD2Module()) {
+            const laneRows = await fetchKd2LaneRowsForGantt(task);
+            if (laneRows.length) return getKd2ForwardMoveRows(task, laneRows);
+        }
+        return getKd2ForwardMoveRows(task, currentData);
+    }
+    if (_ganttMoveMode === 'plan') return currentData;
+    return _selectedGanttPlanIds.has(task.id) && _selectedGanttPlanIds.size > 1
+        ? currentData.filter(row => _selectedGanttPlanIds.has(row.id))
+        : [task];
+}
+
+function getModuleGanttZones(startDate = '', endDate = '') {
+    const runtimeZones = getModuleRuntime()?.getGanttSpecialZones?.(startDate, endDate);
+    return [...SPECIAL_ZONES, ...(Array.isArray(runtimeZones) ? runtimeZones : [])];
+}
+
+function getUnitCodeTitle() {
+    return isKD2Module() ? 'KD2 Unit Codes' : 'Unit Codes';
+}
+
+function ordinalLabel(num) {
+    const mod100 = num % 100;
+    if (mod100 >= 11 && mod100 <= 13) return `${num}th`;
+    const mod10 = num % 10;
+    if (mod10 === 1) return `${num}st`;
+    if (mod10 === 2) return `${num}nd`;
+    if (mod10 === 3) return `${num}rd`;
+    return `${num}th`;
+}
+
+function getKd2BaselineBattalions() {
+    return Array.from({ length: 5 }, (_, index) => {
+        const num = index + 1;
+        return {
+            battalion_code: `BTL-${String(num).padStart(2, '0')}`,
+            battalion_name: `${ordinalLabel(num)} Battalion`,
+            delivery_deadline: null,
+            notes: 'Bootstrap baseline shell',
+        };
+    });
+}
+
+function getKd2BattalionOptionLabel(row) {
+    const num = parseInt(String(row?.battalion_code || row?.battalion_name || '').match(/(\d+)/)?.[1] || '', 10);
+    if (Number.isFinite(num) && num > 0 && num <= 5) return `${ordinalLabel(num)} Battalion`;
+    return row?.battalion_name || row?.battalion_code || 'Battalion';
+}
+
+function setUnitCodesShell() {
+    const isKD2 = isKD2Module();
+    const battalionHeader = document.getElementById('ucHeaderBattalion');
+    const battalionGroup = document.getElementById('ucBattalionGroup');
+    const title = document.getElementById('unitCodesTitleText');
+    const vehicleHeader = document.getElementById('ucHeaderVehicle');
+    const unitHeader = document.getElementById('ucHeaderUnit');
+    const codeHeader = document.getElementById('ucHeaderCode');
+    const unitSelect = document.getElementById('ucUnit');
+    const unitText = document.getElementById('ucUnitText');
+    if (title) title.textContent = getUnitCodeTitle();
+    if (vehicleHeader) vehicleHeader.textContent = 'Vehicle';
+    if (unitHeader) unitHeader.textContent = isKD2 ? 'Unit Name' : 'Unit';
+    if (codeHeader) codeHeader.textContent = 'Unit Code';
+    if (battalionHeader) battalionHeader.style.display = isKD2 ? '' : 'none';
+    if (battalionGroup) battalionGroup.style.display = isKD2 ? '' : 'none';
+    if (unitSelect) unitSelect.style.display = isKD2 ? 'none' : '';
+    if (unitText) unitText.style.display = isKD2 ? '' : 'none';
+}
+
+async function loadKd2Battalions() {
+    const { data, error } = await db.from('kd2_battalions').select('id, battalion_code, battalion_name, delivery_deadline, notes').order('battalion_code');
+    if (error) throw error;
+
+    const battalions = data || [];
+    const baseline = getKd2BaselineBattalions();
+    const existingCodes = new Set(battalions.map(row => row.battalion_code));
+    const missing = baseline.filter(row => !existingCodes.has(row.battalion_code));
+    if (!missing.length) return battalions;
+
+    const { data: insertedBattalions, error: insertError } = await db
+        .from('kd2_battalions')
+        .insert(missing)
+        .select('id, battalion_code, battalion_name, delivery_deadline, notes');
+    if (insertError) throw insertError;
+
+    const planningRows = (insertedBattalions || []).flatMap(battalion => ['K9', 'K10', 'K11'].map(vehicle => ({
+        battalion_id: battalion.id,
+        vehicle_type: vehicle,
+        required_quantity: null,
+        delivery_deadline: null,
+        skip_friday: true,
+        include_saturday: false,
+        assumptions_status: 'pending',
+        notes: 'Bootstrap baseline shell',
+    })));
+    if (planningRows.length) {
+        const { error: planningError } = await db
+            .from('kd2_planning_inputs')
+            .upsert(planningRows, { onConflict: 'battalion_id,vehicle_type' });
+        if (planningError) throw planningError;
+    }
+
+    await auditLog('BOOTSTRAP', 'kd2_battalions', 'baseline-5', null, {
+        battalions: missing.map(row => row.battalion_code),
+        planning_rows: planningRows.length,
+    });
+
+    return battalions.concat(insertedBattalions || []).sort((a, b) =>
+        String(a.battalion_code || '').localeCompare(String(b.battalion_code || ''), undefined, { numeric: true })
+    );
+}
+
+function normalizeKd2UnitName(rawValue) {
+    const label = String(rawValue || '').trim();
+    if (!label) return null;
+    const match = label.match(/(\d+)$/);
+    if (!match) return { label, unitSerial: NaN };
+    const unitSerial = parseInt(match[1], 10);
+    return { label, unitSerial };
+}
+
+function getRowCode(row) {
+    if (isKD2Module()) {
+        return row.work_center || row.station_code || row.category_code || '—';
+    }
+    return getStationCode(row.process_station, row.vehicle) || '—';
+}
+
+function getRowUnitMeta(row) {
+    if (isKD2Module()) {
+        return row.battalion_code ? `<br><span class="unit-code-badge">${esc(row.battalion_code)}</span>` : '';
+    }
+    const code = getUnitCode(row.vehicle, row.vehicle_no);
+    return code ? `<br><span class="unit-code-badge">${esc(code)}</span>` : '';
+}
+
 let db = null;
 let barChartInst = null;
 let lineChartInst = null;
 let currentData = [];      // flat merged rows
 let unitCodeMap = {};      // { 'K9||M1': 'EGY N25020', ... }
+let unitRegistryRows = [];
 let activePlanId = null;    // plan row being marked complete
 
 /* ──────────────────────────────────────────────────────────────────
@@ -258,9 +535,16 @@ async function initializeApp() {
     }
 
     wireEvents();
+    getModuleRuntime()?.initialize?.(db, {
+        reloadAll: async () => {
+            await loadFilters();
+            await loadData();
+        },
+    });
 
     await loadFilters();
     await loadData();
+    await getModuleRuntime()?.refreshWorkspace?.();
 }
 
 /* ──────────────────────────────────────────────────────────────────
@@ -268,6 +552,18 @@ async function initializeApp() {
    ────────────────────────────────────────────────────────────────── */
 async function loadFilters() {
     try {
+        if (isKD2Module() && getModuleRuntime()?.loadFilters) {
+            const kd2Filters = await getModuleRuntime().loadFilters(db);
+            populateSelect('filterBattalion', kd2Filters.battalions || [], 'All Battalions');
+            populateSelect('filterVehicle', kd2Filters.vehicles, 'All Vehicles');
+            populateSelect('filterWeek', kd2Filters.weeks, 'All Weeks');
+            populateCategorySelect(kd2Filters.categories || []);
+            await loadUnitCodes();
+            populateUnitFilter(kd2Filters.units || []);
+            await getModuleRuntime().loadPlanningSnapshot?.(db);
+            return;
+        }
+
         // Paginate to get all vehicles/weeks (same 1000-row limit applies)
         let plans = [];
         let fFrom = 0;
@@ -283,19 +579,17 @@ async function loadFilters() {
             fFrom += 1000;
         }
 
-        const vehicles = [...new Set(plans.map(r => r.vehicle))].sort(vehicleSort);
+        await loadUnitCodes();
+        const vehicles = [...new Set([
+            ...plans.map(r => r.vehicle),
+            ...unitRegistryRows.map(r => r.vehicle),
+        ].filter(Boolean))].sort(vehicleSort);
         const weeks = [...new Set(plans.map(r => r.start_date ? weekLabel(r.start_date) : r.week).filter(Boolean))]
             .sort((a, b) => parseInt(a.replace(/[^0-9]/g, ''), 10) - parseInt(b.replace(/[^0-9]/g, ''), 10));
 
         populateSelect('filterVehicle', vehicles, 'All Vehicles');
         populateSelect('filterWeek', weeks, 'All Weeks');
-
-        // Units across all vehicles
-        const units = [...new Set(plans.map(r => r.vehicle_no).filter(Boolean))].sort(naturalSort);
-
-        // Load unit codes and populate unit filter with codes shown
-        await loadUnitCodes();
-        populateUnitFilter(units);
+        populateUnitFilter(getRegisteredUnitNames(null, plans));
 
     } catch (err) {
         showToast('Failed to load filter options.', 'error');
@@ -319,16 +613,60 @@ function populateSelect(id, values, placeholder) {
 /** Load vehicle_units table into unitCodeMap */
 async function loadUnitCodes() {
     try {
+        unitCodeMap = {};
+        unitRegistryRows = [];
+        if (isKD2Module()) {
+            const [{ data: units, error: unitsError }, { data: battalions, error: battalionError }] = await Promise.all([
+                db.from('kd2_vehicle_units').select('battalion_id, vehicle_type, unit_serial, unit_label, unit_code'),
+                db.from('kd2_battalions').select('id, battalion_code'),
+            ]);
+            if (unitsError) throw unitsError;
+            if (battalionError) throw battalionError;
+            const battalionMap = Object.fromEntries((battalions || []).map(row => [row.id, row.battalion_code]));
+            (units || []).forEach(r => {
+                const code = r.unit_code || '';
+                const battalionCode = battalionMap[r.battalion_id] || '';
+                const fallbackLabel = battalionCode
+                    ? `${battalionCode} / ${r.vehicle_type}-${String(r.unit_serial).padStart(2, '0')}`
+                    : `${r.vehicle_type}-${String(r.unit_serial).padStart(2, '0')}`;
+                if (r.unit_label) unitCodeMap[r.vehicle_type + '||' + r.unit_label] = code;
+                unitCodeMap[r.vehicle_type + '||' + fallbackLabel] = code;
+                unitRegistryRows.push({
+                    battalion_code: battalionCode || '—',
+                    vehicle: r.vehicle_type,
+                    vehicle_no: r.unit_label || fallbackLabel,
+                    unit_code: code,
+                });
+            });
+            return;
+        }
+
         const { data, error } = await db.from('vehicle_units').select('vehicle, vehicle_no, unit_code');
         if (error) throw error;
-        unitCodeMap = {};
         (data || []).forEach(r => {
             unitCodeMap[r.vehicle + '||' + r.vehicle_no] = r.unit_code || '';
+            unitRegistryRows.push({
+                vehicle: r.vehicle,
+                vehicle_no: r.vehicle_no,
+                unit_code: r.unit_code || '',
+            });
         });
     } catch (e) {
-        console.warn('vehicle_units table not found or error — unit codes disabled:', e.message);
+        console.warn('Unit codes table not found or error — unit codes disabled:', e.message);
         unitCodeMap = {};
+        unitRegistryRows = [];
     }
+}
+
+function getRegisteredUnitNames(vehicle = null, fallbackRows = currentData) {
+    return [...new Set([
+        ...unitRegistryRows
+            .filter(row => !vehicle || row.vehicle === vehicle)
+            .map(row => row.vehicle_no),
+        ...((fallbackRows || [])
+            .filter(row => !vehicle || row.vehicle === vehicle)
+            .map(row => row.vehicle_no)),
+    ].filter(Boolean))].sort(naturalSort);
 }
 
 /** Populate unit filter showing "M1 · EGY N25020" format */
@@ -356,12 +694,7 @@ function populateUnitFilter(units, vehicle) {
 /** Called when filterVehicle changes — cascade unit dropdown */
 function onVehicleFilterChange() {
     const vehicle = getVal('filterVehicle');
-    // Gather units for the selected vehicle (or all units if none selected)
-    const sourceRows = vehicle
-        ? currentData.filter(r => r.vehicle === vehicle)
-        : currentData;
-    const units = [...new Set(sourceRows.map(r => r.vehicle_no).filter(Boolean))].sort(naturalSort);
-    populateUnitFilter(units, vehicle || null);
+    populateUnitFilter(getRegisteredUnitNames(vehicle || null), vehicle || null);
 }
 
 /* ──────────────────────────────────────────────────────────────────
@@ -390,7 +723,7 @@ function restoreScrollPos(pos) {
 function refreshAllViews() {
     const category = getVal('filterCategory');
     const displayData = category
-        ? currentData.filter(r => getCategory(r.process_station) === category)
+        ? currentData.filter(r => getModuleCategory(r.process_station, r) === category)
         : currentData;
 
     const pos = saveScrollPos();
@@ -400,6 +733,9 @@ function refreshAllViews() {
     updateSummary(displayData);
     renderCharts(displayData);
     renderVPX(displayData);
+    if (isKD2Module()) {
+        getModuleRuntime()?.renderSchedule?.(currentData);
+    }
 
     const gsEl = document.getElementById('ganttStart');
     const geEl = document.getElementById('ganttEnd');
@@ -411,6 +747,58 @@ function refreshAllViews() {
 async function loadData() {
     try {
         setTableLoading(true);
+
+        if (isKD2Module() && getModuleRuntime()?.loadData) {
+            const week = getVal('filterWeek');
+            const wr = week ? isoWeekDateRange(week) : null;
+            currentData = await getModuleRuntime().loadData(db, {
+                vehicle: getVal('filterVehicle'),
+                battalion: getVal('filterBattalion'),
+                unit: getVal('filterUnit'),
+                week,
+                weekStartForFilter: wr?.weekStart || null,
+                weekEndForFilter: wr?.weekEnd || null,
+                timeFrame: getVal('filterTimeFrame'),
+                today: todayStr(),
+                ...currentWeekRange(),
+                ...currentMonthRange(),
+                startDate: getVal('filterStartDate'),
+                endDate: getVal('filterEndDate'),
+            });
+
+            currentData.sort((a, b) => {
+                const vCmp = vehicleSort(a.vehicle, b.vehicle); if (vCmp !== 0) return vCmp;
+                const uCmp = naturalSort(a.vehicle_no, b.vehicle_no); if (uCmp !== 0) return uCmp;
+                const kd2Compare = getModuleRuntime()?.comparePlanRowsByLaneOrder;
+                if (typeof kd2Compare === 'function') return kd2Compare(a, b);
+                const rA = parseInt(a.route_sequence, 10) || 9999;
+                const rB = parseInt(b.route_sequence, 10) || 9999;
+                if (rA !== rB) return rA - rB;
+                const wA = parseInt((a.week || '').replace(/\D/g, ''), 10) || 9999;
+                const wB = parseInt((b.week || '').replace(/\D/g, ''), 10) || 9999;
+                if (wA !== wB) return wA - wB;
+                return (a.start_date || '').localeCompare(b.start_date || '');
+            });
+
+            const category = getVal('filterCategory');
+            const displayData = category
+                ? currentData.filter(r => getModuleCategory(r.process_station, r) === category)
+                : currentData;
+
+            renderTable(displayData);
+            updateSummary(displayData);
+            renderCharts(displayData);
+            renderVPX(displayData);
+            await getModuleRuntime().loadPlanningSnapshot?.(db);
+            await getModuleRuntime().refreshWorkspace?.();
+            await getModuleRuntime().renderSchedule?.(currentData);
+            const gsEl = document.getElementById('ganttStart');
+            const geEl = document.getElementById('ganttEnd');
+            if (gsEl?.value && geEl?.value) {
+                renderGantt(displayData, gsEl.value, geEl.value);
+            }
+            return;
+        }
 
         // Build query
         let query = db
@@ -513,7 +901,7 @@ async function loadData() {
         // Category filter (client-side — maps process_station → category)
         const category = getVal('filterCategory');
         const displayData = category
-            ? currentData.filter(r => getCategory(r.process_station) === category)
+            ? currentData.filter(r => getModuleCategory(r.process_station, r) === category)
             : currentData;
 
         renderTable(displayData);
@@ -664,17 +1052,20 @@ function renderTable(data) {
             : '';
 
         // ── Action — Mark Complete button for non-done rows ───────────
+        const kd2EditBtn = isKD2Module()
+            ? `<button class="btn btn-ghost btn-sm btn-kd2-edit-plan" data-plan-id="${row.id}">Edit</button>`
+            : '';
         const actionHtml = isDone
-            ? `<div class="action-cell">${noteBtn}<button class="btn btn-done" disabled>✓ Done</button></div>`
-            : `<div class="action-cell">${noteBtn}<button class="btn btn-action" data-plan-id="${row.id}" data-idx="${idx}">Mark Complete</button></div>`;
+            ? `<div class="action-cell">${noteBtn}${kd2EditBtn}<button class="btn btn-done" disabled>✓ Done</button></div>`
+            : `<div class="action-cell">${noteBtn}${kd2EditBtn}<button class="btn btn-action" data-plan-id="${row.id}" data-idx="${idx}">Mark Complete</button></div>`;
 
         return `
       <tr>
         <td class="mono">${idx + 1}</td>
         <td><strong>${esc(row.vehicle)}</strong></td>
-        <td class="mono">${esc(row.vehicle_no)}${getUnitCode(row.vehicle, row.vehicle_no) ? '<br><span class="unit-code-badge">' + esc(getUnitCode(row.vehicle, row.vehicle_no)) + '</span>' : ''}</td>
+        <td class="mono">${esc(row.vehicle_no)}${getRowUnitMeta(row)}</td>
         <td>${esc(row.process_station)}</td>
-        <td class="mono station-code-cell">${getStationCode(row.process_station, row.vehicle) || '—'}</td>
+        <td class="mono station-code-cell">${esc(getRowCode(row))}</td>
         <td class="mono">${esc(row.week || '—')}</td>
         <td class="mono">${formatDate(row.start_date)}</td>
         <td class="mono">${formatDate(row.end_date)}</td>
@@ -865,6 +1256,11 @@ function renderTable(data) {
             parseInt(btn.dataset.idx)
         ));
     });
+    tbody.querySelectorAll('.btn-kd2-edit-plan').forEach(btn => {
+        btn.addEventListener('click', () => {
+            getModuleRuntime()?.openPlanEdit?.(parseInt(btn.dataset.planId, 10));
+        });
+    });
 }
 
 /* ──────────────────────────────────────────────────────────────────
@@ -1004,40 +1400,159 @@ const VPX_COLUMNS = [
     },
 ];
 
+function getVpxDisplayMeta() {
+    return isKD2Module()
+        ? {
+            headerLabel: 'Battalion · Vehicle · Unit',
+            exportTitle: 'Battalion Progress Matrix',
+            exportSubtitle: 'Battalion-by-station planned vs actual',
+            footerApp: 'KD2 Battalion Planning and Progress Control',
+            workbookCreator: 'KD2 Battalion Planning and Progress Control',
+            keyTitle: 'KD2 VPX — Key & Legend',
+            filenamePrefix: 'KD2_BattalionProgress',
+            emptyMessage: 'Load KD2 plan data to view the progress matrix.',
+            noColumnsMessage: 'No KD2 station data is available for the current filters.',
+        }
+        : {
+            headerLabel: 'Vehicle · Unit',
+            exportTitle: 'Vehicle Production Progress',
+            exportSubtitle: 'Station-by-Station Planned vs Actual',
+            footerApp: 'KD1 Assembly Control System',
+            workbookCreator: 'KD1 Assembly Control System',
+            keyTitle: 'KD1 VPX — Key & Legend',
+            filenamePrefix: 'KD1_VehicleProgress',
+            emptyMessage: 'Load data to view the progress matrix.',
+            noColumnsMessage: 'No station data matches the known column list.',
+        };
+}
+
+function getKd2VpxColumnMeta(task) {
+    const routeSequence = parseInt(task.route_sequence, 10) || parseInt(task.step_sequence, 10) || 9999;
+    const group = task.category || getModuleCategory(task.process_station, task) || 'Other';
+    const name = task.process_station || task.station_name || task.station_code || 'Station';
+    const workCenter = String(task.work_center || '').trim();
+    return {
+        key: `${String(routeSequence).padStart(4, '0')}||${group}||${name}`,
+        code: workCenter || name,
+        name,
+        group,
+        order: routeSequence,
+    };
+}
+
+function getVpxTaskStationKey(task) {
+    if (!isKD2Module()) return task.process_station;
+    return getKd2VpxColumnMeta(task).key;
+}
+
+function buildVpxColumns(data) {
+    if (!isKD2Module()) return VPX_COLUMNS;
+
+    const cols = new Map();
+    data.forEach(task => {
+        const meta = getKd2VpxColumnMeta(task);
+        if (!cols.has(meta.key)) {
+            cols.set(meta.key, {
+                ...meta,
+                vehicles: new Set(),
+            });
+        }
+        cols.get(meta.key).vehicles.add(task.vehicle || '');
+    });
+
+    return [...cols.values()]
+        .sort((a, b) => {
+            if (a.order !== b.order) return a.order - b.order;
+            const groupCmp = String(a.group || '').localeCompare(String(b.group || ''));
+            if (groupCmp !== 0) return groupCmp;
+            return String(a.name || '').localeCompare(String(b.name || ''));
+        })
+        .map(col => ({
+            code: col.code,
+            name: col.name,
+            group: col.group,
+            resolve: vehicle => col.vehicles.has(vehicle) ? col.key : null,
+        }));
+}
+
+function buildVpxRows(data) {
+    const rowMap = {};
+    data.forEach(task => {
+        const rowKey = isKD2Module()
+            ? [task.battalion_code || '', task.vehicle || '', task.vehicle_no || ''].join('||')
+            : [task.vehicle || '', task.vehicle_no || ''].join('||');
+        if (!rowMap[rowKey]) {
+            rowMap[rowKey] = {
+                battalion_code: task.battalion_code || '',
+                vehicle: task.vehicle,
+                vehicle_no: task.vehicle_no,
+                stations: {},
+            };
+        }
+        const stationKey = getVpxTaskStationKey(task);
+        const existing = rowMap[rowKey].stations[stationKey];
+        if (!existing || task.end_date > existing.end_date) {
+            rowMap[rowKey].stations[stationKey] = task;
+        }
+    });
+
+    return Object.values(rowMap).sort((a, b) => {
+        if (isKD2Module()) {
+            const battalionCmp = String(a.battalion_code || '').localeCompare(String(b.battalion_code || ''), undefined, { numeric: true });
+            if (battalionCmp !== 0) return battalionCmp;
+        }
+        const vc = vehicleSort(a.vehicle, b.vehicle);
+        if (vc !== 0) return vc;
+        return naturalSort(a.vehicle_no, b.vehicle_no);
+    });
+}
+
+function getVpxTitleParts() {
+    const parts = [getModuleBadge()];
+    const battalion = isKD2Module() ? getVal('filterBattalion') : '';
+    const vehicle = getVal('filterVehicle');
+    const unit = getVal('filterUnit');
+    const category = getVal('filterCategory');
+    if (battalion) parts.push(battalion);
+    if (vehicle) parts.push(vehicle);
+    if (unit) parts.push(unit);
+    if (category) parts.push(category);
+    parts.push(getVpxDisplayMeta().exportTitle);
+    return parts;
+}
+
+function getVpxRowPrimaryLabel(row) {
+    return isKD2Module() ? `${row.vehicle} · ${row.vehicle_no}` : row.vehicle_no;
+}
+
+function getVpxRowSecondaryLabel(row) {
+    const unitCode = getUnitCode(row.vehicle, row.vehicle_no);
+    if (isKD2Module()) return [row.battalion_code || '', unitCode || ''].filter(Boolean).join(' · ');
+    return unitCode;
+}
+
+function getVpxExportLabel(row) {
+    if (!isKD2Module()) return row.vehicle + '\n' + unitLabel(row.vehicle, row.vehicle_no);
+    return [row.battalion_code || '—', `${row.vehicle} · ${unitLabel(row.vehicle, row.vehicle_no)}`].join('\n');
+}
+
 function renderVPX(data) {
     const container = document.getElementById('vpxMatrix');
     if (!container) return;
+    const meta = getVpxDisplayMeta();
 
     if (!data?.length) {
-        container.innerHTML = '<div class="vpx-empty">Load data to view the progress matrix.</div>';
+        container.innerHTML = `<div class="vpx-empty">${meta.emptyMessage}</div>`;
         return;
     }
 
-    // Build row data: one row per vehicle+unit
-    const rowMap = {};
-    data.forEach(task => {
-        const rowKey = task.vehicle + '||' + task.vehicle_no;
-        if (!rowMap[rowKey])
-            rowMap[rowKey] = { vehicle: task.vehicle, vehicle_no: task.vehicle_no, stations: {} };
-        const existing = rowMap[rowKey].stations[task.process_station];
-        if (!existing || task.end_date > existing.end_date)
-            rowMap[rowKey].stations[task.process_station] = task;
-    });
-
-    const rows = Object.values(rowMap).sort((a, b) => {
-        const vc = vehicleSort(a.vehicle, b.vehicle);
-        return vc !== 0 ? vc : naturalSort(a.vehicle_no, b.vehicle_no);
-    });
-
-    const usedStations = new Set(data.map(t => t.process_station));
-
-    // A column is active if at least one vehicle resolves a non-null station key in data
-    const activeCols = VPX_COLUMNS.filter(col =>
-        rows.some(row => { const k = col.resolve(row.vehicle); return k !== null && usedStations.has(k); })
+    const rows = buildVpxRows(data);
+    const activeCols = buildVpxColumns(data).filter(col =>
+        rows.some(row => { const k = col.resolve(row.vehicle); return k !== null && row.stations[k]; })
     );
 
     if (!activeCols.length) {
-        container.innerHTML = '<div class="vpx-empty">No station data matches the known column list.</div>';
+        container.innerHTML = `<div class="vpx-empty">${meta.noColumnsMessage}</div>`;
         return;
     }
 
@@ -1055,7 +1570,7 @@ function renderVPX(data) {
     let html = '<table class="vpx-table" role="grid"><thead>';
 
     // Group header row
-    html += '<tr class="vpx-group-row"><th class="vpx-th-vehicle" rowspan="2">Vehicle &middot; Unit</th>';
+    html += `<tr class="vpx-group-row"><th class="vpx-th-vehicle" rowspan="2">${meta.headerLabel.replace(/ · /g, ' &middot; ')}</th>`;
     groups.forEach(g => {
         html += '<th class="vpx-th-group vpx-grp-' + grpSlug(g.label) + '" colspan="' + g.span + '">' + g.label + '</th>';
     });
@@ -1065,13 +1580,9 @@ function renderVPX(data) {
     });
     html += '</tr></thead><tbody>';
 
-    // Group rows by vehicle so we can insert vehicle header rows like Gantt
-    const vehicles = [...new Set(rows.map(r => r.vehicle))];
-
     rows.forEach((row, ri) => {
-        // Insert a vehicle group header row before first unit of each vehicle — matches Gantt gr-group-label
         const prevVehicle = ri > 0 ? rows[ri - 1].vehicle : null;
-        if (row.vehicle !== prevVehicle) {
+        if (!isKD2Module() && row.vehicle !== prevVehicle) {
             html += '<tr class="vpx-row vpx-row-group">';
             html += '<td class="vpx-td-vehicle vpx-td-group" colspan="1">'
                 + '<svg class="vpx-veh-icon" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.8"><rect x="2" y="3" width="12" height="10" rx="1.5"/><path d="M5 8h6M5 11h4"/></svg>'
@@ -1083,11 +1594,12 @@ function renderVPX(data) {
         }
 
         html += '<tr class="vpx-row" data-ri="' + ri + '">';
-        var _uc = getUnitCode(row.vehicle, row.vehicle_no);
+        var primaryLabel = getVpxRowPrimaryLabel(row);
+        var secondaryLabel = getVpxRowSecondaryLabel(row);
         html += '<td class="vpx-td-vehicle vpx-td-unit">'
             + '<span class="vpx-unit-dot"></span>'
-            + '<span class="vpx-unit-name">' + esc(row.vehicle_no) + '</span>'
-            + (_uc ? '<span class="vpx-unit-code">' + esc(_uc) + '</span>' : '')
+            + '<span class="vpx-unit-name">' + esc(primaryLabel) + '</span>'
+            + (secondaryLabel ? '<span class="vpx-unit-code">' + esc(secondaryLabel) + '</span>' : '')
             + '</td>';
 
         activeCols.forEach((col, ci) => {
@@ -1152,11 +1664,87 @@ function renderCharts(data) {
     renderLineChart(data);
 }
 
-function renderBarChart(data) {
-    const vehicles = [...new Set(data.map(r => r.vehicle))].sort(vehicleSort);
+function getChartGrouping(data) {
+    if (!isKD2Module()) {
+        return {
+            keyLabel: 'vehicle',
+            labels: [...new Set(data.map(row => row.vehicle).filter(Boolean))].sort(vehicleSort),
+            valueFor: row => row.vehicle || 'Unknown',
+        };
+    }
 
-    const counts = vehicles.map(v => {
-        const rows = data.filter(r => r.vehicle === v);
+    const battalions = [...new Set(data.map(row => row.battalion_code).filter(Boolean))].sort(naturalSort);
+    if (battalions.length > 1) {
+        return {
+            keyLabel: 'battalion',
+            labels: battalions,
+            valueFor: row => row.battalion_code || 'Unknown',
+        };
+    }
+
+    const vehicles = [...new Set(data.map(row => row.vehicle).filter(Boolean))].sort(vehicleSort);
+    if (vehicles.length > 1) {
+        return {
+            keyLabel: 'vehicle',
+            labels: vehicles,
+            valueFor: row => row.vehicle || 'Unknown',
+        };
+    }
+
+    const units = [...new Set(data.map(row => row.vehicle_no).filter(Boolean))].sort(naturalSort);
+    if (units.length > 1) {
+        return {
+            keyLabel: 'unit',
+            labels: units,
+            valueFor: row => row.vehicle_no || 'Unknown',
+        };
+    }
+
+    const categoryOrder = getActiveModuleConfig()?.categories || [];
+    const categories = [...new Set(data.map(row => getModuleCategory(row.process_station, row)).filter(Boolean))]
+        .sort((a, b) => {
+            const aIdx = categoryOrder.indexOf(a);
+            const bIdx = categoryOrder.indexOf(b);
+            if (aIdx !== -1 || bIdx !== -1) {
+                if (aIdx === -1) return 1;
+                if (bIdx === -1) return -1;
+                return aIdx - bIdx;
+            }
+            return naturalSort(a, b);
+        });
+    return {
+        keyLabel: 'category',
+        labels: categories,
+        valueFor: row => getModuleCategory(row.process_station, row) || 'Other',
+    };
+}
+
+function updateChartHeadings(grouping) {
+    const barTitle = document.getElementById('barChartTitle');
+    const barSubtitle = document.getElementById('barChartSubtitle');
+    const lineTitle = document.getElementById('lineChartTitle');
+    const lineSubtitle = document.getElementById('lineChartSubtitle');
+    const groupingLabel = grouping ? grouping.charAt(0).toUpperCase() + grouping.slice(1) : 'Vehicle';
+
+    if (barTitle) barTitle.textContent = 'Status Breakdown';
+    if (barSubtitle) {
+        barSubtitle.textContent = `Planned · Completed · Late Completion · Overdue by ${groupingLabel}`;
+    }
+    if (lineTitle) lineTitle.textContent = 'Cumulative Progress';
+    if (lineSubtitle) {
+        lineSubtitle.textContent = isKD2Module()
+            ? 'Planned block completion vs actual completion'
+            : 'Planned Completion vs Actual';
+    }
+}
+
+function renderBarChart(data) {
+    const grouping = getChartGrouping(data);
+    const labels = grouping.labels;
+    updateChartHeadings(grouping.keyLabel);
+
+    const counts = labels.map(label => {
+        const rows = data.filter(row => grouping.valueFor(row) === label);
         return {
             planned: rows.filter(r => calculateStatus(r) === 'Planned').length,
             completed: rows.filter(r => calculateStatus(r) === 'Completed').length,
@@ -1168,7 +1756,7 @@ function renderBarChart(data) {
     const cfg = {
         type: 'bar',
         data: {
-            labels: vehicles.length ? vehicles : ['No Data'],
+            labels: labels.length ? labels : ['No Data'],
             datasets: [
                 {
                     label: 'Planned',
@@ -1204,7 +1792,7 @@ function renderBarChart(data) {
                 },
             ],
         },
-        options: chartOptions('Status Count'),
+        options: chartOptions(isKD2Module() ? 'Plan Blocks' : 'Status Count'),
     };
 
     if (barChartInst) barChartInst.destroy();
@@ -1216,6 +1804,7 @@ function renderLineChart(data) {
     if (!data.length) {
         if (lineChartInst) lineChartInst.destroy();
         lineChartInst = null;
+        updateChartHeadings(getChartGrouping(data).keyLabel);
         return;
     }
 
@@ -1270,7 +1859,7 @@ function renderLineChart(data) {
             ],
         },
         options: {
-            ...chartOptions('Cumulative Tasks'),
+            ...chartOptions(isKD2Module() ? 'Cumulative Plan Blocks' : 'Cumulative Tasks'),
             scales: {
                 x: {
                     ticks: {
@@ -1363,37 +1952,38 @@ async function saveActualStart(planId, dateValue) {
 
     try {
         // Fetch ALL rows for this plan_id — guard against duplicate rows
+        const progressTable = getModuleProgressTable();
         const { data: allRows } = await db
-            .from('assembly_progress').select('*').eq('plan_id', planId).order('updated_at', { ascending: false });
+            .from(progressTable).select('*').eq('plan_id', planId).order('updated_at', { ascending: false });
 
         const snapBefore = allRows?.[0] || null;
 
         // If duplicates exist, delete the extras to keep the table clean
         if (allRows && allRows.length > 1) {
             const extraIds = allRows.slice(1).map(r => r.id);
-            await db.from('assembly_progress').delete().in('id', extraIds);
+            await db.from(progressTable).delete().in('id', extraIds);
         }
 
         if (snapBefore) {
             const { error } = await db
-                .from('assembly_progress')
+                .from(progressTable)
                 .update({ actual_start_date: valueToSave, updated_at: new Date().toISOString() })
                 .eq('id', snapBefore.id);
             if (error) throw error;
         } else if (valueToSave) {
             const { error } = await db
-                .from('assembly_progress')
+                .from(progressTable)
                 .insert({ plan_id: planId, actual_start_date: valueToSave, completed: false, updated_at: new Date().toISOString() });
             if (error) throw error;
         }
 
         // Snapshot after for audit
         const { data: snapAfter } = await db
-            .from('assembly_progress').select('*').eq('plan_id', planId).maybeSingle();
+            .from(progressTable).select('*').eq('plan_id', planId).maybeSingle();
 
         await auditLog(
             snapBefore ? 'UPDATE' : 'INSERT',
-            'assembly_progress', planId, snapBefore || null, snapAfter || null
+            progressTable, planId, snapBefore || null, snapAfter || null
         );
 
         showToast(valueToSave ? 'Start date saved.' : 'Start date cleared.', 'success');
@@ -1421,35 +2011,36 @@ async function saveCompletionDate(planId, dateValue, silent = false) {
     const valueToSave = dateValue || null;
 
     try {
+        const progressTable = getModuleProgressTable();
         const { data: allRowsC } = await db
-            .from('assembly_progress').select('*').eq('plan_id', planId).order('updated_at', { ascending: false });
+            .from(progressTable).select('*').eq('plan_id', planId).order('updated_at', { ascending: false });
 
         const snapBefore = allRowsC?.[0] || null;
 
         if (allRowsC && allRowsC.length > 1) {
             const extraIds = allRowsC.slice(1).map(r => r.id);
-            await db.from('assembly_progress').delete().in('id', extraIds);
+            await db.from(progressTable).delete().in('id', extraIds);
         }
 
         if (snapBefore) {
             const { error } = await db
-                .from('assembly_progress')
+                .from(progressTable)
                 .update({ completed: !!valueToSave, completion_date: valueToSave, updated_at: new Date().toISOString() })
                 .eq('id', snapBefore.id);
             if (error) throw error;
         } else if (valueToSave) {
             const { error } = await db
-                .from('assembly_progress')
+                .from(progressTable)
                 .insert({ plan_id: planId, completed: true, completion_date: valueToSave, updated_at: new Date().toISOString() });
             if (error) throw error;
         }
 
         const { data: snapAfter } = await db
-            .from('assembly_progress').select('*').eq('plan_id', planId).maybeSingle();
+            .from(progressTable).select('*').eq('plan_id', planId).maybeSingle();
 
         await auditLog(
             snapBefore ? 'UPDATE' : 'INSERT',
-            'assembly_progress', planId, snapBefore || null, snapAfter || null
+            progressTable, planId, snapBefore || null, snapAfter || null
         );
 
         showToast(valueToSave ? 'Completion date saved.' : 'Completion date cleared.', 'success');
@@ -1476,20 +2067,21 @@ async function saveCompletionDate(planId, dateValue, silent = false) {
 async function saveNoteOnly(planId, noteText) {
     const valueToSave = noteText.trim() || null;
     try {
+        const progressTable = getModuleProgressTable();
         const { data: existing } = await db
-            .from('assembly_progress')
+            .from(progressTable)
             .select('id, notes')
             .eq('plan_id', planId)
             .maybeSingle();
 
         if (existing) {
-            const before = { notes: existing.notes };
-            const { error } = await db
-                .from('assembly_progress')
-                .update({ notes: valueToSave, updated_at: new Date().toISOString() })
-                .eq('id', existing.id);
-            if (error) throw error;
-            await auditLog('UPDATE', 'assembly_progress', planId,
+                const before = { notes: existing.notes };
+                const { error } = await db
+                    .from(progressTable)
+                    .update({ notes: valueToSave, updated_at: new Date().toISOString() })
+                    .eq('id', existing.id);
+                if (error) throw error;
+            await auditLog('UPDATE', progressTable, planId,
                 before, { notes: valueToSave });
             showToast(valueToSave ? 'Note updated.' : 'Note deleted.', 'success');
         } else {
@@ -1537,14 +2129,15 @@ async function markComplete() {
     closeModal();
 
     try {
+        const progressTable = getModuleProgressTable();
         const { data: allRowsM } = await db
-            .from('assembly_progress').select('*').eq('plan_id', planId).order('updated_at', { ascending: false });
+            .from(progressTable).select('*').eq('plan_id', planId).order('updated_at', { ascending: false });
 
         const snapBefore = allRowsM?.[0] || null;
 
         if (allRowsM && allRowsM.length > 1) {
             const extraIds = allRowsM.slice(1).map(r => r.id);
-            await db.from('assembly_progress').delete().in('id', extraIds);
+            await db.from(progressTable).delete().in('id', extraIds);
         }
 
         const payload = {
@@ -1558,23 +2151,23 @@ async function markComplete() {
 
         let opError;
         if (snapBefore) {
-            const { error } = await db
-                .from('assembly_progress')
-                .update({ completed: true, completion_date: compDate, notes, updated_at: payload.updated_at })
-                .eq('id', snapBefore.id);
-            opError = error;
+                const { error } = await db
+                    .from(progressTable)
+                    .update({ completed: true, completion_date: compDate, notes, updated_at: payload.updated_at })
+                    .eq('id', snapBefore.id);
+                opError = error;
         } else {
-            const { error } = await db.from('assembly_progress').insert(payload);
+            const { error } = await db.from(progressTable).insert(payload);
             opError = error;
         }
         if (opError) throw opError;
 
         const { data: snapAfter } = await db
-            .from('assembly_progress').select('*').eq('plan_id', planId).maybeSingle();
+            .from(progressTable).select('*').eq('plan_id', planId).maybeSingle();
 
         await auditLog(
             snapBefore ? 'UPDATE' : 'INSERT',
-            'assembly_progress', planId, snapBefore || null, snapAfter || null
+            progressTable, planId, snapBefore || null, snapAfter || null
         );
 
         showToast('Progress saved successfully.', 'success');
@@ -1600,6 +2193,7 @@ async function markComplete() {
    ────────────────────────────────────────────────────────────────── */
 async function importPlan() {
     if (!canWrite()) { showToast('Viewer accounts cannot import data.', 'error'); return; }
+    if (isKD2Module()) { showToast('KD2 import is not enabled in this phase yet.', 'error'); return; }
 
     const raw = document.getElementById('importText').value.trim();
     if (!raw) { showToast('No data pasted.', 'error'); return; }
@@ -1646,6 +2240,10 @@ function wireEvents() {
     // Filters
     document.getElementById('btnApply').addEventListener('click', loadData);
     document.getElementById('btnReset').addEventListener('click', resetFilters);
+    document.getElementById('btnGanttLegendToggle')?.addEventListener('click', () => {
+        _ganttLegendOpen = !_ganttLegendOpen;
+        syncGanttLegendUi();
+    });
 
     // Cascade: when vehicle changes, update unit dropdown to match
     document.getElementById('filterVehicle')?.addEventListener('change', onVehicleFilterChange);
@@ -1694,6 +2292,7 @@ function wireEvents() {
     document.getElementById('btnUcSave')?.addEventListener('click', saveUnitCode);
     document.getElementById('btnUcCancel')?.addEventListener('click', closeUcForm);
     document.getElementById('ucFormClose')?.addEventListener('click', closeUcForm);
+    document.getElementById('ucBattalion')?.addEventListener('change', populateUcUnits);
     document.getElementById('ucVehicle')?.addEventListener('change', populateUcUnits);
 
     // User Management (master_admin only — button hidden for others)
@@ -1720,7 +2319,7 @@ function wireEvents() {
     document.getElementById('tableSearch')?.addEventListener('input', function () {
         const q = this.value.trim().toLowerCase();
         const cat = getVal('filterCategory');
-        const base = cat ? currentData.filter(r => getCategory(r.process_station) === cat) : currentData;
+        const base = cat ? currentData.filter(r => getModuleCategory(r.process_station, r) === cat) : currentData;
         const filtered = q ? base.filter(r =>
             (r.vehicle || '').toLowerCase().includes(q) ||
             (r.vehicle_no || '').toLowerCase().includes(q) ||
@@ -1741,10 +2340,12 @@ function wireEvents() {
 }
 
 function resetFilters() {
-    ['filterVehicle', 'filterUnit', 'filterWeek', 'filterTimeFrame', 'filterCategory'].forEach(id => {
+    ['filterBattalion', 'filterVehicle', 'filterUnit', 'filterWeek', 'filterCategory'].forEach(id => {
         const el = document.getElementById(id);
         if (el) el.value = '';
     });
+    const tf = document.getElementById('filterTimeFrame');
+    if (tf) tf.value = 'all';
     document.getElementById('filterStartDate').value = '';
     document.getElementById('filterEndDate').value = '';
     document.getElementById('customDateStart').style.display = 'none';
@@ -1752,8 +2353,7 @@ function resetFilters() {
     const srch = document.getElementById('tableSearch');
     if (srch) srch.value = '';
     // Restore full unit list with no vehicle scope
-    const allUnits = [...new Set(currentData.map(r => r.vehicle_no).filter(Boolean))].sort(naturalSort);
-    populateUnitFilter(allUnits, null);
+    populateUnitFilter(getRegisteredUnitNames(), null);
     loadData();
 }
 
@@ -1900,15 +2500,15 @@ function daysBetween(from, to) {
 function currentWeekRange() {
     const now = new Date();
     const day = now.getDay();            // 0=Sun … 6=Sat
-    // Work week: Sunday(0) → Thursday(4); weekend: Friday(5), Saturday(6)
-    const diff = (day === 0 ? 0 : day <= 4 ? -day : 7 - day);
-    const sun = new Date(now);
-    sun.setDate(now.getDate() + diff);
-    const thu = new Date(sun);
-    thu.setDate(sun.getDate() + 4);
+    // Work week: Saturday(6) -> Thursday(4); Friday(5) is skipped.
+    const diff = day === 6 ? 0 : day === 5 ? -6 : -(day + 1);
+    const sat = new Date(now);
+    sat.setDate(now.getDate() + diff);
+    const thu = new Date(sat);
+    thu.setDate(sat.getDate() + 5);
     return {
-        weekStart: sun.toISOString().slice(0, 10),
-        weekEnd: thu.toISOString().slice(0, 10),
+        weekStart: localDateStr(sat),
+        weekEnd: localDateStr(thu),
     };
 }
 
@@ -2001,7 +2601,7 @@ function setTheme(theme) {
     }
     localStorage.setItem(THEME_KEY, theme);
     // Re-render charts with correct palette for new theme
-    if (currentData.length) renderCharts(currentData);
+    if (currentData.length) refreshAllViews();
 }
 
 function toggleTheme() {
@@ -2067,23 +2667,28 @@ const SPECIAL_ZONES = [
 ];
 
 /* ──────────────────────────────────────────────────────────────────
-   FISCAL WEEK NUMBER  (Sunday-based — week starts Sunday)
+   FISCAL WEEK NUMBER  (production week starts Saturday)
    ────────────────────────────────────────────────────────────────── */
+function getISOWeekInfoForDate(d) {
+    const thu = new Date(d);
+    thu.setDate(d.getDate() - ((d.getDay() + 6) % 7) + 3);
+    const year = thu.getFullYear();
+    const jan4 = new Date(year, 0, 4);
+    const week = 1 + Math.round((thu - jan4) / (7 * 86400000));
+    return { week, year };
+}
+
 /**
- * ISO 8601 week number (1–53).  Week 1 is the week containing the first
- * Thursday of the year, and weeks run Monday → Sunday.
- * Returns { week, year } — the year may differ from the calendar year
- * for days in late December / early January.
+ * Production FW label. A production week runs Saturday -> Thursday,
+ * with Friday excluded. The FW number is anchored to that window's Thursday.
  */
 function getISOWeekInfo(dateStr) {
     const d = new Date(dateStr + 'T00:00:00');
-    // Shift to Thursday of the same week (ISO weeks anchored to Thursday)
-    const thu = new Date(d);
-    thu.setDate(d.getDate() - ((d.getDay() + 6) % 7) + 3); // Monday=0 offset
-    const year = thu.getFullYear();
-    const jan4 = new Date(year, 0, 4);   // Jan 4 is always in week 1
-    const week = 1 + Math.round((thu - jan4) / (7 * 86400000));
-    return { week, year };
+    const day = d.getDay();
+    const startOffset = day === 6 ? 0 : day === 5 ? -6 : -(day + 1);
+    const productionThu = new Date(d);
+    productionThu.setDate(d.getDate() + startOffset + 5);
+    return getISOWeekInfoForDate(productionThu);
 }
 
 /** Return ISO week number (1–53) for a date string. */
@@ -2102,7 +2707,7 @@ function weekLabel(dateStr) {
 
 /**
  * Given a week label like "FW09" (optionally "FW9"), return the
- * Monday and Sunday of that ISO week for the current or nearest year.
+ * Saturday and Thursday production window for the current or nearest year.
  * Returns { weekStart, weekEnd } as YYYY-MM-DD strings.
  */
 function isoWeekDateRange(label) {
@@ -2111,16 +2716,19 @@ function isoWeekDateRange(label) {
     // Determine which year: use the year whose FW#{num} is closest to today
     const todayD = new Date(todayStr() + 'T00:00:00');
     const year = todayD.getFullYear();
-    // Jan 4 of that year is always in week 1 → find Monday of week 1
+    // Jan 4 of that year is always in ISO week 1. Use that week number,
+    // but expose the production window as Saturday -> Thursday.
     function weekStart(y) {
         const jan4 = new Date(y, 0, 4);
         const w1Mon = new Date(jan4);
         w1Mon.setDate(jan4.getDate() - ((jan4.getDay() + 6) % 7));
         const mon = new Date(w1Mon);
         mon.setDate(w1Mon.getDate() + (num - 1) * 7);
-        const sun = new Date(mon);
-        sun.setDate(mon.getDate() + 6);
-        return { weekStart: localDateStr(mon), weekEnd: localDateStr(sun) };
+        const sat = new Date(mon);
+        sat.setDate(mon.getDate() - 2);
+        const thu = new Date(sat);
+        thu.setDate(sat.getDate() + 5);
+        return { weekStart: localDateStr(sat), weekEnd: localDateStr(thu) };
     }
     // Try current year; if the week is in the past by more than 26 weeks, try next year
     const r = weekStart(year);
@@ -2148,6 +2756,7 @@ function wireGanttControls() {
     document.getElementById('btnGanttRefresh')?.addEventListener('click', () => {
         renderGantt(currentData, gsEl?.value, geEl?.value);
     });
+    syncGanttLegendUi();
 }
 
 /* ──────────────────────────────────────────────────────────────────
@@ -2158,7 +2767,7 @@ function renderGantt(plans, startDate, endDate) {
     const inner = document.getElementById('ganttInner');
     if (!inner) return;
 
-    if (!plans?.length || !startDate || !endDate || startDate > endDate) {
+    if (!startDate || !endDate || startDate > endDate) {
         inner.innerHTML = `
       <div class="gantt-empty-state">
         <svg viewBox="0 0 48 48" fill="none" stroke="currentColor" stroke-width="1.5">
@@ -2167,7 +2776,9 @@ function renderGantt(plans, startDate, endDate) {
         </svg>
         <p>Load data and set a date range, then click <strong>Refresh</strong> to render the schedule.</p>
       </div>`;
-        document.getElementById('ganttLegend').innerHTML = '';
+        const legend = document.getElementById('ganttLegend');
+        if (legend) legend.innerHTML = '';
+        syncGanttLegendUi();
         return;
     }
 
@@ -2196,6 +2807,24 @@ function renderGantt(plans, startDate, endDate) {
 
     // Fast lookup: date string → column index (Fridays have no entry)
     const dayIndex = Object.fromEntries(days.map((d, i) => [d, i]));
+    const specialZones = getModuleGanttZones(startDate, endDate);
+    const holidayDays = new Set();
+    const holidayLabelsByDay = new Map();
+    specialZones
+        .filter(zone => zone?.type === 'holiday' && zone.start && zone.end)
+        .forEach(zone => {
+            const label = String(zone.label || 'No-work Day').trim() || 'No-work Day';
+            let cursor = zone.start;
+            let guard = 0;
+            while (cursor <= zone.end && guard++ < 400) {
+                if (dayIndex[cursor] !== undefined) {
+                    holidayDays.add(cursor);
+                    if (!holidayLabelsByDay.has(cursor)) holidayLabelsByDay.set(cursor, new Set());
+                    holidayLabelsByDay.get(cursor).add(label);
+                }
+                cursor = addDays(cursor, 1);
+            }
+        });
 
     /**
      * Resolve a date to the nearest column index.
@@ -2224,15 +2853,38 @@ function renderGantt(plans, startDate, endDate) {
     );
 
     const groups = {};
+    const ensureGroupLane = (groupKey, laneKey) => {
+        if (!groups[groupKey]) groups[groupKey] = {};
+        if (!groups[groupKey][laneKey]) groups[groupKey][laneKey] = [];
+    };
+    const vehicleFilter = getVal('filterVehicle');
+    const unitFilter = getVal('filterUnit');
+    const battalionFilter = isKD2Module() ? getVal('filterBattalion') : '';
+    unitRegistryRows
+        .filter(row =>
+            (!vehicleFilter || row.vehicle === vehicleFilter) &&
+            (!unitFilter || row.vehicle_no === unitFilter) &&
+            (!battalionFilter || !isKD2Module() || row.battalion_code === battalionFilter)
+        )
+        .forEach(row => {
+            const groupKey = isKD2Module() ? (row.battalion_code || '—') : row.vehicle;
+            const laneKey = isKD2Module() ? `${row.vehicle}||${row.vehicle_no}` : row.vehicle_no;
+            ensureGroupLane(groupKey, laneKey);
+        });
     visible.forEach(p => {
-        if (!groups[p.vehicle]) groups[p.vehicle] = {};
-        if (!groups[p.vehicle][p.vehicle_no]) groups[p.vehicle][p.vehicle_no] = [];
-        groups[p.vehicle][p.vehicle_no].push(p);
+        const groupKey = isKD2Module() ? (p.battalion_code || '—') : p.vehicle;
+        const laneKey = isKD2Module() ? `${p.vehicle}||${p.vehicle_no}` : p.vehicle_no;
+        ensureGroupLane(groupKey, laneKey);
+        groups[groupKey][laneKey].push(p);
     });
 
-    const vehicleKeys = Object.keys(groups).sort(vehicleSort);
+    const groupKeys = Object.keys(groups).sort((a, b) =>
+        isKD2Module()
+            ? a.localeCompare(b, undefined, { numeric: true })
+            : vehicleSort(a, b)
+    );
 
-    if (!vehicleKeys.length) {
+    if (!groupKeys.length) {
         inner.innerHTML = `
       <div class="gantt-empty-state">
         <svg viewBox="0 0 48 48" fill="none" stroke="currentColor" stroke-width="1.5">
@@ -2241,13 +2893,18 @@ function renderGantt(plans, startDate, endDate) {
         </svg>
         <p>No tasks fall within the selected date range.</p>
       </div>`;
+        const legend = document.getElementById('ganttLegend');
+        if (legend) legend.innerHTML = '';
+        syncGanttLegendUi();
+        const zoneKeyEl = document.getElementById('ganttZoneKey');
+        if (zoneKeyEl) zoneKeyEl.style.display = 'none';
         return;
     }
 
     // ── 3. Header HTML ─────────────────────────────────────────────
     let mHtml = `<div class="gh-corner" style="width:${GANTT_LABEL_W}px;height:28px"></div>`;
     let wHtml = `<div class="gh-corner" style="width:${GANTT_LABEL_W}px;height:22px"></div>`;
-    let dHtml = `<div class="gh-corner gh-corner-label" style="width:${GANTT_LABEL_W}px;height:28px">Vehicle / Unit</div>`;
+    let dHtml = `<div class="gh-corner gh-corner-label" style="width:${GANTT_LABEL_W}px;height:28px">${isKD2Module() ? 'Battalion / Vehicle / Unit' : 'Vehicle / Unit'}</div>`;
 
     let runMonth = '', runMonthSpan = 0;
     let runWeek = -1, runWeekSpan = 0;
@@ -2270,8 +2927,10 @@ function renderGantt(plans, startDate, endDate) {
         } else { runWeekSpan++; }
 
         // Day cell
-        dHtml += `<div class="gh-day${dm.isSat ? ' gh-day-sat' : ''}${dm.isToday ? ' gh-day-today' : ''}"
-      style="width:${GANTT_DAY_W}px;height:28px">${dm.dayNum}</div>`;
+        const holidayLabels = holidayLabelsByDay.get(dm.date);
+        const dayTitle = holidayLabels?.size ? ` title="${esc([...holidayLabels].join(', '))}"` : '';
+        dHtml += `<div class="gh-day${dm.isSat ? ' gh-day-sat' : ''}${holidayDays.has(dm.date) ? ' gh-day-holiday' : ''}${dm.isToday ? ' gh-day-today' : ''}"
+      style="width:${GANTT_DAY_W}px;height:28px"${dayTitle}>${dm.dayNum}</div>`;
     });
 
     // Flush last groups
@@ -2285,7 +2944,7 @@ function renderGantt(plans, startDate, endDate) {
 
     // ── 5. Special zone bands ──────────────────────────────────────
     let zonesHtml = '';
-    SPECIAL_ZONES.forEach(z => {
+    specialZones.forEach(z => {
         // Clamp zone to visible range
         const s = z.start > startDate ? z.start : startDate;
         const e = z.end < endDate ? z.end : endDate;
@@ -2295,11 +2954,12 @@ function renderGantt(plans, startDate, endDate) {
 
         const left = GANTT_LABEL_W + si * GANTT_DAY_W;
         const width = (ei - si + 1) * GANTT_DAY_W;
+        const zoneTitle = z.type === 'holiday' ? '' : ` title="${esc(z.label || z.type)}"`;
+        const zoneLabel = z.type === 'holiday' ? '' : `<span class="gc-zone-label">${esc(z.label || z.type)}</span>`;
         zonesHtml += `
       <div class="gc-zone gc-zone-${esc(z.type)}"
-           style="left:${left}px;width:${width}px"
-           title="${esc(z.label || z.type)}">
-        <span class="gc-zone-label">${esc(z.label || z.type)}</span>
+           style="left:${left}px;width:${width}px"${zoneTitle}>
+        ${zoneLabel}
       </div>`;
     });
 
@@ -2313,8 +2973,15 @@ function renderGantt(plans, startDate, endDate) {
     // ── 6. Body rows ───────────────────────────────────────────────
     let bodyHtml = zonesHtml;
 
-    vehicleKeys.forEach(vehicle => {
-        const unitKeys = Object.keys(groups[vehicle]).sort(naturalSort);
+    groupKeys.forEach(groupKey => {
+        const unitKeys = Object.keys(groups[groupKey]).sort((a, b) => {
+            if (!isKD2Module()) return naturalSort(a, b);
+            const [vehicleA, ...unitAParts] = a.split('||');
+            const [vehicleB, ...unitBParts] = b.split('||');
+            const vehicleCmp = vehicleSort(vehicleA, vehicleB);
+            if (vehicleCmp !== 0) return vehicleCmp;
+            return naturalSort(unitAParts.join('||'), unitBParts.join('||'));
+        });
 
         // Vehicle group header row
         bodyHtml += `
@@ -2324,14 +2991,35 @@ function renderGantt(plans, startDate, endDate) {
             <rect x="2" y="3" width="12" height="10" rx="1.5"/>
             <path d="M5 8h6M5 11h4"/>
           </svg>
-          ${esc(vehicle)}
+          ${esc(groupKey)}
         </div>
         <div class="gr-track gr-track-group" style="width:${totalW}px">${bgCells}</div>
       </div>`;
 
-        // Unit rows
-        unitKeys.forEach(unit => {
-            const tasks = groups[vehicle][unit];
+        const vehicleSections = isKD2Module()
+            ? [...new Set(unitKeys.map(unit => unit.split('||')[0]).filter(Boolean))]
+                .sort(vehicleSort)
+                .map(vehicle => ({
+                    vehicle,
+                    units: unitKeys.filter(unit => unit.startsWith(vehicle + '||')),
+                }))
+            : [{ vehicle: groupKey, units: unitKeys }];
+
+        vehicleSections.forEach(section => {
+            if (isKD2Module() && section.units.length) {
+                bodyHtml += `
+      <div class="gr gr-subgroup" style="height:${Math.max(30, GANTT_GRP_H - 8)}px">
+        <div class="gr-label gr-subgroup-label" style="width:${GANTT_LABEL_W}px">
+          <span class="gr-subgroup-badge">${esc(section.vehicle)}</span>
+        </div>
+        <div class="gr-track gr-track-subgroup" style="width:${totalW}px">${bgCells}</div>
+      </div>`;
+            }
+
+            section.units.forEach(unit => {
+            const tasks = groups[groupKey][unit] || [];
+            const laneVehicle = isKD2Module() ? unit.split('||')[0] : groupKey;
+            const laneUnit = isKD2Module() ? unit.split('||').slice(1).join('||') : unit;
 
             // ── Lane assignment for overlapping bars ─────────────────────
             // Sort by start date so we process left-to-right
@@ -2398,8 +3086,9 @@ function renderGantt(plans, startDate, endDate) {
                 }
 
                 const tip = [
-                    `${task.vehicle}  ${task.vehicle_no}`,
+                    isKD2Module() ? `${task.battalion_code || '—'}  ${task.vehicle}  ${task.vehicle_no}` : `${task.vehicle}  ${task.vehicle_no}`,
                     `Station      : ${task.process_station}`,
+                    isKD2Module() ? `Work Center  : ${getRowCode(task)}` : '',
                     `Planned      : ${formatDate(task.start_date)} → ${formatDate(task.end_date)}`,
                     actualStart ? `Actual Start : ${formatDate(actualStart)}` : '',
                     task.progress?.completion_date ? `Completed    : ${formatDate(task.progress.completion_date)}` : '',
@@ -2407,35 +3096,48 @@ function renderGantt(plans, startDate, endDate) {
                     task.remark ? `Remark       : ${task.remark}` : '',
                 ].filter(Boolean).join('\n');
 
-                // Use absolute top instead of the old top:50% transform
-                const laneUp = _ganttEditMode ? `<button class="gc-bar-lane gc-bar-lane-up"   data-plan-id="${task.id}" title="Move lane up">&#9650;</button>` : '';
-                const laneDown = _ganttEditMode ? `<button class="gc-bar-lane gc-bar-lane-dn"   data-plan-id="${task.id}" title="Move lane down">&#9660;</button>` : '';
-                const editBtns = _ganttEditMode ? `
-          <button class="gc-bar-edit"   data-plan-id="${task.id}" title="Edit block">&#9998;</button>
-          <button class="gc-bar-delete" data-plan-id="${task.id}" title="Delete block">&#x2715;</button>` : '';
-                return `<div class="gc-bar${extraCls}"
+                const menuIsOpen = _openGanttBlockMenuPlanId === task.id;
+                const isSelected = _selectedGanttPlanIds.has(task.id);
+                const blockMenu = _ganttEditMode ? `
+          <button type="button" class="gc-bar-select${isSelected ? ' gc-bar-select-active' : ''}" data-plan-id="${task.id}" title="Select block" aria-label="Select block" aria-pressed="${isSelected ? 'true' : 'false'}"></button>
+          <button type="button" class="gc-bar-menu-trigger" data-plan-id="${task.id}" title="Block options" aria-label="Block options" aria-expanded="${menuIsOpen ? 'true' : 'false'}">&#8942;</button>
+          <div class="gc-bar-menu" role="menu" aria-label="Block options">
+            <div class="gc-bar-menu-head">
+              <button type="button" class="gc-bar-menu-close" data-plan-id="${task.id}" aria-label="Close block options">&times;</button>
+            </div>
+            <button type="button" class="gc-bar-menu-item gc-bar-lane-up" data-plan-id="${task.id}" role="menuitem">Move up</button>
+            <button type="button" class="gc-bar-menu-item gc-bar-lane-dn" data-plan-id="${task.id}" role="menuitem">Move down</button>
+            <button type="button" class="gc-bar-menu-item gc-bar-menu-edit" data-plan-id="${task.id}" role="menuitem">Edit</button>
+            <button type="button" class="gc-bar-menu-item gc-bar-menu-delete gc-bar-menu-danger" data-plan-id="${task.id}" role="menuitem">Delete</button>
+          </div>` : '';
+                return `<div class="gc-bar${extraCls}${menuIsOpen ? ' gc-bar-menu-open' : ''}${isSelected ? ' gc-bar-selected' : ''}"
           data-plan-id="${task.id}"
           style="left:${left}px;width:${width}px;height:${BAR_H}px;top:${topPx}px;transform:none;background:${color}${shadow}"
           title="${esc(tip)}">
-          ${laneUp}${laneDown}
           ${actualStartMarker}
-          <span class="gc-bar-text">${esc(task.process_station)}</span>
-          ${editBtns}
+          <span class="gc-bar-text">${esc(isKD2Module() ? `${getRowCode(task)} · ${task.process_station}` : task.process_station)}</span>
+          ${blockMenu}
         </div>`;
             }).join('');
 
+            const rowMenuOpen = _ganttEditMode && positioned.some(item => item.task.id === _openGanttBlockMenuPlanId);
+            const anchorTask = positioned[0]?.task || null;
+            const laneSelected = anchorTask
+                ? currentData.filter(row => samePlanLane(row, anchorTask)).every(row => _selectedGanttPlanIds.has(row.id))
+                : false;
             bodyHtml += `
-        <div class="gr" style="height:${rowH}px">
+        <div class="gr${rowMenuOpen ? ' gc-row-menu-open' : ''}" style="height:${rowH}px">
           <div class="gr-label gr-unit-label" style="width:${GANTT_LABEL_W}px">
             <span class="gr-unit-dot"></span>
-            <span class="gr-unit-name">${esc(unit)}</span>
-            ${getUnitCode(vehicle, unit) ? `<span class="gr-unit-code">${esc(getUnitCode(vehicle, unit))}</span>` : ''}
+            <span class="gr-unit-name">${esc(isKD2Module() ? `${laneVehicle} · ${unitLabel(laneVehicle, laneUnit)}` : unitLabel(laneVehicle, laneUnit))}</span>
+            ${isKD2Module() && _ganttEditMode && _ganttSelectLaneMode && anchorTask ? `<button type="button" class="gantt-lane-select-btn" data-gantt-lane-select="${anchorTask.id}" aria-pressed="${laneSelected ? 'true' : 'false'}">${laneSelected ? 'Clear lane' : 'Select lane'}</button>` : ''}
           </div>
           <div class="gr-track" style="width:${totalW}px;height:${rowH}px">
             ${bgCells}
             ${bars}
           </div>
         </div>`;
+            });
         });
     });
 
@@ -2453,16 +3155,27 @@ function renderGantt(plans, startDate, endDate) {
     // ── 8. Legend ──────────────────────────────────────────────────
     const legend = document.getElementById('ganttLegend');
     if (legend) {
-        legend.innerHTML = Object.entries(_stationColors).map(([name, color]) => `
-      <div class="gantt-legend-item">
-        <span class="gantt-legend-dot" style="background:${color}"></span>
-        <span class="gantt-legend-label">${esc(name)}</span>
-      </div>`).join('');
+        const legendStations = [...new Set(visible.map(plan => String(plan.process_station || '').trim()).filter(Boolean))]
+            .sort((a, b) => a.localeCompare(b, undefined, { numeric: true }));
+        legend.innerHTML = legendStations.length ? `
+      <div class="gantt-legend-head">
+        <span class="gantt-legend-title">Visible Stations</span>
+        <span class="gantt-legend-meta">${legendStations.length} station${legendStations.length === 1 ? '' : 's'} in range</span>
+      </div>
+      <div class="gantt-legend-grid">
+        ${legendStations.map(name => `
+          <div class="gantt-legend-item">
+            <span class="gantt-legend-dot" style="background:${ganttStationColor(name)}"></span>
+            <span class="gantt-legend-label">${esc(name)}</span>
+          </div>
+        `).join('')}
+      </div>` : '';
     }
+    syncGanttLegendUi();
 
     // ── 9. Show zone key bar if zones exist ────────────────────────
     const zoneKeyEl = document.getElementById('ganttZoneKey');
-    if (zoneKeyEl) zoneKeyEl.style.display = SPECIAL_ZONES.length ? 'flex' : 'none';
+    if (zoneKeyEl) zoneKeyEl.style.display = specialZones.length ? 'flex' : 'none';
 
     // ── 10. Auto-scroll to today ───────────────────────────────────
     if (dayIndex[today] !== undefined) {
@@ -2507,7 +3220,7 @@ function buildReportRows(typeKey, fromDate, toDate, category) {
 
     if (fromDate) rows = rows.filter(r => r.start_date >= fromDate);
     if (toDate) rows = rows.filter(r => r.start_date <= toDate);
-    if (category) rows = rows.filter(r => getCategory(r.process_station) === category);
+    if (category) rows = rows.filter(r => getModuleCategory(r.process_station, r) === category);
 
     return rows;
 }
@@ -2518,7 +3231,8 @@ const REPORT_COLUMNS = [
     { header: 'Vehicle', key: r => r.vehicle },
     { header: 'Unit', key: r => r.vehicle_no },
     { header: 'Station', key: r => r.process_station },
-    { header: 'Category', key: r => getCategory(r.process_station) },
+    { header: 'Code / Work Center', key: r => getRowCode(r) },
+    { header: 'Category', key: r => getModuleCategory(r.process_station, r) },
     { header: 'Week', key: r => r.week || '—' },
     { header: 'Planned Start', key: r => formatDate(r.start_date) },
     { header: 'Planned End', key: r => formatDate(r.end_date) },
@@ -2577,6 +3291,10 @@ function exportPDF(typeKey, fromDate, toDate, category) {
     const now = new Date().toLocaleString('en-GB');
     const stats = buildSummaryStats(rows);
     const vehicle = getVal('filterVehicle') || 'All';
+    const battalion = isKD2Module() ? (getVal('filterBattalion') || 'All') : '';
+    const moduleBadge = getModuleBadge();
+    const moduleTitle = getModuleReportTitle();
+    const moduleSubtitle = getModuleReportSubtitle();
 
     // ── White page background ─────────────────────────────────────────
     doc.setFillColor(255, 255, 255);
@@ -2586,24 +3304,24 @@ function exportPDF(typeKey, fromDate, toDate, category) {
     doc.setFillColor(30, 58, 138);      // navy
     doc.rect(0, 0, PAGE_W, 20, 'F');
 
-    // KD1 badge box
+    // Module badge box
     doc.setFillColor(59, 130, 246);
     doc.roundedRect(MARGIN, 4, 18, 12, 2, 2, 'F');
     doc.setTextColor(255, 255, 255);
     doc.setFont('helvetica', 'bold');
     doc.setFontSize(9);
-    doc.text('KD1', MARGIN + 9, 11.5, { align: 'center' });
+    doc.text(moduleBadge, MARGIN + 9, 11.5, { align: 'center' });
 
     // Title
     doc.setFontSize(13);
     doc.setTextColor(255, 255, 255);
-    doc.text('Assembly Control System', MARGIN + 22, 10);
+    doc.text(moduleTitle, MARGIN + 22, 10);
 
     // Sub-title / report label
     doc.setFont('helvetica', 'normal');
     doc.setFontSize(8);
     doc.setTextColor(147, 197, 253);   // light blue
-    doc.text(def.label.toUpperCase(), MARGIN + 22, 16);
+    doc.text(`${moduleSubtitle.toUpperCase()} · ${def.label.toUpperCase()}`, MARGIN + 22, 16);
 
     // Generated timestamp (right-aligned)
     doc.setFontSize(7.5);
@@ -2616,6 +3334,7 @@ function exportPDF(typeKey, fromDate, toDate, category) {
     const chipH = 6;
     const chipPad = 3;
     const chips = [];
+    if (battalion && battalion !== 'All') chips.push(`Battalion: ${battalion}`);
     if (vehicle !== 'All') chips.push(`Vehicle: ${vehicle}`);
     if (category) chips.push(`Category: ${category}`);
     if (fromDate || toDate) chips.push(`Date: ${fromDate || '…'} → ${toDate || '…'}`);
@@ -2773,7 +3492,7 @@ function exportPDF(typeKey, fromDate, toDate, category) {
                 doc.setTextColor(186, 230, 253);
                 doc.setFont('helvetica', 'normal');
                 doc.setFontSize(6.5);
-                doc.text('KD1 Assembly Control System — ' + def.label, MARGIN, 4.5);
+                doc.text(`${moduleBadge} ${moduleTitle} — ${def.label}`, MARGIN, 4.5);
             }
             // Footer separator line
             const pY = PAGE_H - 8;
@@ -2784,7 +3503,7 @@ function exportPDF(typeKey, fromDate, toDate, category) {
             doc.setFontSize(6.5);
             doc.setTextColor(148, 163, 184);
             doc.setFont('helvetica', 'normal');
-            doc.text('KD1 Assembly Control System — Confidential', MARGIN, pY + 3.5);
+            doc.text(`${moduleBadge} ${moduleTitle} — Confidential`, MARGIN, pY + 3.5);
             doc.text(
                 `Page ${data.pageNumber} of ${doc.internal.getNumberOfPages()}`,
                 PAGE_W - MARGIN, pY + 3.5, { align: 'right' }
@@ -2795,7 +3514,7 @@ function exportPDF(typeKey, fromDate, toDate, category) {
     // ── Save ─────────────────────────────────────────────────────────
     const catSuffix = category ? `_${category.replace(/\s+/g, '_')}` : '';
     const dateSuffix = new Date().toISOString().slice(0, 10);
-    doc.save(`KD1_${def.label.replace(/\s+/g, '_')}${catSuffix}_${dateSuffix}.pdf`);
+    doc.save(`${moduleBadge}_${def.label.replace(/\s+/g, '_')}${catSuffix}_${dateSuffix}.pdf`);
     showToast(`PDF exported — ${rows.length} rows`, 'success');
 }
 
@@ -2814,6 +3533,8 @@ async function exportExcel(typeKey, fromDate, toDate, category) {
     const stats = buildSummaryStats(rows);
 
     // ── Active filter labels for title ─────────────────────────────
+    const moduleBadge = getModuleBadge();
+    const fBattalion = isKD2Module() ? getVal('filterBattalion') : '';
     const fVehicle = getVal('filterVehicle');
     const fUnit = getVal('filterUnit');
     const fWeek = getVal('filterWeek');
@@ -2822,7 +3543,8 @@ async function exportExcel(typeKey, fromDate, toDate, category) {
     const fFrom = fromDate || getVal('filterStartDate');
     const fTo = toDate || getVal('filterEndDate');
 
-    const titleParts = ['KD1'];
+    const titleParts = [moduleBadge];
+    if (fBattalion) titleParts.push(fBattalion);
     if (fVehicle) titleParts.push(fVehicle);
     if (fUnit) titleParts.push(fUnit);
     if (fCategory) titleParts.push(fCategory);
@@ -2830,8 +3552,11 @@ async function exportExcel(typeKey, fromDate, toDate, category) {
     const sheetTitle = titleParts.join(' · ');
 
     const filterChips = [];
+    if (fBattalion) filterChips.push('Battalion: ' + fBattalion);
     if (fVehicle) filterChips.push('Vehicle: ' + fVehicle);
-    if (fUnit) filterChips.push('Unit: ' + (getUnitCode(fVehicle, fUnit) ? fUnit + ' · ' + getUnitCode(fVehicle, fUnit) : fUnit));
+    if (fUnit) filterChips.push(isKD2Module()
+        ? 'Unit: ' + fUnit
+        : 'Unit: ' + (getUnitCode(fVehicle, fUnit) ? fUnit + ' · ' + getUnitCode(fVehicle, fUnit) : fUnit));
     if (fWeek) filterChips.push('Week: ' + fWeek);
     if (fTF && fTF !== 'custom') filterChips.push('Time Frame: ' + fTF);
     if (fFrom || fTo) filterChips.push('Dates: ' + (fFrom || '…') + ' → ' + (fTo || '…'));
@@ -2867,7 +3592,7 @@ async function exportExcel(typeKey, fromDate, toDate, category) {
     }
 
     const wb = new ExcelJS.Workbook();
-    wb.creator = 'KD1 Assembly Control System';
+    wb.creator = `${moduleBadge} ${getModuleReportTitle()}`;
     wb.created = new Date();
 
     // ════════════════════════════════════════════════════════════════
@@ -2883,9 +3608,10 @@ async function exportExcel(typeKey, fromDate, toDate, category) {
         { header: '#', width: 5, key: (r, i) => i + 1 },
         { header: 'Vehicle', width: 10, key: r => r.vehicle },
         { header: 'Unit', width: 10, key: r => r.vehicle_no },
-        { header: 'Unit Code', width: 16, key: r => getUnitCode(r.vehicle, r.vehicle_no) || '—' },
+        { header: isKD2Module() ? 'Battalion' : 'Unit Code', width: 16, key: r => isKD2Module() ? (r.battalion_code || '—') : (getUnitCode(r.vehicle, r.vehicle_no) || '—') },
         { header: 'Station', width: 26, key: r => r.process_station },
-        { header: 'Category', width: 14, key: r => getCategory(r.process_station) },
+        { header: 'Code / Work Center', width: 18, key: r => getRowCode(r) },
+        { header: 'Category', width: 16, key: r => getModuleCategory(r.process_station, r) },
         { header: 'Week', width: 8, key: r => r.week || '—' },
         { header: 'Planned Start', width: 14, key: r => r.start_date || '—' },
         { header: 'Planned End', width: 14, key: r => r.end_date || '—' },
@@ -2971,7 +3697,7 @@ async function exportExcel(typeKey, fromDate, toDate, category) {
                 cell.alignment = { horizontal: 'center', vertical: 'middle' };
             }
             // Unit Code — muted
-            else if (colHdr === 'Unit Code') {
+            else if (colHdr === 'Unit Code' || colHdr === 'Battalion') {
                 cell.font = { name: 'Calibri', size: 8, italic: true, color: { argb: MUTE } };
                 cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: rowBg } };
                 cell.alignment = { horizontal: 'left', vertical: 'middle', indent: 1 };
@@ -3115,7 +3841,7 @@ async function exportExcel(typeKey, fromDate, toDate, category) {
     const blob = new Blob([buffer], { type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' });
     const url = URL.createObjectURL(blob);
     const a = document.createElement('a');
-    a.href = url; a.download = 'KD1_' + def.label.replace(/\s+/g, '_') + '_' + new Date().toISOString().slice(0, 10) + '.xlsx';
+    a.href = url; a.download = moduleBadge + '_' + def.label.replace(/\s+/g, '_') + '_' + new Date().toISOString().slice(0, 10) + '.xlsx';
     document.body.appendChild(a); a.click();
     document.body.removeChild(a); URL.revokeObjectURL(url);
     showToast(`Excel exported — ${rows.length} rows`, 'success');
@@ -3131,11 +3857,12 @@ function exportVpxPDF() {
         showToast('No data to export.', 'error');
         return;
     }
+    const meta = getVpxDisplayMeta();
 
     // Apply same category filter as the table/VPX view
     const _vpxCategory = getVal('filterCategory');
     const vpxData = _vpxCategory
-        ? currentData.filter(r => getCategory(r.process_station) === _vpxCategory)
+        ? currentData.filter(r => getModuleCategory(r.process_station, r) === _vpxCategory)
         : currentData;
 
     if (!vpxData.length) {
@@ -3143,16 +3870,7 @@ function exportVpxPDF() {
         return;
     }
 
-    // ── Build dynamic title from active filters ────────────────────
-    const _fVehicle = getVal('filterVehicle');
-    const _fUnit = getVal('filterUnit');
-    const _fCategory = getVal('filterCategory');
-    const _titleParts = ['KD1'];
-    if (_fVehicle) _titleParts.push(_fVehicle);
-    if (_fUnit) _titleParts.push(_fUnit);
-    if (_fCategory) _titleParts.push(_fCategory);
-    _titleParts.push('Vehicle Production Progress');
-    const _mainTitle = _titleParts.join(' ');
+    const _mainTitle = getVpxTitleParts().join(' ');
 
     const { jsPDF } = window.jspdf;
     const doc = new jsPDF({ orientation: 'landscape', unit: 'mm', format: 'a4' });
@@ -3181,7 +3899,7 @@ function exportVpxPDF() {
     doc.setFont('helvetica', 'normal');
     doc.setFontSize(7);
     doc.setTextColor(100, 116, 139);
-    doc.text('Station-by-Station Planned vs Actual', PAGE_W - MARGIN, 12, { align: 'right' });
+    doc.text(meta.exportSubtitle, PAGE_W - MARGIN, 12, { align: 'right' });
     doc.text('Generated: ' + now, PAGE_W - MARGIN, 17, { align: 'right' });
 
     // Bottom rule under header
@@ -3211,23 +3929,14 @@ function exportVpxPDF() {
 
     // ── Build table data ─────────────────────────────────────────────
     // Determine active columns (same logic as renderVPX)
-    const rowMap = {};
-    vpxData.forEach(task => {
-        const rk = task.vehicle + '||' + task.vehicle_no;
-        if (!rowMap[rk]) rowMap[rk] = { vehicle: task.vehicle, vehicle_no: task.vehicle_no, stations: {} };
-        const ex = rowMap[rk].stations[task.process_station];
-        if (!ex || task.end_date > ex.end_date) rowMap[rk].stations[task.process_station] = task;
-    });
-
-    const rows = Object.values(rowMap).sort((a, b) => {
-        const vc = vehicleSort(a.vehicle, b.vehicle);
-        return vc !== 0 ? vc : naturalSort(a.vehicle_no, b.vehicle_no);
-    });
-
-    const usedStations = new Set(vpxData.map(t => t.process_station));
-    const activeCols = VPX_COLUMNS.filter(col =>
-        rows.some(row => { const k = col.resolve(row.vehicle); return k !== null && usedStations.has(k); })
+    const rows = buildVpxRows(vpxData);
+    const activeCols = buildVpxColumns(vpxData).filter(col =>
+        rows.some(row => { const k = col.resolve(row.vehicle); return k !== null && row.stations[k]; })
     );
+    if (!activeCols.length) {
+        showToast(meta.noColumnsMessage, 'error');
+        return;
+    }
 
     // Status colour helper
     function statusDotRGB(status) {
@@ -3239,12 +3948,12 @@ function exportVpxPDF() {
     }
 
     // Column header
-    const head = [['Vehicle · Unit', ...activeCols.map(c => c.code)]];
+    const head = [[meta.headerLabel, ...activeCols.map(c => c.code)]];
 
     // Rows
     const body = rows.map(row => {
         return [
-            row.vehicle + '\n' + unitLabel(row.vehicle, row.vehicle_no),
+            getVpxExportLabel(row),
             ...activeCols.map(col => {
                 const k = col.resolve(row.vehicle);
                 if (k === null) return 'N/A';
@@ -3347,6 +4056,9 @@ function exportVpxPDF() {
                 const col = activeCols[data.column.index - 1];
                 if (col) {
                     const grpColors = {
+                        'Welding': [153, 27, 27],
+                        'Machining': [15, 118, 110],
+                        'Shot Blasting and Painting': [107, 33, 168],
                         'Assembly': [71, 85, 105],
                         'Processing': [120, 53, 15],
                         'Final Inspection': [6, 95, 70],
@@ -3372,11 +4084,11 @@ function exportVpxPDF() {
     doc.setFont('helvetica', 'normal');
     doc.setFontSize(6);
     doc.setTextColor(100, 116, 139);
-    doc.text('KD1 Assembly Control System · ' + _mainTitle, MARGIN, fY);
+    doc.text(meta.footerApp + ' · ' + _mainTitle, MARGIN, fY);
     doc.text(`Page 1 of ${doc.internal.getNumberOfPages()}`, PAGE_W - MARGIN, fY, { align: 'right' });
 
     const ds = new Date().toISOString().slice(0, 10);
-    doc.save('KD1_VehicleProgress_' + ds + '.pdf');
+    doc.save(meta.filenamePrefix + '_' + ds + '.pdf');
     showToast('PDF exported successfully.', 'success');
 }
 
@@ -3389,40 +4101,22 @@ async function exportVpxExcel() {
     if (typeof ExcelJS === 'undefined') {
         showToast('ExcelJS not loaded yet — please wait a moment and try again.', 'error'); return;
     }
+    const meta = getVpxDisplayMeta();
 
-    const _fVehicle = getVal('filterVehicle');
-    const _fUnit = getVal('filterUnit');
     const _fCategory = getVal('filterCategory');
 
     const vpxData = _fCategory
-        ? currentData.filter(r => getCategory(r.process_station) === _fCategory)
+        ? currentData.filter(r => getModuleCategory(r.process_station, r) === _fCategory)
         : currentData;
     if (!vpxData.length) { showToast('No data matches the current filters.', 'error'); return; }
 
-    // ── Build matrix rows ────────────────────────────────────────────
-    const rowMap = {};
-    vpxData.forEach(task => {
-        const rk = task.vehicle + '||' + task.vehicle_no;
-        if (!rowMap[rk]) rowMap[rk] = { vehicle: task.vehicle, vehicle_no: task.vehicle_no, stations: {} };
-        const ex = rowMap[rk].stations[task.process_station];
-        if (!ex || task.end_date > ex.end_date) rowMap[rk].stations[task.process_station] = task;
-    });
-    const rows = Object.values(rowMap).sort((a, b) => {
-        const vc = vehicleSort(a.vehicle, b.vehicle);
-        return vc !== 0 ? vc : naturalSort(a.vehicle_no, b.vehicle_no);
-    });
-    const usedStations = new Set(vpxData.map(t => t.process_station));
-    const activeCols = VPX_COLUMNS.filter(col =>
-        rows.some(row => { const k = col.resolve(row.vehicle); return k !== null && usedStations.has(k); })
+    const rows = buildVpxRows(vpxData);
+    const activeCols = buildVpxColumns(vpxData).filter(col =>
+        rows.some(row => { const k = col.resolve(row.vehicle); return k !== null && row.stations[k]; })
     );
+    if (!activeCols.length) { showToast(meta.noColumnsMessage, 'error'); return; }
 
-    // ── Title ────────────────────────────────────────────────────────
-    const titleParts = ['KD1'];
-    if (_fVehicle) titleParts.push(_fVehicle);
-    if (_fUnit) titleParts.push(_fUnit);
-    if (_fCategory) titleParts.push(_fCategory);
-    titleParts.push('Vehicle Production Progress');
-    const sheetTitle = titleParts.join(' ');
+    const sheetTitle = getVpxTitleParts().join(' ');
 
     // ── Colour helpers ───────────────────────────────────────────────
     // ExcelJS argb = 'FF' + hex (no #)
@@ -3435,6 +4129,9 @@ async function exportVpxExcel() {
         'N/A': { bg: 'FFf1f5f9', fg: 'FFcbd5e1', dot: null },
     };
     const GRP_COLOR = {
+        'Welding': { bg: 'FF991b1b', fg: 'FFffffff' },
+        'Machining': { bg: 'FF0f766e', fg: 'FFffffff' },
+        'Shot Blasting and Painting': { bg: 'FF6b21a8', fg: 'FFffffff' },
         'Assembly': { bg: 'FF1e3a8a', fg: 'FFffffff' },
         'Processing': { bg: 'FF78350f', fg: 'FFffffff' },
         'Final Inspection': { bg: 'FF064e3b', fg: 'FFffffff' },
@@ -3459,7 +4156,7 @@ async function exportVpxExcel() {
     //  SHEET 1 — VPX Matrix
     // ════════════════════════════════════════════════════════════════
     const wb = new ExcelJS.Workbook();
-    wb.creator = 'KD1 Assembly Control System';
+    wb.creator = meta.workbookCreator;
     wb.created = new Date();
 
     const ws = wb.addWorksheet('VPX Matrix', {
@@ -3480,7 +4177,7 @@ async function exportVpxExcel() {
     ws.mergeCells(1, 1, 1, totalCols);
 
     // ── Row 2: Sub-info ────────────────────────────────────────────
-    ws.addRow(['Station-by-Station Planned vs Actual  |  Generated: ' + new Date().toLocaleString('en-GB')]);
+    ws.addRow([meta.exportSubtitle + '  |  Generated: ' + new Date().toLocaleString('en-GB')]);
     const subRow = ws.getRow(2);
     subRow.height = 15;
     const subCell = ws.getCell('A2');
@@ -3522,7 +4219,7 @@ async function exportVpxExcel() {
     });
     // Style the unit column header cell in row 4
     const unitHdr4 = ws.getCell(4, 1);
-    unitHdr4.value = 'Vehicle · Unit';
+    unitHdr4.value = meta.headerLabel;
     unitHdr4.font = { name: 'Calibri', size: 9, bold: true, color: { argb: 'FFffffff' } };
     unitHdr4.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FF1e293b' } };
     unitHdr4.alignment = { horizontal: 'center', vertical: 'middle' };
@@ -3558,7 +4255,7 @@ async function exportVpxExcel() {
 
     rows.forEach((row, ri) => {
         // Vehicle group separator row
-        if (row.vehicle !== prevVehicle) {
+        if (!isKD2Module() && row.vehicle !== prevVehicle) {
             ws.addRow([row.vehicle]);
             const vRow = ws.getRow(excelRowIdx);
             vRow.height = 14;
@@ -3573,7 +4270,7 @@ async function exportVpxExcel() {
         }
 
         // Unit data row
-        const dataRowArr = [unitLabel(row.vehicle, row.vehicle_no)];
+        const dataRowArr = [getVpxExportLabel(row)];
         activeCols.forEach(col => {
             const k = col.resolve(row.vehicle);
             if (k === null) { dataRowArr.push('N/A'); return; }
@@ -3670,7 +4367,7 @@ async function exportVpxExcel() {
     wsKey.getColumn(5).width = 22;
 
     // Title
-    wsKey.addRow(['', 'KD1 VPX — Key & Legend']);
+    wsKey.addRow(['', meta.keyTitle]);
     wsKey.mergeCells(1, 2, 1, 5);
     const keyTitle = wsKey.getCell(1, 2);
     keyTitle.font = { name: 'Calibri', size: 14, bold: true, color: { argb: 'FF1e293b' } };
@@ -3775,7 +4472,7 @@ async function exportVpxExcel() {
     const url = URL.createObjectURL(blob);
     const a = document.createElement('a');
     a.href = url;
-    a.download = 'KD1_VehicleProgress_' + new Date().toISOString().slice(0, 10) + '.xlsx';
+    a.download = meta.filenamePrefix + '_' + new Date().toISOString().slice(0, 10) + '.xlsx';
     document.body.appendChild(a);
     a.click();
     document.body.removeChild(a);
@@ -3790,6 +4487,7 @@ function wireReportModal() {
     const close = () => { overlay.style.display = 'none'; };
 
     document.getElementById('btnReports').addEventListener('click', () => {
+        syncReportCategoryOptions();
         updateReportPreview();
         overlay.style.display = 'flex';
     });
@@ -3843,6 +4541,7 @@ const AUDIT_PAGE_SIZE = 50;
    ────────────────────────────────────────────────────────────────── */
 
 function openUnitCodes() {
+    setUnitCodesShell();
     document.getElementById('unitCodesOverlay').style.display = 'flex';
     loadUcTable();
 }
@@ -3853,13 +4552,49 @@ function closeUnitCodes() {
 
 async function loadUcTable() {
     const tbody = document.getElementById('ucTableBody');
-    tbody.innerHTML = '<tr><td colspan="4" class="table-empty"><span class="spinner"></span> Loading…</td></tr>';
+    const colSpan = isKD2Module() ? 5 : 4;
+    tbody.innerHTML = `<tr><td colspan="${colSpan}" class="table-empty"><span class="spinner"></span> Loading…</td></tr>`;
     try {
-        const { data, error } = await db.from('vehicle_units')
-            .select('*');
+        if (isKD2Module()) {
+            const [{ data: units, error: unitsError }, { data: battalions, error: battalionError }] = await Promise.all([
+                db.from('kd2_vehicle_units').select('*'),
+                db.from('kd2_battalions').select('id, battalion_code'),
+            ]);
+            if (unitsError) throw unitsError;
+            if (battalionError) throw battalionError;
+
+            const battalionMap = Object.fromEntries((battalions || []).map(row => [row.id, row.battalion_code]));
+            const sorted = (units || []).slice().sort((a, b) => {
+                const battalionCmp = String(battalionMap[a.battalion_id] || '').localeCompare(String(battalionMap[b.battalion_id] || ''), undefined, { numeric: true });
+                if (battalionCmp !== 0) return battalionCmp;
+                const vc = vehicleSort(a.vehicle_type, b.vehicle_type);
+                if (vc !== 0) return vc;
+                return (a.unit_serial || 0) - (b.unit_serial || 0);
+            });
+
+            document.getElementById('ucCount').textContent = sorted.length + ' units';
+            if (!sorted.length) {
+                tbody.innerHTML = '<tr><td colspan="5" class="table-empty">No KD2 unit codes yet. Click "Add / Edit Code" to begin.</td></tr>';
+                return;
+            }
+
+            tbody.innerHTML = sorted.map(r => `
+      <tr>
+        <td>${esc(battalionMap[r.battalion_id] || '—')}</td>
+        <td>${esc(r.vehicle_type)}</td>
+        <td>${esc(r.unit_label || `${r.vehicle_type}-${String(r.unit_serial).padStart(2, '0')}`)}</td>
+        <td class="mono">${esc(r.unit_code || '')}</td>
+        <td>
+          <button class="btn btn-xs btn-ghost" onclick="openUcForm(${r.id})">Edit</button>
+          <button class="btn btn-xs btn-danger" onclick="deleteUnitCode(${r.id})">Delete</button>
+        </td>
+      </tr>`).join('');
+            return;
+        }
+
+        const { data, error } = await db.from('vehicle_units').select('*');
         if (error) throw error;
 
-        // Sort properly: vehicle type order, then natural unit number (M1, M2 … M10, not M1, M10, M2)
         const sorted = (data || []).slice().sort((a, b) => {
             const vc = vehicleSort(a.vehicle, b.vehicle);
             if (vc !== 0) return vc;
@@ -3882,22 +4617,60 @@ async function loadUcTable() {
         </td>
       </tr>`).join('');
     } catch (e) {
-        tbody.innerHTML = '<tr><td colspan="4" class="table-empty">Error loading unit codes.</td></tr>';
+        tbody.innerHTML = `<tr><td colspan="${colSpan}" class="table-empty">Error loading unit codes.</td></tr>`;
         console.error(e);
     }
 }
 
 async function openUcForm(id) {
+    setUnitCodesShell();
     // Hide table + toolbar so form footer (Save button) is not clipped
     document.getElementById('ucTableBody').closest('.um-table-wrap').style.display = 'none';
     document.querySelector('#unitCodesOverlay .um-toolbar').style.display = 'none';
     document.getElementById('ucForm').style.display = 'block';
-    document.getElementById('ucFormTitle').textContent = id ? 'Edit Unit Code' : 'Add Unit Code';
+    document.getElementById('ucFormTitle').textContent = id ? (isKD2Module() ? 'Edit KD2 Unit Code' : 'Edit Unit Code') : (isKD2Module() ? 'Add KD2 Unit Code' : 'Add Unit Code');
     document.getElementById('ucFormError').textContent = '';
 
-    // Populate vehicle select from current plan data
-    const vehicles = [...new Set(currentData.map(r => r.vehicle))].sort(vehicleSort);
     const vSel = document.getElementById('ucVehicle');
+    const bSel = document.getElementById('ucBattalion');
+    const unitText = document.getElementById('ucUnitText');
+
+    if (isKD2Module()) {
+        vSel.innerHTML = ['K9', 'K10', 'K11'].map(v => `<option value="${v}">${v}</option>`).join('');
+        let battalions = [];
+        try {
+            battalions = await loadKd2Battalions();
+        } catch (error) {
+            document.getElementById('ucFormError').textContent = error.message;
+            return;
+        }
+        bSel.innerHTML = battalions.map(row => `<option value="${row.id}">${esc(getKd2BattalionOptionLabel(row))}</option>`).join('');
+
+        if (id) {
+            const { data } = await db.from('kd2_vehicle_units').select('*').eq('id', id).maybeSingle();
+            if (data) {
+                document.getElementById('ucEditId').value = id;
+                bSel.value = String(data.battalion_id);
+                vSel.value = data.vehicle_type;
+                unitText.value = data.unit_label || `M${data.unit_serial}`;
+                document.getElementById('ucCode').value = data.unit_code || '';
+                return;
+            }
+        }
+
+        const currentBattalion = getVal('filterBattalion');
+        const currentBattalionRow = battalions.find(row => row.battalion_code === currentBattalion);
+        const battalionOption = currentBattalionRow ? [...bSel.options].find(opt => opt.value === String(currentBattalionRow.id)) : null;
+        if (battalionOption) bSel.value = battalionOption.value;
+        const currentVehicle = getVal('filterVehicle');
+        if (['K9', 'K10', 'K11'].includes(currentVehicle)) vSel.value = currentVehicle;
+        document.getElementById('ucEditId').value = '';
+        unitText.value = '';
+        document.getElementById('ucCode').value = '';
+        return;
+    }
+
+    const vehicles = [...new Set(currentData.map(r => r.vehicle))].sort(vehicleSort);
     vSel.innerHTML = vehicles.map(v => `<option value="${esc(v)}">${esc(v)}</option>`).join('');
 
     if (id) {
@@ -3905,21 +4678,29 @@ async function openUcForm(id) {
         if (data) {
             document.getElementById('ucEditId').value = id;
             vSel.value = data.vehicle;
-            populateUcUnits();
+            await populateUcUnits();
             document.getElementById('ucUnit').value = data.vehicle_no;
             document.getElementById('ucCode').value = data.unit_code;
             return;
         }
     }
     document.getElementById('ucEditId').value = '';
-    populateUcUnits();
+    await populateUcUnits();
+    if (unitText) unitText.value = '';
     document.getElementById('ucCode').value = '';
 }
 
-function populateUcUnits() {
+async function populateUcUnits() {
     const vehicle = document.getElementById('ucVehicle')?.value;
-    const units = [...new Set(currentData.filter(r => r.vehicle === vehicle).map(r => r.vehicle_no))].sort(naturalSort);
     const uSel = document.getElementById('ucUnit');
+    if (!uSel) return;
+
+    if (isKD2Module()) {
+        uSel.innerHTML = '';
+        return;
+    }
+
+    const units = [...new Set(currentData.filter(r => r.vehicle === vehicle).map(r => r.vehicle_no))].sort(naturalSort);
     uSel.innerHTML = units.map(u => `<option value="${esc(u)}">${esc(u)}</option>`).join('');
 }
 
@@ -3933,13 +4714,61 @@ function closeUcForm() {
 async function saveUnitCode() {
     const id = document.getElementById('ucEditId').value;
     const vehicle = document.getElementById('ucVehicle').value.trim();
-    const unit = document.getElementById('ucUnit').value.trim();
+    const unit = isKD2Module()
+        ? document.getElementById('ucUnitText').value.trim()
+        : document.getElementById('ucUnit').value.trim();
     const code = document.getElementById('ucCode').value.trim();
     const errEl = document.getElementById('ucFormError');
 
     if (!vehicle || !unit || !code) { errEl.textContent = 'All fields are required.'; return; }
 
     try {
+        if (isKD2Module()) {
+            const battalionId = parseInt(document.getElementById('ucBattalion').value, 10);
+            const unitEntry = normalizeKd2UnitName(document.getElementById('ucUnitText')?.value);
+            if (!battalionId || !unitEntry?.label) {
+                errEl.textContent = 'Battalion, vehicle, unit name, and code are required.';
+                return;
+            }
+            if (!Number.isFinite(unitEntry.unitSerial) || unitEntry.unitSerial <= 0) {
+                errEl.textContent = 'KD2 unit name must end with a positive number, for example M1.';
+                return;
+            }
+
+            let error;
+            if (id) {
+                ({ error } = await db.from('kd2_vehicle_units')
+                    .update({
+                        battalion_id: battalionId,
+                        vehicle_type: vehicle,
+                        unit_serial: unitEntry.unitSerial,
+                        unit_label: unitEntry.label,
+                        unit_code: code,
+                        updated_at: new Date().toISOString()
+                    })
+                    .eq('id', id));
+            } else {
+                ({ error } = await db.from('kd2_vehicle_units')
+                    .upsert({
+                        battalion_id: battalionId,
+                        vehicle_type: vehicle,
+                        unit_serial: unitEntry.unitSerial,
+                        unit_label: unitEntry.label,
+                        unit_code: code,
+                        updated_at: new Date().toISOString()
+                    }, { onConflict: 'battalion_id,vehicle_type,unit_serial' }));
+            }
+            if (error) throw error;
+
+            await loadUnitCodes();
+            populateUnitFilter(getRegisteredUnitNames(getVal('filterVehicle') || null), getVal('filterVehicle') || undefined);
+            refreshAllViews();
+            closeUcForm();
+            loadUcTable();
+            showToast('KD2 unit code saved.', 'success');
+            return;
+        }
+
         let error;
         if (id) {
             ({ error } = await db.from('vehicle_units')
@@ -3954,7 +4783,7 @@ async function saveUnitCode() {
 
         // Refresh in-memory map and re-render
         await loadUnitCodes();
-        populateUnitFilter([...new Set(currentData.map(r => r.vehicle_no).filter(Boolean))].sort(naturalSort));
+        populateUnitFilter(getRegisteredUnitNames());
         refreshAllViews();
         closeUcForm();
         loadUcTable();
@@ -3967,13 +4796,16 @@ async function saveUnitCode() {
 async function deleteUnitCode(id) {
     if (!confirm('Delete this unit code?')) return;
     try {
-        const { error } = await db.from('vehicle_units').delete().eq('id', id);
+        const { error } = await db.from(isKD2Module() ? 'kd2_vehicle_units' : 'vehicle_units').delete().eq('id', id);
         if (error) throw error;
         await loadUnitCodes();
-        populateUnitFilter([...new Set(currentData.map(r => r.vehicle_no).filter(Boolean))].sort(naturalSort));
+        populateUnitFilter(
+            getRegisteredUnitNames(getVal('filterVehicle') || null),
+            getVal('filterVehicle') || undefined
+        );
         refreshAllViews();
         loadUcTable();
-        showToast('Unit code deleted.', 'success');
+        showToast(isKD2Module() ? 'KD2 unit code deleted.' : 'Unit code deleted.', 'success');
     } catch (e) {
         showToast('Delete failed: ' + e.message, 'error');
     }
@@ -4242,7 +5074,13 @@ let _ganttEditMode = false;
 let _ganttSatAllowed = false;
 let _ganttSatAsked = false;
 let _ganttMoveMode = 'single';
+let _ganttSelectLaneMode = false;
+let _openGanttBlockMenuPlanId = null;
+const _selectedGanttPlanIds = new Set();
 const _laneOrder = {};
+let _ganttLegendOpen = false;
+let _ganttFullscreenEventsBound = false;
+let _ganttFullscreenHandlersBound = false;
 
 /* ── Undo / Redo stacks ─────────────────────────────────────────── */
 // Each entry: array of { id, newStart, newEnd, oldStart, oldEnd }
@@ -4250,11 +5088,99 @@ const _undoStack = [];
 const _redoStack = [];
 const _UNDO_LIMIT = 50;
 
+function getGanttCardHost() {
+    return document.getElementById('ganttCard');
+}
+
+function isGanttFullscreen() {
+    const host = getGanttCardHost();
+    return !!host && document.fullscreenElement === host;
+}
+
+function syncGanttFullscreenButtons() {
+    const active = isGanttFullscreen();
+    const label = active ? 'Exit Full Screen' : 'Full Screen';
+    const host = getGanttCardHost();
+    if (host) host.classList.toggle('is-fullscreen', active);
+    [
+        ['btnGanttFullscreen', 'btnGanttFullscreenLabel'],
+        ['btnGanttEditFullscreen', 'btnGanttEditFullscreenLabel'],
+    ].forEach(([buttonId, labelId]) => {
+        const btn = document.getElementById(buttonId);
+        if (btn) {
+            btn.setAttribute('aria-pressed', active ? 'true' : 'false');
+            btn.setAttribute('title', label);
+        }
+        const span = document.getElementById(labelId);
+        if (span) span.textContent = label;
+    });
+}
+
+async function toggleGanttFullscreen(forceOn = null) {
+    const host = getGanttCardHost();
+    if (!host) return;
+    const active = isGanttFullscreen();
+    const shouldEnter = forceOn === null ? !active : !!forceOn;
+    if (shouldEnter === active) {
+        syncGanttFullscreenButtons();
+        return;
+    }
+    try {
+        if (shouldEnter) {
+            if (!host.requestFullscreen) throw new Error('Fullscreen is not supported in this browser.');
+            await host.requestFullscreen();
+        } else if (document.fullscreenElement && document.exitFullscreen) {
+            await document.exitFullscreen();
+        }
+    } catch (error) {
+        showToast('Fullscreen could not be opened: ' + error.message, 'error');
+    } finally {
+        syncGanttFullscreenButtons();
+    }
+}
+
+function bindGanttFullscreenUi() {
+    if (!_ganttFullscreenHandlersBound) {
+        _ganttFullscreenHandlersBound = true;
+        document.getElementById('btnGanttFullscreen')?.addEventListener('click', () => toggleGanttFullscreen());
+        document.getElementById('btnGanttEditFullscreen')?.addEventListener('click', () => toggleGanttFullscreen());
+    }
+    if (!_ganttFullscreenEventsBound) {
+        _ganttFullscreenEventsBound = true;
+        document.addEventListener('fullscreenchange', syncGanttFullscreenButtons);
+    }
+    syncGanttFullscreenButtons();
+}
+
+function syncGanttLegendUi() {
+    const legend = document.getElementById('ganttLegend');
+    const btn = document.getElementById('btnGanttLegendToggle');
+    const label = document.getElementById('btnGanttLegendToggleLabel');
+    const hasContent = !!legend?.innerHTML?.trim();
+    if (legend) legend.style.display = hasContent && _ganttLegendOpen ? '' : 'none';
+    if (btn) {
+        btn.disabled = !hasContent;
+        btn.setAttribute('aria-expanded', hasContent && _ganttLegendOpen ? 'true' : 'false');
+    }
+    if (label) label.textContent = hasContent && _ganttLegendOpen ? 'Hide Legend' : 'Show Legend';
+}
+
 function _pushUndo(changes) {
     _undoStack.push(changes);
     if (_undoStack.length > _UNDO_LIMIT) _undoStack.shift();
     _redoStack.length = 0;      // new action clears redo branch
     _syncUndoButtons();
+}
+
+function _pushUndoAction(action) {
+    _undoStack.push(action);
+    if (_undoStack.length > _UNDO_LIMIT) _undoStack.shift();
+    _redoStack.length = 0;
+    _syncUndoButtons();
+}
+
+if (window.__ppmsShared) {
+    window.__ppmsShared.registerGanttUndoAction = action => _pushUndoAction(action);
 }
 
 function _syncUndoButtons() {
@@ -4280,13 +5206,107 @@ function _clearUndoHistory() {
     _syncUndoButtons();
 }
 
+function _syncSelectedBlockUi() {
+    const validIds = new Set(currentData.map(row => row.id));
+    [..._selectedGanttPlanIds].forEach(id => {
+        if (!validIds.has(id)) _selectedGanttPlanIds.delete(id);
+    });
+    document.querySelectorAll('.gc-bar[data-plan-id]').forEach(bar => {
+        const id = parseInt(bar.dataset.planId, 10);
+        const selected = _selectedGanttPlanIds.has(id);
+        bar.classList.toggle('gc-bar-selected', selected);
+        const btn = bar.querySelector('.gc-bar-select');
+        if (btn) {
+            btn.classList.toggle('gc-bar-select-active', selected);
+            btn.setAttribute('aria-pressed', selected ? 'true' : 'false');
+        }
+    });
+    const count = _selectedGanttPlanIds.size;
+    const countEl = document.getElementById('ganttSelectedCount');
+    const delBtn = document.getElementById('btnDeleteSelectedBlocks');
+    if (countEl) countEl.textContent = String(count);
+    if (delBtn) delBtn.disabled = count === 0;
+    document.querySelectorAll('[data-gantt-lane-select]').forEach(btn => {
+        const planId = parseInt(btn.dataset.ganttLaneSelect, 10);
+        const anchor = currentData.find(row => row.id === planId);
+        if (!anchor) return;
+        const laneRows = currentData.filter(row => samePlanLane(row, anchor));
+        const allSelected = laneRows.length > 0 && laneRows.every(row => _selectedGanttPlanIds.has(row.id));
+        btn.textContent = allSelected ? 'Clear lane' : 'Select lane';
+        btn.setAttribute('aria-pressed', allSelected ? 'true' : 'false');
+    });
+}
+
+function toggleGanttLaneSelection(task, forceSelect = null) {
+    if (!task) return;
+    const laneRows = currentData.filter(row => samePlanLane(row, task));
+    if (!laneRows.length) return;
+    const shouldSelect = forceSelect === null
+        ? !laneRows.every(row => _selectedGanttPlanIds.has(row.id))
+        : !!forceSelect;
+    laneRows.forEach(row => {
+        if (shouldSelect) _selectedGanttPlanIds.add(row.id);
+        else _selectedGanttPlanIds.delete(row.id);
+    });
+    _syncSelectedBlockUi();
+}
+
+function setGanttLaneSelectMode(on) {
+    _ganttSelectLaneMode = !!on && isKD2Module();
+    const btn = document.getElementById('gmtSelectLane');
+    if (btn) {
+        btn.classList.toggle('gmt-active', _ganttSelectLaneMode);
+        btn.setAttribute('aria-pressed', _ganttSelectLaneMode ? 'true' : 'false');
+    }
+    const gsEl = document.getElementById('ganttStart');
+    const geEl = document.getElementById('ganttEnd');
+    if (gsEl?.value && geEl?.value) renderGantt(currentData, gsEl.value, geEl.value);
+}
+
+function syncGanttModuleEditControls() {
+    const isKd2 = isKD2Module();
+    const kd2Tools = document.getElementById('ganttKd2EditTools');
+    const planBtn = document.getElementById('gmtPlan');
+    const fromBlockBtn = document.getElementById('gmtFromBlock');
+    const satWrap = document.getElementById('ganttSatToggleWrap');
+    const visualAddShell = document.getElementById('ganttVisualAddShell');
+    if (kd2Tools) kd2Tools.style.display = _ganttEditMode && isKd2 ? 'inline-flex' : 'none';
+    if (visualAddShell) visualAddShell.style.display = _ganttEditMode && isKd2 ? 'inline-flex' : 'none';
+    if (planBtn) planBtn.style.display = isKd2 ? 'none' : '';
+    if (fromBlockBtn) fromBlockBtn.style.display = isKd2 ? '' : 'none';
+    if (satWrap) satWrap.style.display = isKd2 ? 'none' : '';
+    if ((!_ganttEditMode || !isKd2) && getModuleRuntime()?.toggleTimelineVisualMenu) {
+        getModuleRuntime().toggleTimelineVisualMenu(false);
+    }
+    if (isKd2 && _ganttMoveMode === 'plan') _ganttMoveMode = 'single';
+    if (!isKd2 && _ganttMoveMode === 'from-block') _ganttMoveMode = 'single';
+    if (!isKd2) _ganttSelectLaneMode = false;
+    const moveToggle = document.getElementById('ganttMoveToggle');
+    if (moveToggle) {
+        moveToggle.querySelectorAll('.gmt-btn[data-mode]').forEach(btn => {
+            btn.classList.toggle('gmt-active', btn.dataset.mode === _ganttMoveMode);
+        });
+    }
+    const btn = document.getElementById('gmtSelectLane');
+    if (btn) {
+        btn.classList.toggle('gmt-active', _ganttSelectLaneMode);
+        btn.setAttribute('aria-pressed', _ganttSelectLaneMode ? 'true' : 'false');
+    }
+}
+
 /* ── Toggle edit mode ────────────────────────────────────────────── */
 function setGanttEditMode(on) {
     _ganttEditMode = on;
+    if (!on) {
+        _openGanttBlockMenuPlanId = null;
+        _selectedGanttPlanIds.clear();
+        _ganttSelectLaneMode = false;
+    }
     document.getElementById('ganttEditBar').style.display = on ? 'flex' : 'none';
     document.getElementById('btnGanttEdit').style.display = on ? 'none' : '';
     // Sync undo button states whenever edit mode changes
     _syncUndoButtons();
+    syncGanttModuleEditControls();
 
     // Sync Saturday checkbox with current session value
     const satCk = document.getElementById('ganttSatToggle');
@@ -4300,6 +5320,7 @@ function setGanttEditMode(on) {
     // Toggle CSS edit-mode class on the gantt body
     const body = document.querySelector('.gantt-body');
     if (body) body.classList.toggle('gantt-edit-active', on);
+    _syncSelectedBlockUi();
 }
 
 /* ── Saturday modal (promise-based) ─────────────────────────────── */
@@ -4371,17 +5392,95 @@ function skipNonWorking(dateStr, allowSat) {
     return localDateStr(d);
 }
 
+function isMoveWorkingDay(dateStr, allowSat) {
+    const day = new Date(dateStr + 'T00:00:00').getDay();
+    if (day === 5) return false;
+    if (!allowSat && day === 6) return false;
+    return true;
+}
+
+function nextMoveWorkingDate(dateStr, allowSat, direction = 1) {
+    let d = dateStr;
+    let guard = 0;
+    while (!isMoveWorkingDay(d, allowSat) && guard++ < 14) {
+        d = addDays(d, direction >= 0 ? 1 : -1);
+    }
+    return d;
+}
+
+function countWorkingDaysInclusive(startStr, endStr, allowSat) {
+    let d = startStr;
+    let count = 0;
+    let guard = 0;
+    while (d <= endStr && guard++ < 1000) {
+        if (isMoveWorkingDay(d, allowSat)) count += 1;
+        d = addDays(d, 1);
+    }
+    return Math.max(1, count);
+}
+
+function addWorkingDaysInclusive(startStr, durationDays, allowSat) {
+    let d = nextMoveWorkingDate(startStr, allowSat, 1);
+    let worked = 1;
+    let guard = 0;
+    while (worked < durationDays && guard++ < 1000) {
+        d = addDays(d, 1);
+        if (isMoveWorkingDay(d, allowSat)) worked += 1;
+    }
+    return d;
+}
+
+function shiftDateByGanttColumns(dateStr, deltaColumns, allowSat) {
+    if (!deltaColumns) return nextMoveWorkingDate(dateStr, allowSat, 1);
+    let d = dateStr;
+    let moved = 0;
+    const direction = deltaColumns > 0 ? 1 : -1;
+    const target = Math.abs(deltaColumns);
+    let guard = 0;
+    while (moved < target && guard++ < 1000) {
+        d = addDays(d, direction);
+        if (isMoveWorkingDay(d, allowSat)) moved += 1;
+    }
+    return nextMoveWorkingDate(d, allowSat, direction);
+}
+
+function isVisibleGanttDate(dateStr) {
+    return new Date(dateStr + 'T00:00:00').getDay() !== 5;
+}
+
+function shiftDateByVisibleGanttColumns(dateStr, deltaColumns) {
+    if (!deltaColumns) return dateStr;
+    let d = dateStr;
+    let moved = 0;
+    const direction = deltaColumns > 0 ? 1 : -1;
+    const target = Math.abs(deltaColumns);
+    let guard = 0;
+    while (moved < target && guard++ < 1000) {
+        d = addDays(d, direction);
+        if (isVisibleGanttDate(d)) moved += 1;
+    }
+    return d;
+}
+
 /**
- * Shift a task's start_date by `deltaDays`, preserving its duration.
- * Adjusts the new start forward if it lands on a non-working day.
- * Returns { newStart, newEnd }.
+ * Shift a task by rendered Gantt columns, not raw calendar days.
+ * This preserves the visible bar width when Friday is hidden from the grid.
  */
-function shiftTask(task, deltaDays, allowSat) {
-    const duration = dayDiff(task.start_date, task.end_date); // original duration in days
-    let rawStart = addDays(task.start_date, deltaDays);
-    const newStart = skipNonWorking(rawStart, allowSat);
-    const newEnd = addDays(newStart, duration);
+function shiftTask(task, deltaColumns, allowSat) {
+    const newStart = shiftDateByVisibleGanttColumns(task.start_date, deltaColumns);
+    const newEnd = shiftDateByVisibleGanttColumns(task.end_date, deltaColumns);
     return { newStart, newEnd };
+}
+
+function shiftTaskForGanttEdit(task, deltaColumns, allowSat) {
+    if (isKD2Module()) {
+        const targetStart = shiftDateByVisibleGanttColumns(task.start_date, deltaColumns);
+        const shifted = getModuleRuntime()?.shiftPlanRowToStart?.(task, targetStart);
+        if (shifted?.start && shifted?.end) {
+            return { newStart: shifted.start, newEnd: shifted.end };
+        }
+    }
+    return shiftTask(task, deltaColumns, allowSat);
 }
 
 /* ── Cascade logic ───────────────────────────────────────────────── */
@@ -4393,11 +5492,10 @@ function shiftTask(task, deltaDays, allowSat) {
  * Returns an array of { id, newStart, newEnd, oldStart, oldEnd }.
  */
 function cascadeTasks(movedTask, deltaDays, allowSat) {
-    const { vehicle, vehicle_no, start_date: origStart, id: movedId } = movedTask;
+    const { start_date: origStart, id: movedId } = movedTask;
 
     const siblings = currentData.filter(t =>
-        t.vehicle === vehicle &&
-        t.vehicle_no === vehicle_no &&
+        samePlanLane(t, movedTask) &&
         t.id !== movedId &&
         t.start_date > origStart   // strictly AFTER the moved task (avoids overlap-lock)
     );
@@ -4418,8 +5516,8 @@ function cascadeTasks(movedTask, deltaDays, allowSat) {
 async function _applyDateChanges(changes) {
     const results = await Promise.all(
         changes.map(ch =>
-            db.from('assembly_plan')
-                .update({ start_date: ch.newStart, end_date: ch.newEnd, week: weekLabel(ch.newStart) })
+            db.from(getModulePlanTable())
+                .update(getModulePlanDatePayload(ch.newStart, ch.newEnd))
                 .eq('id', ch.id)
                 .select('id')
         )
@@ -4445,7 +5543,7 @@ async function savePlanChanges(changes) {
     try {
         await _applyDateChanges(changes);
 
-        await auditLog('UPDATE', 'assembly_plan', 'batch-move',
+        await auditLog('UPDATE', getModulePlanTable(), 'batch-move',
             { count: changes.length, ids: changes.map(c => c.id) },
             { count: changes.length, sample: { id: changes[0].id, newStart: changes[0].newStart } }
         );
@@ -4467,6 +5565,23 @@ async function undoGantt() {
     if (!_undoStack.length) return;
     const changes = _undoStack.pop();
 
+    if (!Array.isArray(changes)) {
+        showToast(`Undoing ${changes.label || 'action'}…`, 'info');
+        try {
+            await changes.undo?.();
+            _redoStack.push(changes);
+            _syncUndoButtons();
+            showToast('Undo applied ✓', 'success');
+            await loadData();
+        } catch (err) {
+            _undoStack.push(changes);
+            showToast('Undo failed: ' + err.message, 'error');
+            console.error(err);
+            await loadData();
+        }
+        return;
+    }
+
     // Invert: swap newStart↔oldStart, newEnd↔oldEnd
     const inverse = changes.map(ch => ({
         id: ch.id,
@@ -4479,7 +5594,7 @@ async function undoGantt() {
     showToast(`Undoing ${inverse.length} block move${inverse.length > 1 ? 's' : ''}…`, 'info');
     try {
         await _applyDateChanges(inverse);
-        await auditLog('UPDATE', 'assembly_plan', 'undo',
+        await auditLog('UPDATE', getModulePlanTable(), 'undo',
             { count: inverse.length }, { count: inverse.length, sample: { id: inverse[0].id, newStart: inverse[0].newStart } });
 
         _redoStack.push(changes);   // original forward changes become redo
@@ -4498,10 +5613,27 @@ async function redoGantt() {
     if (!_redoStack.length) return;
     const changes = _redoStack.pop();
 
+    if (!Array.isArray(changes)) {
+        showToast(`Redoing ${changes.label || 'action'}…`, 'info');
+        try {
+            await changes.redo?.();
+            _undoStack.push(changes);
+            _syncUndoButtons();
+            showToast('Redo applied ✓', 'success');
+            await loadData();
+        } catch (err) {
+            _redoStack.push(changes);
+            showToast('Redo failed: ' + err.message, 'error');
+            console.error(err);
+            await loadData();
+        }
+        return;
+    }
+
     showToast(`Redoing ${changes.length} block move${changes.length > 1 ? 's' : ''}…`, 'info');
     try {
         await _applyDateChanges(changes);
-        await auditLog('UPDATE', 'assembly_plan', 'redo',
+        await auditLog('UPDATE', getModulePlanTable(), 'redo',
             { count: changes.length }, { count: changes.length, sample: { id: changes[0].id, newStart: changes[0].newStart } });
 
         _undoStack.push(changes);   // goes back onto undo stack
@@ -4533,8 +5665,8 @@ function wireGanttDragEdit(dayIndex, days) {
     function onBarPointerDown(e) {
         if (!_ganttEditMode) return;
         if (!canEditPlan()) { showToast('Only planners and admins can edit the plan.', 'error'); return; }
-        // Let delete / edit buttons handle their own clicks — don't start a drag
-        if (e.target.closest('.gc-bar-delete') || e.target.closest('.gc-bar-edit') || e.target.closest('.gc-bar-lane')) return;
+        // Let block menu controls handle their own clicks instead of starting a drag.
+        if (e.target.closest('.gc-bar-menu') || e.target.closest('.gc-bar-menu-trigger') || e.target.closest('.gc-bar-select') || e.target.closest('.gc-bar-delete') || e.target.closest('.gc-bar-edit') || e.target.closest('.gc-bar-lane')) return;
 
         e.preventDefault();
         const bar = e.currentTarget;
@@ -4542,60 +5674,70 @@ function wireGanttDragEdit(dayIndex, days) {
         const task = currentData.find(t => t.id === planId);
         if (!task) return;
 
+        const previewMoveSet = _ganttMoveMode === 'lane'
+            ? currentData.filter(row => samePlanLane(row, task))
+            : _ganttMoveMode === 'from-block'
+                ? getKd2ForwardMoveRows(task, currentData)
+                : _selectedGanttPlanIds.has(planId) && _selectedGanttPlanIds.size > 1 && _ganttMoveMode === 'single'
+                    ? currentData.filter(row => _selectedGanttPlanIds.has(row.id))
+                    : [task];
+        const selectedDragIds = previewMoveSet.map(row => row.id);
+        const dragBars = [...document.querySelectorAll('.gc-bar[data-plan-id]')]
+            .filter(item => selectedDragIds.includes(parseInt(item.dataset.planId, 10)));
+        const origLeftById = new Map(dragBars.map(item => [parseInt(item.dataset.planId, 10), parseInt(item.style.left)]));
+
         bar.setPointerCapture(e.pointerId);
-        bar.style.cursor = 'grabbing';
-        bar.style.opacity = '0.75';
-        bar.style.zIndex = '999';
-        bar.style.boxShadow = '0 8px 32px rgba(0,0,0,.6), 0 0 0 2px #4f8ef7';
-        bar.style.transition = 'none';
+        dragBars.forEach(item => {
+            item.style.cursor = 'grabbing';
+            item.style.opacity = '0.75';
+            item.style.zIndex = '999';
+            item.style.boxShadow = '0 8px 32px rgba(0,0,0,.6), 0 0 0 2px #4f8ef7';
+            item.style.transition = 'none';
+        });
 
         const startX = e.clientX;
-        const origLeft = parseInt(bar.style.left);
         let deltaPx = 0;
         let deltaDays = 0;
 
         function onMove(ev) {
             deltaPx = ev.clientX - startX;
             deltaDays = Math.round(deltaPx / GANTT_DAY_W);
-            bar.style.left = (origLeft + deltaDays * GANTT_DAY_W) + 'px';
+            dragBars.forEach(item => {
+                const id = parseInt(item.dataset.planId, 10);
+                item.style.left = ((origLeftById.get(id) ?? parseInt(item.style.left)) + deltaDays * GANTT_DAY_W) + 'px';
+            });
         }
 
         async function onUp() {
             bar.releasePointerCapture(e.pointerId);
             bar.removeEventListener('pointermove', onMove);
             bar.removeEventListener('pointerup', onUp);
-            bar.style.cursor = 'grab';
-            bar.style.opacity = '1';
-            bar.style.zIndex = '';
-            bar.style.transition = '';
+            dragBars.forEach(item => {
+                item.style.cursor = 'grab';
+                item.style.opacity = '1';
+                item.style.zIndex = '';
+                item.style.transition = '';
+            });
 
-            if (deltaDays === 0) { bar.style.left = origLeft + 'px'; return; }
-
-            const allowSat = await askSaturday();
-
-            let allChanges;
-
-            if (_ganttMoveMode === 'lane') {
-                // Every block for the same vehicle + unit
-                allChanges = currentData
-                    .filter(t => t.vehicle === task.vehicle && t.vehicle_no === task.vehicle_no)
-                    .map(t => {
-                        const { newStart, newEnd } = shiftTask(t, deltaDays, allowSat);
-                        return { id: t.id, newStart, newEnd, oldStart: t.start_date, oldEnd: t.end_date };
-                    });
-            } else if (_ganttMoveMode === 'plan') {
-                // Every single block in the entire plan
-                allChanges = currentData.map(t => {
-                    const { newStart, newEnd } = shiftTask(t, deltaDays, allowSat);
-                    return { id: t.id, newStart, newEnd, oldStart: t.start_date, oldEnd: t.end_date };
+            if (deltaDays === 0) {
+                dragBars.forEach(item => {
+                    const id = parseInt(item.dataset.planId, 10);
+                    item.style.left = (origLeftById.get(id) ?? parseInt(item.style.left)) + 'px';
                 });
-            } else {
-                // Single block only
-                const { newStart, newEnd } = shiftTask(task, deltaDays, allowSat);
-                allChanges = [{ id: task.id, newStart, newEnd, oldStart: task.start_date, oldEnd: task.end_date }];
+                return;
             }
 
-            bar.style.left = origLeft + 'px'; // reset; re-render fixes it
+            const allowSat = isKD2Module() ? false : await askSaturday();
+            const moveSet = await resolveGanttMoveSet(task);
+            const allChanges = moveSet.map(t => {
+                const { newStart, newEnd } = shiftTaskForGanttEdit(t, deltaDays, allowSat);
+                return { id: t.id, newStart, newEnd, oldStart: t.start_date, oldEnd: t.end_date };
+            });
+
+            dragBars.forEach(item => {
+                const id = parseInt(item.dataset.planId, 10);
+                item.style.left = (origLeftById.get(id) ?? parseInt(item.style.left)) + 'px';
+            }); // reset; re-render fixes it
 
             await savePlanChanges(allChanges);
 
@@ -4626,17 +5768,25 @@ wireGanttControls = function () {
         _ganttSatAsked = true;
     });
 
-    // Move-mode toggle: Single block | Full Lane
+    // Move-mode toggle
     document.getElementById('ganttMoveToggle')?.addEventListener('click', function (e) {
         const btn = e.target.closest('.gmt-btn');
         if (!btn) return;
         _ganttMoveMode = btn.dataset.mode;
         this.querySelectorAll('.gmt-btn').forEach(b => b.classList.toggle('gmt-active', b === btn));
     });
+    document.getElementById('gmtSelectLane')?.addEventListener('click', () => {
+        setGanttLaneSelectMode(!_ganttSelectLaneMode);
+    });
+    document.getElementById('btnGanttNoWorkDays')?.addEventListener('click', () => {
+        if (!isKD2Module()) return;
+        getModuleRuntime()?.openNoWorkModal?.();
+    });
 
     // Undo / Redo buttons
     document.getElementById('btnGanttUndo')?.addEventListener('click', undoGantt);
     document.getElementById('btnGanttRedo')?.addEventListener('click', redoGantt);
+    document.getElementById('btnDeleteSelectedBlocks')?.addEventListener('click', deleteSelectedGanttBlocks);
 
     // Keyboard: Ctrl+Z = undo, Ctrl+Y or Ctrl+Shift+Z = redo (only while in edit mode)
     document.addEventListener('keydown', function (e) {
@@ -4645,6 +5795,7 @@ wireGanttControls = function () {
         if (e.ctrlKey && !e.shiftKey && e.key.toLowerCase() === 'z') { e.preventDefault(); undoGantt(); }
         if (e.ctrlKey && (e.key.toLowerCase() === 'y' || (e.shiftKey && e.key.toLowerCase() === 'z'))) { e.preventDefault(); redoGantt(); }
     });
+    syncGanttModuleEditControls();
 };
 
 /* ── Patch renderGantt to pass data-plan-id on bars and wire drag ── */
@@ -4669,6 +5820,7 @@ renderGantt = function (plans, startDate, endDate) {
         const body = document.querySelector('.gantt-body');
         if (body) body.classList.add('gantt-edit-active');
     }
+    _syncSelectedBlockUi();
 };
 
 /* ================================================================
@@ -4687,13 +5839,13 @@ async function deleteGanttBlock(planId) {
     try {
         // Delete any associated progress record first
         if (task.progress?.id) {
-            await db.from('assembly_progress').delete().eq('id', task.progress.id);
+            await db.from(getModuleProgressTable()).delete().eq('id', task.progress.id);
         }
 
-        const { error } = await db.from('assembly_plan').delete().eq('id', planId);
+        const { error } = await db.from(getModulePlanTable()).delete().eq('id', planId);
         if (error) throw error;
 
-        await auditLog('DELETE', 'assembly_plan', planId,
+        await auditLog('DELETE', getModulePlanTable(), planId,
             {
                 vehicle: task.vehicle, vehicle_no: task.vehicle_no, process_station: task.process_station,
                 start_date: task.start_date, end_date: task.end_date
@@ -4714,6 +5866,42 @@ async function deleteGanttBlock(planId) {
     }
 }
 
+async function deleteSelectedGanttBlocks() {
+    if (!canEditPlan()) { showToast('Only planners and admins can delete blocks.', 'error'); return; }
+    const selectedTasks = currentData.filter(task => _selectedGanttPlanIds.has(task.id));
+    if (!selectedTasks.length) return;
+    if (!confirm(`Delete ${selectedTasks.length} selected block${selectedTasks.length > 1 ? 's' : ''}?\n\nThis cannot be undone.`)) return;
+
+    try {
+        const progressIds = selectedTasks.map(task => task.progress?.id).filter(Boolean);
+        if (progressIds.length) {
+            const { error: progressError } = await db.from(getModuleProgressTable()).delete().in('id', progressIds);
+            if (progressError) throw progressError;
+        }
+
+        const planIds = selectedTasks.map(task => task.id);
+        const { error } = await db.from(getModulePlanTable()).delete().in('id', planIds);
+        if (error) throw error;
+
+        await auditLog('DELETE', getModulePlanTable(), 'batch-delete', {
+            count: selectedTasks.length,
+            ids: planIds,
+        }, null);
+
+        currentData = currentData.filter(task => !planIds.includes(task.id));
+        planIds.forEach(id => _selectedGanttPlanIds.delete(id));
+        _syncSelectedBlockUi();
+        showToast(`${selectedTasks.length} selected block${selectedTasks.length > 1 ? 's' : ''} deleted.`, 'success');
+
+        const gsEl = document.getElementById('ganttStart');
+        const geEl = document.getElementById('ganttEnd');
+        renderGantt(currentData, gsEl?.value, geEl?.value);
+    } catch (err) {
+        showToast('Delete failed: ' + err.message, 'error');
+        console.error(err);
+    }
+}
+
 /* ── Wire bar action buttons via event delegation on ganttInner ── */
 function wireBarDeleteButtons() {
     // Use event delegation on the gantt body — avoids the timing race
@@ -4727,8 +5915,54 @@ function wireBarDeleteButtons() {
 }
 
 function _ganttBarClickHandler(e) {
+    const laneSelectBtn = e.target.closest('[data-gantt-lane-select]');
+    if (laneSelectBtn) {
+        e.stopPropagation();
+        const planId = parseInt(laneSelectBtn.dataset.ganttLaneSelect, 10);
+        const task = currentData.find(row => row.id === planId);
+        if (task) toggleGanttLaneSelection(task);
+        return;
+    }
+    const selectBtn = e.target.closest('.gc-bar-select');
+    if (selectBtn) {
+        e.stopPropagation();
+        const planId = parseInt(selectBtn.dataset.planId, 10);
+        const task = currentData.find(row => row.id === planId);
+        if (_ganttSelectLaneMode && isKD2Module() && task) {
+            toggleGanttLaneSelection(task);
+            return;
+        }
+        if (_selectedGanttPlanIds.has(planId)) _selectedGanttPlanIds.delete(planId);
+        else _selectedGanttPlanIds.add(planId);
+        _syncSelectedBlockUi();
+        return;
+    }
+    const menuTrigger = e.target.closest('.gc-bar-menu-trigger');
+    if (menuTrigger) {
+        e.stopPropagation();
+        _openGanttBlockMenuPlanId = parseInt(menuTrigger.dataset.planId);
+        document.querySelectorAll('.gc-bar-menu-open').forEach(bar => bar.classList.remove('gc-bar-menu-open'));
+        document.querySelectorAll('.gc-row-menu-open').forEach(row => row.classList.remove('gc-row-menu-open'));
+        const bar = menuTrigger.closest('.gc-bar');
+        if (bar) bar.classList.add('gc-bar-menu-open');
+        const row = menuTrigger.closest('.gr');
+        if (row) row.classList.add('gc-row-menu-open');
+        document.querySelectorAll('.gc-bar-menu-trigger').forEach(btn => btn.setAttribute('aria-expanded', btn === menuTrigger ? 'true' : 'false'));
+        return;
+    }
+    const menuClose = e.target.closest('.gc-bar-menu-close');
+    if (menuClose) {
+        e.stopPropagation();
+        const planId = parseInt(menuClose.dataset.planId);
+        if (_openGanttBlockMenuPlanId === planId) _openGanttBlockMenuPlanId = null;
+        const bar = menuClose.closest('.gc-bar');
+        if (bar) bar.classList.remove('gc-bar-menu-open');
+        menuClose.closest('.gr')?.classList.remove('gc-row-menu-open');
+        bar?.querySelector('.gc-bar-menu-trigger')?.setAttribute('aria-expanded', 'false');
+        return;
+    }
     // Delete button
-    const delBtn = e.target.closest('.gc-bar-delete');
+    const delBtn = e.target.closest('.gc-bar-delete, .gc-bar-menu-delete');
     if (delBtn) {
         e.stopPropagation();
         const planId = parseInt(delBtn.dataset.planId);
@@ -4736,10 +5970,14 @@ function _ganttBarClickHandler(e) {
         return;
     }
     // Edit button
-    const editBtn = e.target.closest('.gc-bar-edit');
+    const editBtn = e.target.closest('.gc-bar-edit, .gc-bar-menu-edit');
     if (editBtn) {
         e.stopPropagation();
         const planId = parseInt(editBtn.dataset.planId);
+        if (isKD2Module()) {
+            getModuleRuntime()?.openPlanEdit?.(planId);
+            return;
+        }
         openEditBlockModal(planId);
         return;
     }
@@ -4770,6 +6008,10 @@ function _ganttBarClickHandler(e) {
 /* ── Add Block modal ─────────────────────────────────────────────── */
 function openAddBlockModal() {
     if (!canEditPlan()) { showToast('Only planners and admins can add blocks.', 'error'); return; }
+    if (isKD2Module()) {
+        getModuleRuntime()?.openPlanCreateModal?.();
+        return;
+    }
 
     const overlay = document.getElementById('addBlockOverlay');
 
@@ -4955,6 +6197,7 @@ async function saveAddBlock() {
 const _origWireGanttFull = wireGanttControls;
 wireGanttControls = function () {
     _origWireGanttFull();
+    bindGanttFullscreenUi();
 
     // Add Block modal
     document.getElementById('btnAddBlock')?.addEventListener('click', openAddBlockModal);

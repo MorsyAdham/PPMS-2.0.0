@@ -38,13 +38,20 @@
     <header class="site-header">
         <div class="header-inner">
             <div class="header-brand">
-                <div class="brand-badge">KD1</div>
+                <div class="brand-badge" id="moduleBadge">KD1</div>
                 <div class="brand-text">
-                    <span class="brand-title">Production Planning & Monitoring Control</span>
-                    <span class="brand-sub">Plan vs Actual Tracking System</span>
+                    <span class="brand-title" id="brandTitle">Production Planning & Monitoring Control</span>
+                    <span class="brand-sub" id="brandSubtitle">Plan vs Actual Tracking System</span>
                 </div>
             </div>
             <div class="header-meta">
+                <div class="module-switch">
+                    <select id="moduleSelector" class="filter-control module-switch-control" aria-label="Module"
+                        title="Module">
+                        <option value="kd1">KD1</option>
+                        <option value="kd2">KD2</option>
+                    </select>
+                </div>
                 <!-- Theme toggle -->
                 <button class="btn-theme" id="btnTheme" title="Toggle light / dark theme">
                     <!-- Sun — shown in dark mode -->
@@ -117,8 +124,14 @@
                         <option value="">All Vehicles</option>
                     </select>
                 </div>
+                <div class="filter-item" id="filterBattalionGroup" style="display:none;">
+                    <label class="filter-label" for="filterBattalion">Battalion</label>
+                    <select id="filterBattalion" class="filter-control">
+                        <option value="">All Battalions</option>
+                    </select>
+                </div>
                 <div class="filter-item">
-                    <label class="filter-label" for="filterUnit">Unit</label>
+                    <label class="filter-label" for="filterUnit" id="filterUnitLabel">Unit</label>
                     <select id="filterUnit" class="filter-control">
                         <option value="">All Units</option>
                     </select>
@@ -235,13 +248,202 @@
             </div>
         </section>
 
+        <section class="kd2-phase-section" id="kd2PhaseSection" aria-label="KD2 Setup Snapshot" style="display:none">
+            <div class="kd2-phase-card">
+                <div class="kd2-phase-header">
+                    <div>
+                        <h3 class="kd2-phase-title">KD2 Setup Snapshot</h3>
+                        <p class="kd2-phase-subtitle">Phase 1 and 2 foundation: module separation, battalion master data, route steps, and lead-time readiness.</p>
+                    </div>
+                    <span class="kd2-phase-status" id="kd2PhaseStatus">Waiting for KD2 tables</span>
+                </div>
+                <div class="kd2-phase-grid">
+                    <div class="kd2-phase-item">
+                        <span class="kd2-phase-label">Battalions</span>
+                        <strong class="kd2-phase-value" id="kd2BattalionCount">0 configured</strong>
+                        <span class="kd2-phase-note" id="kd2BattalionNote">Upload the KD2 schema, then load battalion masters.</span>
+                    </div>
+                    <div class="kd2-phase-item">
+                        <span class="kd2-phase-label">Route baseline</span>
+                        <strong class="kd2-phase-value" id="kd2RouteCount">0 steps</strong>
+                        <span class="kd2-phase-note" id="kd2RouteNote">Upstream and downstream route definitions are not loaded yet.</span>
+                    </div>
+                    <div class="kd2-phase-item">
+                        <span class="kd2-phase-label">Lead-time readiness</span>
+                        <strong class="kd2-phase-value" id="kd2LeadTimeStatus">0 confirmed</strong>
+                        <span class="kd2-phase-note" id="kd2LeadTimeNote">Unknown lead times stay blank until business confirmation.</span>
+                    </div>
+                </div>
+            </div>
+        </section>
+
+        <section class="kd2-workspace-section" id="kd2WorkspaceSection" aria-label="KD2 Workspace" style="display:none">
+            <div class="kd2-workspace-grid">
+                <div class="kd2-card">
+                    <div class="kd2-card-header">
+                        <div>
+                            <h3 class="kd2-card-title">Planning Inputs</h3>
+                            <span class="kd2-card-subtitle">Battalion deadlines, quantities, and workday rules.</span>
+                        </div>
+                        <div class="kd2-card-actions">
+                            <button class="btn btn-outline btn-sm" id="btnKd2RefreshInputs">Refresh</button>
+                            <button class="btn btn-outline btn-sm" id="btnKd2Bootstrap">Bootstrap 5 Battalions</button>
+                            <button class="btn btn-outline btn-sm" id="btnKd2NewBattalion">New Battalion</button>
+                        </div>
+                    </div>
+                    <div class="kd2-table-wrap">
+                        <table class="data-table kd2-mini-table">
+                            <thead>
+                                <tr>
+                                    <th>Battalion</th>
+                                    <th>Vehicle</th>
+                                    <th>Qty</th>
+                                    <th>Deadline</th>
+                                    <th>Friday</th>
+                                    <th>Saturday</th>
+                                    <th>Status</th>
+                                    <th>Action</th>
+                                </tr>
+                            </thead>
+                            <tbody id="kd2InputsBody">
+                                <tr>
+                                    <td colspan="8" class="table-empty">KD2 planning inputs will appear here.</td>
+                                </tr>
+                            </tbody>
+                        </table>
+                    </div>
+                </div>
+
+                <div class="kd2-card">
+                    <div class="kd2-card-header">
+                        <div>
+                            <h3 class="kd2-card-title">Plan Generation</h3>
+                            <span class="kd2-card-subtitle">Create `kd2_plan` rows from planning inputs and route masters.</span>
+                        </div>
+                        <div class="kd2-card-actions">
+                            <button class="btn btn-primary btn-sm" id="btnKd2GeneratePlan">Generate Battalion Plan</button>
+                        </div>
+                    </div>
+                    <div class="kd2-status-list" id="kd2GenerationStatus">
+                        <div class="kd2-status-item">
+                            <span class="kd2-status-label">Current target</span>
+                            <strong class="kd2-status-value" id="kd2GenerationTarget">Select a battalion filter to generate a plan.</strong>
+                        </div>
+                        <div class="kd2-status-item">
+                            <span class="kd2-status-label">Generation rules</span>
+                            <span class="kd2-status-copy">Uses stored battalion deadline or vehicle-level deadline, skips Friday when enabled, and only generates rows when all required lead times are confirmed.</span>
+                        </div>
+                        <div class="kd2-status-item">
+                            <span class="kd2-status-label">Latest result</span>
+                            <span class="kd2-status-copy" id="kd2GenerationResult">No KD2 generation run yet.</span>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <div class="kd2-card">
+                <div class="kd2-card-header">
+                    <div>
+                        <h3 class="kd2-card-title">Route / Process Flow</h3>
+                        <span class="kd2-card-subtitle">Category and station visibility by vehicle type. Pending lead times can now be maintained in-app.</span>
+                    </div>
+                    <div class="kd2-card-actions">
+                        <div class="kd2-vehicle-tabs" id="kd2RouteVehicleTabs">
+                            <button class="btn btn-ghost btn-sm kd2-route-tab kd2-route-tab-active" data-vehicle="K9">K9</button>
+                            <button class="btn btn-ghost btn-sm kd2-route-tab" data-vehicle="K10">K10</button>
+                            <button class="btn btn-ghost btn-sm kd2-route-tab" data-vehicle="K11">K11</button>
+                        </div>
+                        <button class="btn btn-outline btn-sm" id="btnKd2ManageLeadTimes">Manage Lead Times</button>
+                    </div>
+                </div>
+                <div id="kd2RouteFlow" class="kd2-route-flow">
+                    <div class="empty-state"><p>Load KD2 data to inspect the route.</p></div>
+                </div>
+            </div>
+
+            <div class="kd2-card">
+                <div class="kd2-card-header">
+                    <div>
+                        <h3 class="kd2-card-title">KD2 Schedule Timeline</h3>
+                        <span class="kd2-card-subtitle">Manual and generated `kd2_plan` rows grouped by battalion and unit. Click a bar to manage one plan block.</span>
+                    </div>
+                    <div class="kd2-card-actions">
+                        <div class="filter-item kd2-timeline-filter">
+                            <label class="filter-label" for="kd2TimelineStart">From</label>
+                            <input type="date" id="kd2TimelineStart" class="filter-control" />
+                        </div>
+                        <div class="filter-item kd2-timeline-filter">
+                            <label class="filter-label" for="kd2TimelineEnd">To</label>
+                            <input type="date" id="kd2TimelineEnd" class="filter-control" />
+                        </div>
+                        <button class="btn btn-primary btn-sm" id="btnKd2AddBlock">Add Plan Block</button>
+                        <div class="kd2-visual-add-shell" id="kd2VisualAddShell">
+                            <button class="btn btn-sm btn-visual-block" id="btnKd2VisualAdd" aria-expanded="false" aria-pressed="false">
+                                <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.8">
+                                    <rect x="2" y="3" width="12" height="10" rx="2" />
+                                    <path d="M8 5.5v5M5.5 8h5" />
+                                </svg>
+                                <span>Add Visual Block</span>
+                            </button>
+                            <div class="kd2-visual-add-menu" id="kd2TimelineVisualMenu" style="display:none">
+                                <div class="kd2-visual-add-menu-head">
+                                    <div>
+                                        <strong>Visual Block Palette</strong>
+                                        <span>Select one station, then click once on the target lane and date.</span>
+                                    </div>
+                                    <div class="filter-item kd2-timeline-filter">
+                                        <label class="filter-label" for="kd2TimelinePlacementVehicle">Vehicle</label>
+                                        <select id="kd2TimelinePlacementVehicle" class="filter-control">
+                                            <option value="K9">K9</option>
+                                            <option value="K10">K10</option>
+                                            <option value="K11">K11</option>
+                                        </select>
+                                    </div>
+                                </div>
+                                <div class="kd2-timeline-placement-palette" id="kd2TimelineVisualPalette"></div>
+                            </div>
+                        </div>
+                        <button class="btn btn-outline btn-sm" id="btnKd2TimelineRefresh">Refresh Timeline</button>
+                        <button class="btn btn-ghost btn-sm" id="btnKd2TimelineEdit">Edit Timeline</button>
+                        <div class="kd2-timeline-editbar" id="kd2TimelineEditBar" style="display:none">
+                            <button class="btn btn-outline btn-sm kd2-timeline-mode-btn kd2-timeline-mode-active" id="btnKd2TimelineModeBlock" data-mode="block">Block</button>
+                            <button class="btn btn-outline btn-sm kd2-timeline-mode-btn" id="btnKd2TimelineModeFromBlock" data-mode="from-block">From Block</button>
+                            <button class="btn btn-outline btn-sm kd2-timeline-mode-btn" id="btnKd2TimelineModeLane" data-mode="lane">Lane</button>
+                            <button class="btn btn-outline btn-sm kd2-timeline-mode-btn" id="btnKd2TimelineSelectLane" data-mode="select-lane" aria-pressed="false">Select Lane</button>
+                            <button class="btn btn-outline btn-sm" id="btnKd2NoWorkDays">No-work Days</button>
+                            <span class="kd2-timeline-selection-count" id="kd2TimelineSelectionCount">0 selected</span>
+                            <button class="btn btn-ghost btn-sm" id="btnKd2TimelineEditDone">Done</button>
+                        </div>
+                    </div>
+                </div>
+                <div class="kd2-timeline-shell">
+                    <div class="kd2-timeline-placement-bar" id="kd2TimelinePlacementBar" style="display:none">
+                        <div class="kd2-timeline-placement-head">
+                            <div class="kd2-timeline-placement-copy">
+                                <span class="kd2-timeline-placement-badge">Placement Mode</span>
+                                <strong id="kd2TimelinePlacementSummary">Select a station block, then place it on a matching lane.</strong>
+                                <span id="kd2TimelinePlacementHint">The selected station stays active until you change it or cancel placement mode.</span>
+                            </div>
+                            <div class="kd2-timeline-placement-actions">
+                                <button class="btn btn-ghost btn-sm" id="btnKd2TimelinePlacementCancel">Cancel Placement</button>
+                            </div>
+                        </div>
+                    </div>
+                    <div class="kd2-timeline-legend" id="kd2TimelineLegend"></div>
+                    <div class="kd2-timeline-wrap" id="kd2TimelineWrap">
+                        <div class="empty-state"><p>Generate or load a KD2 plan to view the schedule.</p></div>
+                    </div>
+                </div>
+            </div>
+        </section>
+
         <!-- ═══════════════════════════════════════ PRODUCTION GANTT -->
-        <section class="gantt-section" aria-label="Production Master Schedule">
-            <div class="gantt-card">
+        <section class="gantt-section" id="ganttSection" aria-label="Production Master Schedule">
+            <div class="gantt-card" id="ganttCard">
                 <div class="gantt-card-header">
                     <div class="gantt-title-wrap">
-                        <h3 class="gantt-title">Production Master Schedule</h3>
-                        <span class="gantt-subtitle">Assembly Plan · Daily Gantt View</span>
+                        <h3 class="gantt-title" id="ganttTitle">Production Master Schedule</h3>
+                        <span class="gantt-subtitle" id="ganttSubtitle">Assembly Plan · Daily Gantt View</span>
                     </div>
                     <div class="gantt-controls">
                         <div class="filter-item" style="min-width:148px">
@@ -262,11 +464,32 @@
                             </button>
                         </div>
                         <div class="filter-item" style="padding-top:18px">
+                            <button class="btn btn-outline gantt-fullscreen-btn" id="btnGanttFullscreen" aria-pressed="false">
+                                <svg viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.8">
+                                    <path d="M3 8V3h5" />
+                                    <path d="M17 8V3h-5" />
+                                    <path d="M3 12v5h5" />
+                                    <path d="M17 12v5h-5" />
+                                </svg>
+                                <span id="btnGanttFullscreenLabel">Full Screen</span>
+                            </button>
+                        </div>
+                        <div class="filter-item" style="padding-top:18px">
+                            <button class="btn btn-ghost gantt-legend-toggle-btn" id="btnGanttLegendToggle" aria-expanded="false">
+                                <svg viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.8">
+                                    <path d="M4 5h12" />
+                                    <path d="M4 10h12" />
+                                    <path d="M4 15h12" />
+                                </svg>
+                                <span id="btnGanttLegendToggleLabel">Show Legend</span>
+                            </button>
+                        </div>
+                        <div class="filter-item" style="padding-top:18px">
                             <button class="btn btn-ghost gantt-edit-toggle" id="btnGanttEdit">
                                 <svg viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="2">
                                     <path d="M14.5 2.5l3 3L6 17H3v-3L14.5 2.5z" />
                                 </svg>
-                                Edit Plan
+                                <span id="btnGanttEditLabel">Edit Plan</span>
                             </button>
                         </div>
                         <!-- Edit-mode toolbar (hidden until edit mode activated) -->
@@ -296,6 +519,15 @@
                                     </svg>
                                     Lane
                                 </button>
+                                <button class="gmt-btn" id="gmtFromBlock" data-mode="from-block" style="display:none">
+                                    <svg viewBox="0 0 14 14" fill="none" stroke="currentColor" stroke-width="1.8"
+                                        style="width:11px;height:11px">
+                                        <rect x="1" y="2" width="6" height="4" rx="1" />
+                                        <rect x="7" y="2" width="6" height="4" rx="1" opacity=".45" />
+                                        <rect x="7" y="8" width="6" height="4" rx="1" />
+                                    </svg>
+                                    From Block
+                                </button>
                                 <button class="gmt-btn" id="gmtPlan" data-mode="plan">
                                     <svg viewBox="0 0 14 14" fill="none" stroke="currentColor" stroke-width="1.8"
                                         style="width:11px;height:11px">
@@ -306,6 +538,10 @@
                                     Full Plan
                                 </button>
                             </div>
+                            <div class="gantt-kd2-edit-tools" id="ganttKd2EditTools" style="display:none">
+                                <button class="gmt-btn" id="gmtSelectLane" aria-pressed="false">Select Lane</button>
+                                <button class="btn btn-ghost btn-sm" id="btnGanttNoWorkDays">No-work Days</button>
+                            </div>
                             <button class="btn btn-primary btn-sm" id="btnAddBlock" style="gap:5px">
                                 <svg viewBox="0 0 14 14" fill="none" stroke="currentColor" stroke-width="2"
                                     style="width:12px;height:12px">
@@ -313,7 +549,19 @@
                                 </svg>
                                 Add Block
                             </button>
-                            <label class="gantt-edit-sat-toggle">
+                            <div class="kd2-visual-add-shell" id="ganttVisualAddShell" style="display:none">
+                                <button class="btn btn-sm btn-visual-block" id="btnGanttVisualAdd" aria-expanded="false" aria-pressed="false">
+                                    <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.8">
+                                        <rect x="2" y="3" width="12" height="10" rx="2" />
+                                        <path d="M8 5.5v5M5.5 8h5" />
+                                    </svg>
+                                    <span>Add Visual Block</span>
+                                </button>
+                            </div>
+                            <button class="btn btn-ghost btn-sm" id="btnDeleteSelectedBlocks" disabled>
+                                Delete Selected <span id="ganttSelectedCount">0</span>
+                            </button>
+                            <label class="gantt-edit-sat-toggle" id="ganttSatToggleWrap">
                                 <input type="checkbox" id="ganttSatToggle" />
                                 Include Saturdays
                             </label>
@@ -337,7 +585,39 @@
                                     Redo
                                 </button>
                             </div>
+                            <button class="btn btn-outline btn-sm gantt-fullscreen-btn" id="btnGanttEditFullscreen" aria-pressed="false">
+                                <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.8">
+                                    <path d="M2 6V2h4" />
+                                    <path d="M14 6V2h-4" />
+                                    <path d="M2 10v4h4" />
+                                    <path d="M14 10v4h-4" />
+                                </svg>
+                                <span id="btnGanttEditFullscreenLabel">Full Screen</span>
+                            </button>
                             <button class="btn btn-ghost btn-sm" id="btnGanttEditDone">Done</button>
+                        </div>
+                        <div class="gantt-visual-placement-bar" id="ganttVisualPlacementBar" style="display:none">
+                            <div class="kd2-visual-add-menu" id="ganttVisualAddMenu">
+                                <div class="gantt-visual-placement-head">
+                                    <div class="gantt-visual-placement-copy">
+                                        <span class="gantt-visual-placement-badge">Visual Placement</span>
+                                        <strong id="ganttVisualPlacementSummary">Select a station block, then click once on the target lane and date.</strong>
+                                        <span id="ganttVisualPlacementHint">The selected station stays active until you change it or cancel placement mode.</span>
+                                    </div>
+                                    <div class="gantt-visual-placement-actions">
+                                        <div class="filter-item kd2-timeline-filter">
+                                            <label class="filter-label" for="ganttVisualPlacementVehicle">Vehicle</label>
+                                            <select id="ganttVisualPlacementVehicle" class="filter-control">
+                                                <option value="K9">K9</option>
+                                                <option value="K10">K10</option>
+                                                <option value="K11">K11</option>
+                                            </select>
+                                        </div>
+                                        <button class="btn btn-ghost btn-sm" id="btnGanttVisualPlacementCancel">Cancel Placement</button>
+                                    </div>
+                                </div>
+                                <div class="kd2-timeline-placement-palette" id="ganttVisualPalette"></div>
+                            </div>
                         </div>
                     </div>
                 </div>
@@ -367,12 +647,12 @@
 
 
         <!-- ═══════════════════════════════════ VEHICLE PROGRESS MATRIX -->
-        <section class="vpx-section" aria-label="Vehicle Production Progress">
+        <section class="vpx-section" id="vpxSection" aria-label="Vehicle Production Progress">
             <div class="vpx-card">
                 <div class="vpx-card-header">
                     <div class="vpx-title-wrap">
-                        <h3 class="vpx-title">Vehicle Production Progress</h3>
-                        <span class="vpx-subtitle">Station-by-station planned vs actual · hover for details</span>
+                        <h3 class="vpx-title" id="vpxTitle">Vehicle Production Progress</h3>
+                        <span class="vpx-subtitle" id="vpxSubtitle">Station-by-station planned vs actual · hover for details</span>
                     </div>
                     <div class="vpx-header-right">
                         <button class="btn btn-outline btn-sm" id="btnVpxPdf" title="Export print-friendly PDF">
@@ -411,12 +691,12 @@
         </section>
 
         <!-- ═══════════════════════════════════════════════ CHARTS -->
-        <section class="charts-section" aria-label="Charts">
+        <section class="charts-section" id="chartsSection" aria-label="Charts">
             <div class="charts-grid">
                 <div class="chart-card">
                     <div class="chart-card-header">
-                        <h3 class="chart-title">Status Breakdown</h3>
-                        <span class="chart-subtitle">Planned · Completed · Late Completion · Overdue</span>
+                        <h3 class="chart-title" id="barChartTitle">Status Breakdown</h3>
+                        <span class="chart-subtitle" id="barChartSubtitle">Planned · Completed · Late Completion · Overdue</span>
                     </div>
                     <div class="chart-canvas-wrap">
                         <canvas id="barChart"></canvas>
@@ -424,8 +704,8 @@
                 </div>
                 <div class="chart-card">
                     <div class="chart-card-header">
-                        <h3 class="chart-title">Cumulative Progress</h3>
-                        <span class="chart-subtitle">Planned Completion vs Actual</span>
+                        <h3 class="chart-title" id="lineChartTitle">Cumulative Progress</h3>
+                        <span class="chart-subtitle" id="lineChartSubtitle">Planned Completion vs Actual</span>
                     </div>
                     <div class="chart-canvas-wrap">
                         <canvas id="lineChart"></canvas>
@@ -435,10 +715,10 @@
         </section>
 
         <!-- ═══════════════════════════════════════════════ TABLE -->
-        <section class="table-section" aria-label="Assembly Plan Table">
+        <section class="table-section" id="tableSection" aria-label="Assembly Plan Table">
             <div class="table-card">
                 <div class="table-card-header">
-                    <h3 class="table-title">Assembly Plan Details</h3>
+                    <h3 class="table-title" id="tableTitle">Assembly Plan Details</h3>
                     <div class="table-search-wrap">
                         <svg class="table-search-icon" viewBox="0 0 20 20" fill="none" stroke="currentColor"
                             stroke-width="2">
@@ -457,6 +737,20 @@
                                 <path d="M14 12l1.5 1.5L18 11" />
                             </svg>
                             Export Report
+                        </button>
+                        <button class="btn btn-outline btn-sm" id="btnKd2DownloadTemplate" style="display:none">
+                            <svg viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="2">
+                                <path d="M10 3v10m-4-4 4 4 4-4" />
+                                <path d="M4 17h12" />
+                            </svg>
+                            Download Template
+                        </button>
+                        <button class="btn btn-outline btn-sm" id="btnKd2UploadPlan" style="display:none">
+                            <svg viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="2">
+                                <path d="M10 17V7m-4 4 4-4 4 4" />
+                                <path d="M4 3h12" />
+                            </svg>
+                            Upload Plan
                         </button>
                         <button class="btn btn-outline btn-sm" id="btnImport">
                             <svg viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="2">
@@ -483,6 +777,22 @@
                     </div>
                 </div>
 
+                <div class="import-panel" id="kd2ImportPanel" style="display:none;">
+                    <div class="import-inner">
+                        <h4 class="import-title">Upload KD2 Plan File</h4>
+                        <p class="import-hint">Required columns: battalion_code, vehicle_type, unit_serial, unit_label, category_code, station_code, planned_start_date, duration_working_days. Optional: remark.</p>
+                        <input type="file" id="kd2ImportFile" class="kd2-file-input" accept=".csv,.xlsx,.xls" />
+                        <div class="modal-info">Excel imports use the first sheet only. Dates should use YYYY-MM-DD when possible.</div>
+                        <div class="ab-error" id="kd2ImportError" style="display:none"></div>
+                        <div class="kd2-import-summary" id="kd2ImportSummary" style="display:none"></div>
+                        <div class="kd2-import-errors" id="kd2ImportErrors" style="display:none"></div>
+                        <div class="import-footer">
+                            <button class="btn btn-primary" id="btnKd2ImportSubmit">Import File</button>
+                            <button class="btn btn-ghost" id="btnKd2ImportCancel">Cancel</button>
+                        </div>
+                    </div>
+                </div>
+
                 <div class="table-responsive">
                     <table class="data-table" id="mainTable">
                         <thead>
@@ -491,7 +801,7 @@
                                 <th>Vehicle</th>
                                 <th>Unit</th>
                                 <th>Station / Process</th>
-                                <th>Code</th>
+                                <th>Code / Work Center</th>
                                 <th>Week</th>
                                 <th>Planned Start</th>
                                 <th>Planned End</th>
@@ -689,7 +999,7 @@
                             <rect x="2" y="4" width="16" height="12" rx="2" />
                             <path d="M6 8h8M6 12h5" />
                         </svg>
-                        Unit Codes
+                        <span id="unitCodesTitleText">Unit Codes</span>
                     </h4>
                     <button class="modal-close" id="unitCodesClose">&#x2715;</button>
                 </div>
@@ -708,9 +1018,10 @@
                         <table class="data-table um-table">
                             <thead>
                                 <tr>
-                                    <th>Vehicle</th>
-                                    <th>Unit</th>
-                                    <th>Unit Code</th>
+                                    <th id="ucHeaderBattalion" style="display:none">Battalion</th>
+                                    <th id="ucHeaderVehicle">Vehicle</th>
+                                    <th id="ucHeaderUnit">Unit</th>
+                                    <th id="ucHeaderCode">Unit Code</th>
                                     <th>Actions</th>
                                 </tr>
                             </thead>
@@ -733,6 +1044,10 @@
                         <div class="um-form-body">
                             <div class="um-form-grid">
                                 <input type="hidden" id="ucEditId" />
+                                <div class="form-group" id="ucBattalionGroup" style="display:none">
+                                    <label class="form-label">Battalion</label>
+                                    <select id="ucBattalion" class="filter-control"></select>
+                                </div>
                                 <div class="form-group">
                                     <label class="form-label">Vehicle</label>
                                     <select id="ucVehicle" class="filter-control"></select>
@@ -740,6 +1055,8 @@
                                 <div class="form-group">
                                     <label class="form-label">Unit</label>
                                     <select id="ucUnit" class="filter-control"></select>
+                                    <input type="text" id="ucUnitText" class="filter-control" style="display:none"
+                                        placeholder="e.g. M1" />
                                 </div>
                                 <div class="form-group">
                                     <label class="form-label">Unit Code</label>
@@ -1167,6 +1484,246 @@
             </div>
         </div>
 
+        <div class="modal-overlay" id="kd2PlanningOverlay" style="display:none;" role="dialog" aria-modal="true"
+            aria-labelledby="kd2PlanningTitle">
+            <div class="modal modal-wide">
+                <div class="modal-header">
+                    <h4 class="modal-title" id="kd2PlanningTitle">KD2 Planning Inputs</h4>
+                    <button class="modal-close" id="kd2PlanningClose">&#x2715;</button>
+                </div>
+                <div class="modal-body">
+                    <input type="hidden" id="kd2BattalionId" />
+                    <div class="um-form-grid" style="grid-template-columns:1fr 1fr;gap:14px 18px">
+                        <div class="form-group">
+                            <label class="form-label" for="kd2BattalionCode">Battalion Code</label>
+                            <input type="text" id="kd2BattalionCode" class="filter-control" placeholder="e.g. BTL-01" />
+                        </div>
+                        <div class="form-group">
+                            <label class="form-label" for="kd2BattalionName">Battalion Name</label>
+                            <input type="text" id="kd2BattalionName" class="filter-control" placeholder="Optional descriptive name" />
+                        </div>
+                        <div class="form-group">
+                            <label class="form-label" for="kd2BattalionDeadline">Battalion Deadline</label>
+                            <input type="date" id="kd2BattalionDeadline" class="filter-control" />
+                        </div>
+                        <div class="form-group">
+                            <label class="form-label" for="kd2BattalionNotes">Battalion Notes</label>
+                            <input type="text" id="kd2BattalionNotes" class="filter-control" placeholder="Optional notes" />
+                        </div>
+                    </div>
+
+                    <div class="kd2-editor-grid">
+                        <div class="kd2-editor-card">
+                            <h5 class="kd2-editor-title">K9</h5>
+                            <div class="kd2-editor-fields">
+                                <input type="number" min="0" id="kd2QtyK9" class="filter-control" placeholder="Quantity" />
+                                <input type="date" id="kd2DeadlineK9" class="filter-control" />
+                                <select id="kd2StatusK9" class="filter-control">
+                                    <option value="pending">Pending</option>
+                                    <option value="confirmed">Confirmed</option>
+                                </select>
+                                <label class="kd2-check"><input type="checkbox" id="kd2SkipFridayK9" checked /> Skip Friday</label>
+                            </div>
+                        </div>
+                        <div class="kd2-editor-card">
+                            <h5 class="kd2-editor-title">K10</h5>
+                            <div class="kd2-editor-fields">
+                                <input type="number" min="0" id="kd2QtyK10" class="filter-control" placeholder="Quantity" />
+                                <input type="date" id="kd2DeadlineK10" class="filter-control" />
+                                <select id="kd2StatusK10" class="filter-control">
+                                    <option value="pending">Pending</option>
+                                    <option value="confirmed">Confirmed</option>
+                                </select>
+                                <label class="kd2-check"><input type="checkbox" id="kd2SkipFridayK10" checked /> Skip Friday</label>
+                            </div>
+                        </div>
+                        <div class="kd2-editor-card">
+                            <h5 class="kd2-editor-title">K11</h5>
+                            <div class="kd2-editor-fields">
+                                <input type="number" min="0" id="kd2QtyK11" class="filter-control" placeholder="Quantity" />
+                                <input type="date" id="kd2DeadlineK11" class="filter-control" />
+                                <select id="kd2StatusK11" class="filter-control">
+                                    <option value="pending">Pending</option>
+                                    <option value="confirmed">Confirmed</option>
+                                </select>
+                                <label class="kd2-check"><input type="checkbox" id="kd2SkipFridayK11" checked /> Skip Friday</label>
+                            </div>
+                        </div>
+                    </div>
+                    <div class="ab-error" id="kd2PlanningError" style="display:none"></div>
+                </div>
+                <div class="modal-footer">
+                    <button class="btn btn-primary" id="btnKd2PlanningSave">Save Inputs</button>
+                    <button class="btn btn-ghost" id="btnKd2PlanningCancel">Cancel</button>
+                </div>
+            </div>
+        </div>
+
+        <div class="modal-overlay" id="kd2PlanEditOverlay" style="display:none;" role="dialog" aria-modal="true"
+            aria-labelledby="kd2PlanEditTitle">
+            <div class="modal kd2-modal-top" style="max-width:420px">
+                <div class="modal-header">
+                    <h4 class="modal-title" id="kd2PlanEditTitle">Edit KD2 Plan Block</h4>
+                    <button class="modal-close" id="kd2PlanEditClose">&#x2715;</button>
+                </div>
+                <div class="modal-body">
+                    <input type="hidden" id="kd2PlanEditId" />
+                    <div class="modal-info" id="kd2PlanEditInfo">—</div>
+                    <div class="form-group">
+                        <label class="form-label" for="kd2PlanEditStart">Planned Start</label>
+                        <input type="date" id="kd2PlanEditStart" class="filter-control" />
+                    </div>
+                    <div class="form-group">
+                        <label class="form-label" for="kd2PlanEditEnd">Planned End</label>
+                        <input type="date" id="kd2PlanEditEnd" class="filter-control" />
+                    </div>
+                    <div class="form-group">
+                        <label class="form-label" for="kd2PlanEditRemark">Remark</label>
+                        <input type="text" id="kd2PlanEditRemark" class="filter-control" placeholder="Optional note" />
+                    </div>
+                    <div class="ab-error" id="kd2PlanEditError" style="display:none"></div>
+                </div>
+                <div class="modal-footer">
+                    <button class="btn btn-ghost btn-kd2-danger" id="btnKd2PlanDelete">Delete Block</button>
+                    <button class="btn btn-primary" id="btnKd2PlanEditSave">Save Changes</button>
+                    <button class="btn btn-ghost" id="btnKd2PlanEditCancel">Cancel</button>
+                </div>
+            </div>
+        </div>
+
+        <div class="modal-overlay" id="kd2PlanCreateOverlay" style="display:none;" role="dialog" aria-modal="true"
+            aria-labelledby="kd2PlanCreateTitle">
+            <div class="modal" style="max-width:760px">
+                <div class="modal-header">
+                    <h4 class="modal-title" id="kd2PlanCreateTitle">Add KD2 Plan Block</h4>
+                    <button class="modal-close" id="kd2PlanCreateClose">&#x2715;</button>
+                </div>
+                <div class="modal-body">
+                    <div class="kd2-modal-grid">
+                        <div class="form-group" style="grid-column:1/-1" id="kd2PlanCreateModeGroup" data-kd2-plan-create-form>
+                            <label class="form-label">Add Type</label>
+                            <div class="kd2-create-mode-toggle" id="kd2PlanCreateModeToggle">
+                                <button type="button" class="kd2-create-mode-btn active" data-mode="block">Block</button>
+                                <button type="button" class="kd2-create-mode-btn" data-mode="template">Template</button>
+                            </div>
+                        </div>
+                        <div class="form-group" data-kd2-plan-create-form>
+                            <label class="form-label" for="kd2PlanCreateBattalion">Battalion</label>
+                            <select id="kd2PlanCreateBattalion" class="filter-control"></select>
+                        </div>
+                        <div class="form-group">
+                            <label class="form-label" for="kd2PlanCreateVehicle">Vehicle</label>
+                            <select id="kd2PlanCreateVehicle" class="filter-control">
+                                <option value="K9">K9</option>
+                                <option value="K10">K10</option>
+                                <option value="K11">K11</option>
+                            </select>
+                        </div>
+                        <div class="form-group" style="grid-column:1/-1" data-kd2-plan-create-form>
+                            <label class="form-label" for="kd2PlanCreateUnit">Unit</label>
+                            <select id="kd2PlanCreateUnit" class="filter-control"></select>
+                        </div>
+                        <div class="form-group" style="grid-column:1/-1" data-kd2-plan-create-form>
+                            <label class="form-label" for="kd2PlanCreateStation">Process / Station</label>
+                            <select id="kd2PlanCreateStation" class="filter-control"></select>
+                        </div>
+                        <div class="form-group" style="grid-column:1/-1" data-kd2-plan-create-form>
+                            <label class="form-label">Category</label>
+                            <div class="modal-info" id="kd2PlanCreateCategory">Select a station to resolve the KD2 category.</div>
+                        </div>
+                        <div class="form-group" data-kd2-plan-create-form>
+                            <label class="form-label" for="kd2PlanCreateStart">Planned Start</label>
+                            <input type="date" id="kd2PlanCreateStart" class="filter-control" />
+                        </div>
+                        <div class="form-group" data-kd2-plan-create-form>
+                            <label class="form-label" for="kd2PlanCreateDuration">Duration (working days)</label>
+                            <input type="number" id="kd2PlanCreateDuration" class="filter-control" min="1" step="1" placeholder="Set default first" />
+                        </div>
+                        <div class="form-group" data-kd2-plan-create-form>
+                            <label class="form-label" for="kd2PlanCreateEnd">Planned End</label>
+                            <input type="date" id="kd2PlanCreateEnd" class="filter-control" />
+                        </div>
+                        <div class="form-group" style="grid-column:1/-1" data-kd2-plan-create-form>
+                            <label class="form-label" for="kd2PlanCreateRemark">Remark <span class="form-label-optional">(optional)</span></label>
+                            <input type="text" id="kd2PlanCreateRemark" class="filter-control" placeholder="Optional note" />
+                        </div>
+                        <div class="form-group kd2-template-editor-wrap" id="kd2TemplateEditorWrap" style="grid-column:1/-1;display:none">
+                            <div class="kd2-template-editor-head">
+                                <label class="form-label">Template Durations</label>
+                                <div class="kd2-template-editor-actions">
+                                    <button class="btn btn-ghost btn-sm" type="button" id="btnKd2TemplateAddBlock">Add Block</button>
+                                    <button class="btn btn-ghost btn-sm" type="button" id="btnKd2TemplateSave">Save Template</button>
+                                </div>
+                            </div>
+                            <div class="modal-info">Rows with the same route number run in parallel. Durations are saved as station lead-time defaults.</div>
+                            <div class="kd2-template-editor" id="kd2TemplateEditor"></div>
+                        </div>
+                    </div>
+                    <div class="ab-error" id="kd2PlanCreateError" style="display:none"></div>
+                </div>
+                <div class="modal-footer">
+                    <button class="btn btn-primary" id="btnKd2PlanCreateSave">Add to KD2 Plan</button>
+                    <button class="btn btn-ghost" id="btnKd2PlanCreateCancel">Cancel</button>
+                </div>
+            </div>
+        </div>
+
+        <div class="modal-overlay" id="kd2NoWorkOverlay" style="display:none;" role="dialog" aria-modal="true"
+            aria-labelledby="kd2NoWorkTitle">
+            <div class="modal kd2-modal-top" style="max-width:640px">
+                <div class="modal-header">
+                    <h4 class="modal-title" id="kd2NoWorkTitle">KD2 No-work Days</h4>
+                    <button class="modal-close" id="kd2NoWorkClose">&#x2715;</button>
+                </div>
+                <div class="modal-body">
+                    <input type="hidden" id="kd2NoWorkIds" />
+                    <div class="kd2-modal-grid">
+                        <div class="form-group">
+                            <label class="form-label" for="kd2NoWorkStart">Start Date</label>
+                            <input type="date" id="kd2NoWorkStart" class="filter-control" />
+                        </div>
+                        <div class="form-group">
+                            <label class="form-label" for="kd2NoWorkEnd">End Date</label>
+                            <input type="date" id="kd2NoWorkEnd" class="filter-control" />
+                        </div>
+                        <div class="form-group">
+                            <label class="form-label" for="kd2NoWorkLabel">Label <span class="form-label-optional">(optional)</span></label>
+                            <input type="text" id="kd2NoWorkLabel" class="filter-control" placeholder="Optional reason" />
+                        </div>
+                    </div>
+                    <div class="import-footer" style="margin-bottom:14px">
+                        <button class="btn btn-primary" id="btnKd2NoWorkAdd">Add Range</button>
+                        <button class="btn btn-ghost" id="btnKd2NoWorkCancelEdit" style="display:none">Cancel Edit</button>
+                    </div>
+                    <div class="ab-error" id="kd2NoWorkError" style="display:none"></div>
+                    <div class="kd2-import-summary" id="kd2NoWorkSummary">KD2 holidays are saved directly to Supabase.</div>
+                    <div class="kd2-no-work-list" id="kd2NoWorkList"></div>
+                </div>
+                <div class="modal-footer">
+                    <button class="btn btn-ghost" id="btnKd2NoWorkDone">Done</button>
+                </div>
+            </div>
+        </div>
+
+        <div class="modal-overlay" id="kd2LeadTimeOverlay" style="display:none;" role="dialog" aria-modal="true"
+            aria-labelledby="kd2LeadTimeTitle">
+            <div class="modal modal-wide" style="max-width:980px">
+                <div class="modal-header">
+                    <h4 class="modal-title" id="kd2LeadTimeTitle">KD2 Lead Time Maintenance</h4>
+                    <button class="modal-close" id="kd2LeadTimeClose">&#x2715;</button>
+                </div>
+                <div class="modal-body">
+                    <div class="modal-info" id="kd2LeadTimeSummary">Load a KD2 vehicle route to edit lead times.</div>
+                    <div class="kd2-leadtime-shell" id="kd2LeadTimeBody"></div>
+                    <div class="ab-error" id="kd2LeadTimeError" style="display:none"></div>
+                </div>
+                <div class="modal-footer">
+                    <button class="btn btn-primary" id="btnKd2LeadTimeSave">Save Lead Times</button>
+                    <button class="btn btn-ghost" id="btnKd2LeadTimeCancel">Cancel</button>
+                </div>
+            </div>
+        </div>
+
         <!-- Toast notifications -->
         <div class="toast-container" id="toastContainer"></div>
 
@@ -1190,6 +1747,7 @@
     <!-- SheetJS (Excel export) -->
     <script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js" crossorigin="anonymous"></script>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/exceljs/4.3.0/exceljs.min.js" crossorigin="anonymous"></script>
+    <script src="kd2.js"></script>
     <!-- App -->
     <script src="app.js"></script>
 </body>

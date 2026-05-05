@@ -11,6 +11,15 @@
         href="https://fonts.googleapis.com/css2?family=Rajdhani:wght@400;500;600;700&family=DM+Mono:wght@400;500&family=Inter:wght@300;400;500;600&display=swap"
         rel="stylesheet" />
     <link rel="icon" type="image/png" href="favicon.png">
+    <script>
+        (function () {
+            try {
+                if (localStorage.getItem('kd1_theme') === 'light') {
+                    document.documentElement.setAttribute('data-theme', 'light');
+                }
+            } catch (e) { }
+        })();
+    </script>
     <style>
         *,
         *::before,
@@ -25,17 +34,33 @@
             --clr-surface: #161b27;
             --clr-surface-2: #1e2537;
             --clr-border: #2a3350;
+            --clr-border-soft: rgba(42, 51, 80, .7);
             --clr-text: #e2e8f4;
             --clr-muted: #7a8baa;
             --clr-dim: #4a5575;
             --clr-accent: #4f8ef7;
             --clr-accent-dim: rgba(79, 142, 247, .15);
             --clr-error: #ef4444;
+            --clr-header-glow: rgba(79, 142, 247, .15);
             --ff-display: 'Rajdhani', sans-serif;
             --ff-mono: 'DM Mono', monospace;
             --ff-body: 'Inter', sans-serif;
             --radius: 10px;
             --radius-sm: 6px;
+        }
+
+        [data-theme="light"] {
+            --clr-bg: #eef3f8;
+            --clr-surface: rgba(255, 255, 255, .92);
+            --clr-surface-2: #f8fafc;
+            --clr-border: #cbd5e1;
+            --clr-border-soft: rgba(203, 213, 225, .72);
+            --clr-text: #0f172a;
+            --clr-muted: #475569;
+            --clr-dim: #94a3b8;
+            --clr-accent: #2563eb;
+            --clr-accent-dim: rgba(37, 99, 235, .1);
+            --clr-header-glow: rgba(37, 99, 235, .08);
         }
 
         html {
@@ -45,6 +70,9 @@
 
         body {
             background: var(--clr-bg);
+            background:
+                radial-gradient(circle at top left, var(--clr-header-glow), transparent 32%),
+                linear-gradient(180deg, color-mix(in srgb, var(--clr-bg) 94%, #000 6%), var(--clr-bg));
             color: var(--clr-text);
             font-family: var(--ff-body);
             min-height: 100vh;
@@ -64,17 +92,32 @@
             pointer-events: none;
         }
 
+        [data-theme="light"] body::before {
+            background-image:
+                linear-gradient(rgba(37, 99, 235, .025) 1px, transparent 1px),
+                linear-gradient(90deg, rgba(37, 99, 235, .025) 1px, transparent 1px);
+        }
+
         /* ─── Header ────────────────────────────────────────────────── */
         .login-header {
-            border-bottom: 1px solid var(--clr-border);
+            border-bottom: 1px solid var(--clr-border-soft);
             background: var(--clr-surface);
+            background: color-mix(in srgb, var(--clr-surface) 92%, transparent);
+            backdrop-filter: blur(18px);
             padding: 0 24px;
         }
 
         .login-header-inner {
-            max-width: 480px;
+            max-width: 960px;
             margin: 0 auto;
             height: 58px;
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            gap: 14px;
+        }
+
+        .login-header-brand {
             display: flex;
             align-items: center;
             gap: 14px;
@@ -112,6 +155,54 @@
             text-transform: uppercase;
         }
 
+        .header-actions {
+            display: flex;
+            align-items: center;
+            gap: 12px;
+        }
+
+        .btn-theme {
+            background: var(--clr-surface-2);
+            border: 1px solid var(--clr-border);
+            border-radius: var(--radius-sm);
+            color: var(--clr-muted);
+            cursor: pointer;
+            width: 34px;
+            height: 34px;
+            display: inline-flex;
+            align-items: center;
+            justify-content: center;
+            transition: background .18s, color .18s, border-color .18s, transform .2s;
+        }
+
+        .btn-theme:hover {
+            background: var(--clr-accent-dim);
+            border-color: var(--clr-accent);
+            color: var(--clr-accent);
+            transform: rotate(20deg);
+        }
+
+        .btn-theme svg {
+            width: 16px;
+            height: 16px;
+        }
+
+        .icon-sun {
+            display: block;
+        }
+
+        .icon-moon {
+            display: none;
+        }
+
+        [data-theme="light"] .icon-sun {
+            display: none;
+        }
+
+        [data-theme="light"] .icon-moon {
+            display: block;
+        }
+
         /* ─── Main ──────────────────────────────────────────────────── */
         .login-main {
             flex: 1;
@@ -123,12 +214,18 @@
 
         .login-card {
             background: var(--clr-surface);
+            background: color-mix(in srgb, var(--clr-surface) 94%, transparent);
             border: 1px solid var(--clr-border);
             border-radius: 14px;
             box-shadow: 0 20px 60px rgba(0, 0, 0, .5), 0 2px 16px rgba(0, 0, 0, .3);
             padding: 36px 36px 28px;
             width: 100%;
             max-width: 400px;
+            backdrop-filter: blur(22px);
+        }
+
+        [data-theme="light"] .login-card {
+            box-shadow: 0 20px 60px rgba(15, 23, 42, .12), 0 2px 16px rgba(15, 23, 42, .08);
         }
 
         .login-card-header {
@@ -320,7 +417,7 @@
             padding: 16px;
             font-size: .72rem;
             color: var(--clr-dim);
-            border-top: 1px solid var(--clr-border);
+            border-top: 1px solid var(--clr-border-soft);
         }
 
         /* ─── Security badge ────────────────────────────────────────── */
@@ -353,6 +450,25 @@
             background: var(--clr-border);
             border-radius: 3px;
         }
+
+        @media (max-width: 640px) {
+            .login-header {
+                padding: 12px 16px;
+            }
+
+            .login-header-inner {
+                height: auto;
+                align-items: flex-start;
+            }
+
+            .brand-title {
+                font-size: 1rem;
+            }
+
+            .login-card {
+                padding: 28px 22px 24px;
+            }
+        }
     </style>
 </head>
 
@@ -360,10 +476,24 @@
 
     <header class="login-header">
         <div class="login-header-inner">
-            <div class="brand-badge">KD1</div>
-            <div class="brand-text">
-                <span class="brand-title">Assembly Control</span>
-                <span class="brand-sub">Plan vs Actual Tracking System</span>
+            <div class="login-header-brand">
+                <div class="brand-badge">PPMS</div>
+                <div class="brand-text">
+                    <span class="brand-title">Production Plan Monitoring System</span>
+                    <span class="brand-sub">Planning and Progress Control Workspace</span>
+                </div>
+            </div>
+            <div class="header-actions">
+                <button class="btn-theme" id="btnTheme" title="Toggle light / dark theme" type="button">
+                    <svg class="icon-sun" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.8">
+                        <circle cx="10" cy="10" r="4" />
+                        <path
+                            d="M10 2v2M10 16v2M2 10h2M16 10h2M4.22 4.22l1.42 1.42M14.36 14.36l1.42 1.42M4.22 15.78l1.42-1.42M14.36 5.64l1.42-1.42" />
+                    </svg>
+                    <svg class="icon-moon" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.8">
+                        <path d="M17.5 12A7.5 7.5 0 018 2.5a7.5 7.5 0 100 15 7.5 7.5 0 009.5-5.5z" />
+                    </svg>
+                </button>
             </div>
         </div>
     </header>
@@ -372,7 +502,7 @@
         <div class="login-card">
             <div class="login-card-header">
                 <div class="login-card-title">Sign In</div>
-                <div class="login-card-sub">Enter your credentials to access the system</div>
+                <div class="login-card-sub">Enter your credentials to access the monitoring workspace</div>
             </div>
 
             <div class="login-error" id="loginError" role="alert">
@@ -423,7 +553,7 @@
     </main>
 
     <footer class="login-footer">
-        KD1 Assembly Control System &copy; 2026 &nbsp;|&nbsp; Adham Morsy
+        Production Plan Monitoring System &copy; 2026 &nbsp;|&nbsp; Adham Morsy
     </footer>
 
     <!-- Supabase CDN -->
@@ -435,6 +565,7 @@
         const SUPABASE_URL = 'https://biqwfqkuhebxcfucangt.supabase.co';
         const SUPABASE_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImJpcXdmcWt1aGVieGNmdWNhbmd0Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3NjYzNzM5NzQsImV4cCI6MjA4MTk0OTk3NH0.QkASAl8yzXfxVq0b0FdkXHTOpblldr2prCnImpV8ml8';
         const SESSION_KEY = 'kd1_session';
+        const THEME_KEY = 'kd1_theme';
 
         // No-op storage prevents Supabase from touching localStorage/sessionStorage,
         // which Edge/Brave tracking prevention blocks and causes a crash.
@@ -491,6 +622,21 @@
             document.getElementById('loginError').classList.remove('visible');
             document.getElementById('loginEmail').classList.remove('error');
             document.getElementById('loginPassword').classList.remove('error');
+        }
+
+        function getTheme() {
+            return document.documentElement.getAttribute('data-theme') || 'dark';
+        }
+
+        function setTheme(theme) {
+            if (theme === 'light') {
+                document.documentElement.setAttribute('data-theme', 'light');
+            } else {
+                document.documentElement.removeAttribute('data-theme');
+            }
+            try {
+                localStorage.setItem(THEME_KEY, theme);
+            } catch (e) { }
         }
 
         /* ── Login flow ──────────────────────────────────────────────── */
@@ -583,6 +729,10 @@
         document.getElementById('pwToggle').addEventListener('click', () => {
             const inp = document.getElementById('loginPassword');
             inp.type = inp.type === 'password' ? 'text' : 'password';
+        });
+
+        document.getElementById('btnTheme').addEventListener('click', () => {
+            setTheme(getTheme() === 'light' ? 'dark' : 'light');
         });
 
         /* ── If already logged in, redirect ─────────────────────────── */
