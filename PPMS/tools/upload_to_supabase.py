@@ -3,7 +3,7 @@ KD1 Assembly Plan — Excel → Supabase Uploader
 =============================================
 Usage:
     pip install pandas openpyxl supabase
-    python upload_to_supabase.py --file "your_plan.xlsx"
+    python PPMS/tools/upload_to_supabase.py --file "PPMS/data/workbooks/your_plan.xlsx"
 
 Optional flags:
     --sheet     Sheet name or index (default: 0 = first sheet)
