@@ -3,11 +3,15 @@
 .kd2-placement-palette-bar {
     display: flex;
     align-items: center;
+    width: 100%;
+    max-width: 100%;
+    min-width: 0;
     min-height: 34px;
     padding: 0 10px;
     border-radius: 5px;
     background: var(--kd2-placement-color, #3b82f6);
     box-shadow: inset 0 1px 0 rgba(255, 255, 255, .08);
+    overflow: hidden;
 }
 
 .kd2-placement-palette-bar .gc-bar-text {

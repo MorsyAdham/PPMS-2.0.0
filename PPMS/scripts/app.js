@@ -315,6 +315,98 @@ function samePlanLane(a, b) {
     return a.vehicle === b.vehicle && a.vehicle_no === b.vehicle_no;
 }
 
+function buildVisibleGanttDays(startDate, endDate) {
+    if (!startDate || !endDate || startDate > endDate) return [];
+    return generateDateRange(startDate, endDate)
+        .filter(d => new Date(d + 'T00:00:00').getDay() !== 5);
+}
+
+function resolveVisibleGanttColumn(dayIndex, dateStr, clampFallback) {
+    if (dayIndex[dateStr] !== undefined) return dayIndex[dateStr];
+    for (let n = 1; n <= 3; n++) {
+        const next = addDays(dateStr, n);
+        if (dayIndex[next] !== undefined) return dayIndex[next];
+    }
+    for (let n = 1; n <= 3; n++) {
+        const prev = addDays(dateStr, -n);
+        if (dayIndex[prev] !== undefined) return dayIndex[prev];
+    }
+    return clampFallback;
+}
+
+function compareGanttLanePriority(a, b) {
+    const pa = _laneOrder[a.task.id] ?? 0;
+    const pb = _laneOrder[b.task.id] ?? 0;
+    if (pa !== pb) return pa - pb;
+    if (a.si !== b.si) return a.si - b.si;
+    if (a.ei !== b.ei) return a.ei - b.ei;
+    return (a.task.id ?? 0) - (b.task.id ?? 0);
+}
+
+function buildPositionedGanttLaneTasks(tasks, startDate, endDate) {
+    const days = buildVisibleGanttDays(startDate, endDate);
+    const numDays = days.length;
+    if (!numDays) return [];
+    const dayIndex = Object.fromEntries(days.map((d, i) => [d, i]));
+    const positioned = tasks
+        .map(task => {
+            const rawSi = task.start_date < startDate ? 0 : resolveVisibleGanttColumn(dayIndex, task.start_date, null);
+            const rawEi = task.end_date > endDate ? numDays - 1 : resolveVisibleGanttColumn(dayIndex, task.end_date, null);
+            if (rawSi === null || rawEi === null || rawSi > rawEi) return null;
+            return { task, si: rawSi, ei: rawEi };
+        })
+        .filter(Boolean)
+        .sort(compareGanttLanePriority);
+
+    const laneEndAt = [];
+    positioned.forEach(item => {
+        let lane = 0;
+        while (laneEndAt[lane] !== undefined && laneEndAt[lane] >= item.si) lane++;
+        item.packedLane = lane;
+        laneEndAt[lane] = item.ei;
+    });
+
+    positioned.forEach(item => {
+        if (!Number.isFinite(_ganttVisualLane[item.task.id])) {
+            _ganttVisualLane[item.task.id] = item.packedLane;
+        }
+        item.lane = _ganttVisualLane[item.task.id];
+    });
+
+    return positioned;
+}
+
+function moveGanttBlockOneLane(planId, direction, startDate, endDate) {
+    const anchorTask = currentData.find(row => row.id === planId);
+    if (!anchorTask || !Number.isFinite(direction)) return false;
+
+    const laneTasks = currentData.filter(row => samePlanLane(row, anchorTask));
+    const positioned = buildPositionedGanttLaneTasks(laneTasks, startDate, endDate);
+    const anchor = positioned.find(item => item.task.id === planId);
+    if (!anchor) return false;
+
+    const targetLane = Math.max(0, anchor.lane + direction);
+    if (targetLane === anchor.lane) return false;
+
+    const neighbor = positioned
+        .filter(item =>
+            item.task.id !== planId &&
+            item.lane === targetLane &&
+            item.si <= anchor.ei &&
+            item.ei >= anchor.si
+        )
+        .sort((a, b) => {
+            const overlapA = Math.min(anchor.ei, a.ei) - Math.max(anchor.si, a.si);
+            const overlapB = Math.min(anchor.ei, b.ei) - Math.max(anchor.si, b.si);
+            if (overlapA !== overlapB) return overlapB - overlapA;
+            return compareGanttLanePriority(a, b);
+        })[0];
+
+    if (neighbor) _ganttVisualLane[neighbor.task.id] = anchor.lane;
+    _ganttVisualLane[planId] = targetLane;
+    return true;
+}
+
 function getKd2ForwardMoveRows(anchorTask, rows = []) {
     const helper = getModuleRuntime()?.getPlanMoveRowsFromAnchor;
     if (typeof helper !== 'function') return anchorTask ? [anchorTask] : [];
@@ -948,6 +1040,21 @@ function calculateStatus(row) {
     if (!completed && actualStart) return 'In Progress';
     // Planned: nothing recorded yet
     return 'Planned';
+}
+
+function ganttHighlightState(row) {
+    const completed = row.progress?.completed || false;
+    const compDate = row.progress?.completion_date || null;
+    const actualStart = row.progress?.actual_start_date || null;
+    const endDate = row.end_date;
+    const today = todayStr();
+
+    if (completed && compDate && compDate < endDate) return 'early';
+    if (completed && compDate && compDate > endDate) return 'late';
+    if (!completed && today > endDate) return 'late';
+    if (!completed && actualStart) return 'progress';
+    if (completed && compDate) return 'complete';
+    return 'planned';
 }
 
 function delayDays(row) {
@@ -2279,6 +2386,7 @@ function wireEvents() {
 
     // Gantt controls
     wireGanttControls();
+    bindVpxFullscreenUi();
 
     // Report modal
     wireReportModal();
@@ -3049,37 +3157,10 @@ function renderGantt(plans, startDate, endDate) {
             const laneMeta = laneMetaMap[laneMetaKey(groupKey, unit)] || {};
 
             // ── Lane assignment for overlapping bars ─────────────────────
-            // Sort by start date so we process left-to-right
-            const positioned = tasks
-                .map(task => {
-                    // Clamp tasks that start before / end after the visible range
-                    const rawSi = task.start_date < startDate ? 0 : resolveCol(task.start_date, null);
-                    const rawEi = task.end_date > endDate ? numDays - 1 : resolveCol(task.end_date, null);
-                    if (rawSi === null || rawEi === null || rawSi > rawEi) return null;
-                    return { task, si: rawSi, ei: rawEi };
-                })
-                .filter(Boolean)
-                .sort((a, b) => a.si - b.si);
-
-            // Sort by user-set lane priority first, then by start column
-            // _laneOrder[id] is a small integer the user controls with ▲▼ buttons
-            positioned.sort((a, b) => {
-                const pa = _laneOrder[a.task.id] ?? 0;
-                const pb = _laneOrder[b.task.id] ?? 0;
-                if (pa !== pb) return pa - pb;
-                return a.si - b.si;
-            });
-
-            // Assign each task to the lowest lane it doesn't collide with
-            const laneEndAt = [];
-            positioned.forEach(p => {
-                let lane = 0;
-                while (laneEndAt[lane] !== undefined && laneEndAt[lane] >= p.si) lane++;
-                p.lane = lane;
-                laneEndAt[lane] = p.ei;
-            });
-
-            const numLanes = laneEndAt.length || 1;
+            const positioned = buildPositionedGanttLaneTasks(tasks, startDate, endDate);
+            const numLanes = positioned.length
+                ? Math.max(...positioned.map(item => item.lane)) + 1
+                : 1;
             const BAR_H = 22;   // px — bar height per lane
             const BAR_GAP = 6;    // px — gap between lanes
             const LANE_H = BAR_H + BAR_GAP;
@@ -3094,15 +3175,11 @@ function renderGantt(plans, startDate, endDate) {
 
                 const color = ganttStationColor(task.process_station);
                 const status = calculateStatus(task);
+                const highlightState = ganttHighlightState(task);
                 const actualStart = task.progress?.actual_start_date || null;
 
-                let shadow = '';
-                let extraCls = '';
-                if (status === 'Completed') shadow = `;box-shadow:0 0 0 2px #22c55e inset,0 2px 6px rgba(0,0,0,.3)`;
-                else if (status === 'Late Completion') shadow = `;box-shadow:0 0 0 2px #3b82f6 inset,0 2px 6px rgba(0,0,0,.3)`;  // blue
-                else if (status === 'Overdue') extraCls = ' gc-bar-overdue';
-                else if (status === 'In Progress') shadow = `;box-shadow:0 0 0 2px #f59e0b inset,0 2px 6px rgba(0,0,0,.3)`;
-                else shadow = `;box-shadow:0 2px 6px rgba(0,0,0,.3)`;
+                let extraCls = ` gc-bar-state-${highlightState}`;
+                if (status === 'Overdue') extraCls += ' gc-bar-overdue';
 
                 let actualStartMarker = '';
                 if (actualStart && dayIndex[actualStart] !== undefined) {
@@ -3127,19 +3204,79 @@ function renderGantt(plans, startDate, endDate) {
                 const isSelected = _selectedGanttPlanIds.has(task.id);
                 const blockMenu = _ganttEditMode ? `
           <button type="button" class="gc-bar-select${isSelected ? ' gc-bar-select-active' : ''}" data-plan-id="${task.id}" title="Select block" aria-label="Select block" aria-pressed="${isSelected ? 'true' : 'false'}"></button>
-          <button type="button" class="gc-bar-menu-trigger" data-plan-id="${task.id}" title="Block options" aria-label="Block options" aria-expanded="${menuIsOpen ? 'true' : 'false'}">&#8942;</button>
+          <button type="button" class="gc-bar-menu-trigger" data-plan-id="${task.id}" title="Block options" aria-label="Block options" aria-expanded="${menuIsOpen ? 'true' : 'false'}">
+            <span class="gc-bar-menu-trigger-dots" aria-hidden="true">
+              <span class="gc-bar-menu-trigger-dot"></span>
+              <span class="gc-bar-menu-trigger-dot"></span>
+              <span class="gc-bar-menu-trigger-dot"></span>
+            </span>
+          </button>
           <div class="gc-bar-menu" role="menu" aria-label="Block options">
             <div class="gc-bar-menu-head">
+              <div class="gc-bar-menu-title-wrap">
+                <span class="gc-bar-menu-title">Block Actions</span>
+                <span class="gc-bar-menu-subtitle">Move or update this block</span>
+              </div>
               <button type="button" class="gc-bar-menu-close" data-plan-id="${task.id}" aria-label="Close block options">&times;</button>
             </div>
-            <button type="button" class="gc-bar-menu-item gc-bar-lane-up" data-plan-id="${task.id}" role="menuitem">Move up</button>
-            <button type="button" class="gc-bar-menu-item gc-bar-lane-dn" data-plan-id="${task.id}" role="menuitem">Move down</button>
-            <button type="button" class="gc-bar-menu-item gc-bar-menu-edit" data-plan-id="${task.id}" role="menuitem">Edit</button>
-            <button type="button" class="gc-bar-menu-item gc-bar-menu-delete gc-bar-menu-danger" data-plan-id="${task.id}" role="menuitem">Delete</button>
+            <div class="gc-bar-menu-body">
+              <button type="button" class="gc-bar-menu-item gc-bar-menu-item-move gc-bar-lane-up" data-plan-id="${task.id}" role="menuitem">
+                <span class="gc-bar-menu-icon" aria-hidden="true">
+                  <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round">
+                    <path d="M8 12V4"/>
+                    <path d="M4.75 7.25 8 4l3.25 3.25"/>
+                  </svg>
+                </span>
+                <span class="gc-bar-menu-copy">
+                  <span class="gc-bar-menu-label">Move up</span>
+                  <span class="gc-bar-menu-hint">Swap with the block above</span>
+                </span>
+              </button>
+              <button type="button" class="gc-bar-menu-item gc-bar-menu-item-move gc-bar-lane-dn" data-plan-id="${task.id}" role="menuitem">
+                <span class="gc-bar-menu-icon" aria-hidden="true">
+                  <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round">
+                    <path d="M8 4v8"/>
+                    <path d="m4.75 8.75 3.25 3.25 3.25-3.25"/>
+                  </svg>
+                </span>
+                <span class="gc-bar-menu-copy">
+                  <span class="gc-bar-menu-label">Move down</span>
+                  <span class="gc-bar-menu-hint">Swap with the block below</span>
+                </span>
+              </button>
+              <button type="button" class="gc-bar-menu-item gc-bar-menu-edit" data-plan-id="${task.id}" role="menuitem">
+                <span class="gc-bar-menu-icon" aria-hidden="true">
+                  <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round">
+                    <path d="M3.25 12.75h2.2l6.05-6.05-2.2-2.2-6.05 6.05v2.2Z"/>
+                    <path d="m8.55 4.5 2.2 2.2"/>
+                  </svg>
+                </span>
+                <span class="gc-bar-menu-copy">
+                  <span class="gc-bar-menu-label">Edit</span>
+                  <span class="gc-bar-menu-hint">Change dates and details</span>
+                </span>
+              </button>
+              <button type="button" class="gc-bar-menu-item gc-bar-menu-delete gc-bar-menu-danger" data-plan-id="${task.id}" role="menuitem">
+                <span class="gc-bar-menu-icon" aria-hidden="true">
+                  <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round">
+                    <path d="M3.75 4.75h8.5"/>
+                    <path d="M6.25 4.75V3.5h3.5v1.25"/>
+                    <path d="M5 6.25v5.25"/>
+                    <path d="M8 6.25v5.25"/>
+                    <path d="M11 6.25v5.25"/>
+                    <path d="M4.5 4.75l.55 7.1a1 1 0 0 0 1 .9h3.9a1 1 0 0 0 1-.9l.55-7.1"/>
+                  </svg>
+                </span>
+                <span class="gc-bar-menu-copy">
+                  <span class="gc-bar-menu-label">Delete</span>
+                  <span class="gc-bar-menu-hint">Remove this block from the plan</span>
+                </span>
+              </button>
+            </div>
           </div>` : '';
                 return `<div class="gc-bar${extraCls}${menuIsOpen ? ' gc-bar-menu-open' : ''}${isSelected ? ' gc-bar-selected' : ''}"
           data-plan-id="${task.id}"
-          style="left:${left}px;width:${width}px;height:${BAR_H}px;top:${topPx}px;transform:none;background:${color}${shadow}"
+          style="left:${left}px;width:${width}px;height:${BAR_H}px;top:${topPx}px;transform:none;background:${color}"
           title="${esc(tip)}">
           ${actualStartMarker}
           <span class="gc-bar-text">${esc(isKD2Module() ? `${getRowCode(task)} · ${task.process_station}` : task.process_station)}</span>
@@ -3226,6 +3363,7 @@ function renderGantt(plans, startDate, endDate) {
         }
     }
     _ganttHasRenderedOnce = true;
+    requestAnimationFrame(positionOpenGanttBlockMenu);
 }
 
 /* ================================================================
@@ -5118,9 +5256,12 @@ let _ganttSelectLaneMode = false;
 let _openGanttBlockMenuPlanId = null;
 const _selectedGanttPlanIds = new Set();
 const _laneOrder = {};
+const _ganttVisualLane = {};
 let _ganttLegendOpen = false;
 let _ganttFullscreenEventsBound = false;
 let _ganttFullscreenHandlersBound = false;
+let _vpxFullscreenEventsBound = false;
+let _vpxFullscreenHandlersBound = false;
 let _ganttHoverDate = '';
 let _ganttHoverRowEl = null;
 let _ganttHasRenderedOnce = false;
@@ -5191,6 +5332,93 @@ function bindGanttFullscreenUi() {
         document.addEventListener('fullscreenchange', syncGanttFullscreenButtons);
     }
     syncGanttFullscreenButtons();
+}
+
+function getVpxCardHost() {
+    return document.getElementById('vpxCard');
+}
+
+function isVpxFullscreen() {
+    const host = getVpxCardHost();
+    return !!host && document.fullscreenElement === host;
+}
+
+function syncVpxFullscreenButtons() {
+    const active = isVpxFullscreen();
+    const label = active ? 'Exit Full Screen' : 'Full Screen';
+    const host = getVpxCardHost();
+    if (host) host.classList.toggle('is-fullscreen', active);
+    [
+        ['btnVpxFullscreen', 'btnVpxFullscreenLabel'],
+    ].forEach(([buttonId, labelId]) => {
+        const btn = document.getElementById(buttonId);
+        if (btn) {
+            btn.setAttribute('aria-pressed', active ? 'true' : 'false');
+            btn.setAttribute('title', label);
+        }
+        const span = document.getElementById(labelId);
+        if (span) span.textContent = label;
+    });
+}
+
+async function toggleVpxFullscreen(forceOn = null) {
+    const host = getVpxCardHost();
+    if (!host) return;
+    const active = isVpxFullscreen();
+    const shouldEnter = forceOn === null ? !active : !!forceOn;
+    if (shouldEnter === active) {
+        syncVpxFullscreenButtons();
+        return;
+    }
+    try {
+        if (shouldEnter) {
+            if (!host.requestFullscreen) throw new Error('Fullscreen is not supported in this browser.');
+            await host.requestFullscreen();
+        } else if (document.fullscreenElement && document.exitFullscreen) {
+            await document.exitFullscreen();
+        }
+    } catch (error) {
+        showToast('Fullscreen could not be opened: ' + error.message, 'error');
+    } finally {
+        syncVpxFullscreenButtons();
+    }
+}
+
+function bindVpxFullscreenUi() {
+    if (!_vpxFullscreenHandlersBound) {
+        _vpxFullscreenHandlersBound = true;
+        document.getElementById('btnVpxFullscreen')?.addEventListener('click', () => toggleVpxFullscreen());
+    }
+    if (!_vpxFullscreenEventsBound) {
+        _vpxFullscreenEventsBound = true;
+        document.addEventListener('fullscreenchange', syncVpxFullscreenButtons);
+    }
+    syncVpxFullscreenButtons();
+}
+
+function positionOpenGanttBlockMenu() {
+    document.querySelectorAll('.gc-bar-menu-below').forEach(bar => bar.classList.remove('gc-bar-menu-below'));
+    const bar = document.querySelector('.gc-bar-menu-open');
+    if (!bar) return;
+
+    const menu = bar.querySelector('.gc-bar-menu');
+    if (!menu) return;
+
+    const scrollRoot = document.getElementById('ganttScrollRoot');
+    const barRect = bar.getBoundingClientRect();
+    const menuRect = menu.getBoundingClientRect();
+    const topBoundary = scrollRoot
+        ? Math.max(scrollRoot.getBoundingClientRect().top + 8, 8)
+        : 8;
+    const bottomBoundary = scrollRoot
+        ? Math.min(scrollRoot.getBoundingClientRect().bottom - 8, window.innerHeight - 8)
+        : window.innerHeight - 8;
+
+    const spaceAbove = barRect.top - topBoundary;
+    const spaceBelow = bottomBoundary - barRect.bottom;
+    const shouldOpenBelow = menuRect.top < topBoundary && spaceBelow > spaceAbove;
+
+    if (shouldOpenBelow) bar.classList.add('gc-bar-menu-below');
 }
 
 function syncGanttLegendUi() {
@@ -6128,6 +6356,7 @@ async function deleteGanttBlock(planId) {
 
         // Remove from in-memory data
         currentData = currentData.filter(t => t.id !== planId);
+        delete _ganttVisualLane[planId];
         _selectedGanttPlanIds.delete(planId);
         _pushUndoAction({
             label: 'block delete',
@@ -6165,6 +6394,7 @@ async function deleteSelectedGanttBlocks() {
         await removeGanttTaskSnapshots(snapshots, 'batch-delete');
 
         currentData = currentData.filter(task => !planIds.includes(task.id));
+        planIds.forEach(id => { delete _ganttVisualLane[id]; });
         planIds.forEach(id => _selectedGanttPlanIds.delete(id));
         _pushUndoAction({
             label: `${snapshots.length} block delete${snapshots.length > 1 ? 's' : ''}`,
@@ -6239,13 +6469,14 @@ function _ganttBarClickHandler(e) {
     if (menuTrigger) {
         e.stopPropagation();
         _openGanttBlockMenuPlanId = parseInt(menuTrigger.dataset.planId);
-        document.querySelectorAll('.gc-bar-menu-open').forEach(bar => bar.classList.remove('gc-bar-menu-open'));
+        document.querySelectorAll('.gc-bar-menu-open').forEach(bar => bar.classList.remove('gc-bar-menu-open', 'gc-bar-menu-below'));
         document.querySelectorAll('.gc-row-menu-open').forEach(row => row.classList.remove('gc-row-menu-open'));
         const bar = menuTrigger.closest('.gc-bar');
         if (bar) bar.classList.add('gc-bar-menu-open');
         const row = menuTrigger.closest('.gr');
         if (row) row.classList.add('gc-row-menu-open');
         document.querySelectorAll('.gc-bar-menu-trigger').forEach(btn => btn.setAttribute('aria-expanded', btn === menuTrigger ? 'true' : 'false'));
+        requestAnimationFrame(positionOpenGanttBlockMenu);
         return;
     }
     const menuClose = e.target.closest('.gc-bar-menu-close');
@@ -6254,7 +6485,7 @@ function _ganttBarClickHandler(e) {
         const planId = parseInt(menuClose.dataset.planId);
         if (_openGanttBlockMenuPlanId === planId) _openGanttBlockMenuPlanId = null;
         const bar = menuClose.closest('.gc-bar');
-        if (bar) bar.classList.remove('gc-bar-menu-open');
+        if (bar) bar.classList.remove('gc-bar-menu-open', 'gc-bar-menu-below');
         menuClose.closest('.gr')?.classList.remove('gc-row-menu-open');
         bar?.querySelector('.gc-bar-menu-trigger')?.setAttribute('aria-expanded', 'false');
         return;
@@ -6284,9 +6515,9 @@ function _ganttBarClickHandler(e) {
     if (laneUp) {
         e.stopPropagation();
         const planId = parseInt(laneUp.dataset.planId);
-        _laneOrder[planId] = (_laneOrder[planId] ?? 0) - 1;
         const gsEl = document.getElementById('ganttStart');
         const geEl = document.getElementById('ganttEnd');
+        moveGanttBlockOneLane(planId, -1, gsEl?.value, geEl?.value);
         renderGantt(currentData, gsEl?.value, geEl?.value);
         return;
     }
@@ -6295,9 +6526,9 @@ function _ganttBarClickHandler(e) {
     if (laneDown) {
         e.stopPropagation();
         const planId = parseInt(laneDown.dataset.planId);
-        _laneOrder[planId] = (_laneOrder[planId] ?? 0) + 1;
         const gsEl = document.getElementById('ganttStart');
         const geEl = document.getElementById('ganttEnd');
+        moveGanttBlockOneLane(planId, 1, gsEl?.value, geEl?.value);
         renderGantt(currentData, gsEl?.value, geEl?.value);
         return;
     }

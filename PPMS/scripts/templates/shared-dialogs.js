@@ -433,7 +433,7 @@ export function renderSharedDialogs() {
 
         <!-- ════════════════════════════════════════════════ ADD BLOCK MODAL -->
         <div class="modal-overlay" id="addBlockOverlay" style="display:none" role="dialog" aria-modal="true">
-            <div class="modal" style="max-width:460px">
+            <div class="modal ab-modal">
                 <div class="modal-header">
                     <h4 class="modal-title">
                         <svg viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="2"
@@ -445,7 +445,7 @@ export function renderSharedDialogs() {
                     <button class="modal-close" id="addBlockClose">&#x2715;</button>
                 </div>
                 <div class="modal-body" style="padding:20px 24px">
-                    <div class="um-form-grid" style="grid-template-columns:1fr 1fr;gap:14px 18px">
+                    <div class="um-form-grid ab-form-grid">
 
                         <div class="form-group">
                             <label class="form-label" for="abVehicle">Vehicle</label>
@@ -453,7 +453,7 @@ export function renderSharedDialogs() {
                         </div>
 
                         <!-- New vehicle input (hidden unless "+ New Vehicle" selected) -->
-                        <div class="form-group" id="abNewVehicleGroup" style="display:none">
+                        <div class="form-group ab-form-group-full" id="abNewVehicleGroup" style="display:none">
                             <label class="form-label" for="abNewVehicle">New Vehicle Name</label>
                             <input type="text" id="abNewVehicle" class="filter-control" placeholder="e.g. K15" />
                         </div>
@@ -464,12 +464,12 @@ export function renderSharedDialogs() {
                         </div>
 
                         <!-- New unit input (hidden unless "+ New Unit" selected) -->
-                        <div class="form-group" id="abNewUnitGroup" style="display:none">
+                        <div class="form-group ab-form-group-full" id="abNewUnitGroup" style="display:none">
                             <label class="form-label" for="abNewUnit">New Unit / Vehicle No.</label>
                             <input type="text" id="abNewUnit" class="filter-control" placeholder="e.g. M4" />
                         </div>
 
-                        <div class="form-group" style="grid-column:1/-1">
+                        <div class="form-group ab-form-group-station">
                             <label class="form-label" for="abStation">Process / Station</label>
                             <select id="abStation" class="filter-control">
                                 <optgroup label="Assembly">
@@ -513,7 +513,7 @@ export function renderSharedDialogs() {
                             <input type="number" id="abDuration" class="filter-control" min="1" max="60" value="2" />
                         </div>
 
-                        <div class="form-group" style="grid-column:1/-1">
+                        <div class="form-group ab-form-group-full">
                             <label class="form-label" for="abRemark">Remark (optional)</label>
                             <input type="text" id="abRemark" class="filter-control"
                                 placeholder="Notes for this block" />
@@ -763,7 +763,7 @@ export function renderSharedDialogs() {
 
         <div class="modal-overlay" id="kd2PlanCreateOverlay" style="display:none;" role="dialog" aria-modal="true"
             aria-labelledby="kd2PlanCreateTitle">
-            <div class="modal" style="max-width:760px">
+            <div class="modal kd2-plan-create-modal">
                 <div class="modal-header">
                     <h4 class="modal-title" id="kd2PlanCreateTitle">Add KD2 Plan Block</h4>
                     <button class="modal-close" id="kd2PlanCreateClose">&#x2715;</button>
@@ -777,21 +777,27 @@ export function renderSharedDialogs() {
                                 <button type="button" class="kd2-create-mode-btn" data-mode="template">Template</button>
                             </div>
                         </div>
-                        <div class="form-group" data-kd2-plan-create-form>
-                            <label class="form-label" for="kd2PlanCreateBattalion">Battalion</label>
-                            <select id="kd2PlanCreateBattalion" class="filter-control"></select>
-                        </div>
-                        <div class="form-group">
-                            <label class="form-label" for="kd2PlanCreateVehicle">Vehicle</label>
-                            <select id="kd2PlanCreateVehicle" class="filter-control">
-                                <option value="K9">K9</option>
-                                <option value="K10">K10</option>
-                                <option value="K11">K11</option>
-                            </select>
-                        </div>
-                        <div class="form-group" style="grid-column:1/-1" data-kd2-plan-create-form>
-                            <label class="form-label" for="kd2PlanCreateUnit">Unit</label>
-                            <select id="kd2PlanCreateUnit" class="filter-control"></select>
+                        <div class="kd2-plan-create-toolbar">
+                            <div class="form-group" data-kd2-plan-create-form>
+                                <label class="form-label" for="kd2PlanCreateBattalion">Battalion</label>
+                                <select id="kd2PlanCreateBattalion" class="filter-control"></select>
+                            </div>
+                            <div class="form-group">
+                                <label class="form-label" for="kd2PlanCreateVehicle">Vehicle</label>
+                                <select id="kd2PlanCreateVehicle" class="filter-control">
+                                    <option value="K9">K9</option>
+                                    <option value="K10">K10</option>
+                                    <option value="K11">K11</option>
+                                </select>
+                            </div>
+                            <div class="form-group" data-kd2-plan-create-form>
+                                <label class="form-label" for="kd2PlanCreateUnit">Unit</label>
+                                <select id="kd2PlanCreateUnit" class="filter-control"></select>
+                            </div>
+                            <div class="form-group" data-kd2-plan-create-form>
+                                <label class="form-label" for="kd2PlanCreateStart">Planned Start</label>
+                                <input type="date" id="kd2PlanCreateStart" class="filter-control" />
+                            </div>
                         </div>
                         <div class="form-group" style="grid-column:1/-1" data-kd2-plan-create-form>
                             <label class="form-label" for="kd2PlanCreateStation">Process / Station</label>
@@ -800,10 +806,6 @@ export function renderSharedDialogs() {
                         <div class="form-group" style="grid-column:1/-1" data-kd2-plan-create-form>
                             <label class="form-label">Category</label>
                             <div class="modal-info" id="kd2PlanCreateCategory">Select a station to resolve the KD2 category.</div>
-                        </div>
-                        <div class="form-group" data-kd2-plan-create-form>
-                            <label class="form-label" for="kd2PlanCreateStart">Planned Start</label>
-                            <input type="date" id="kd2PlanCreateStart" class="filter-control" />
                         </div>
                         <div class="form-group" data-kd2-plan-create-form>
                             <label class="form-label" for="kd2PlanCreateDuration">Duration (working days)</label>
@@ -819,13 +821,18 @@ export function renderSharedDialogs() {
                         </div>
                         <div class="form-group kd2-template-editor-wrap" id="kd2TemplateEditorWrap" style="grid-column:1/-1;display:none">
                             <div class="kd2-template-editor-head">
-                                <label class="form-label">Template Durations</label>
+                                <label class="form-label">Template Layout</label>
                                 <div class="kd2-template-editor-actions">
-                                    <button class="btn btn-ghost btn-sm" type="button" id="btnKd2TemplateAddBlock">Add Block</button>
+                                    <div class="kd2-template-editor-view" id="kd2TemplateEditorViewToggle" aria-label="Template editor view">
+                                        <button class="kd2-template-view-btn active" type="button" data-view="visual">Visual</button>
+                                        <button class="kd2-template-view-btn" type="button" data-view="form">Form</button>
+                                        <button class="kd2-template-view-btn" type="button" data-view="preview">Gantt</button>
+                                    </div>
+                                    <button class="btn btn-ghost btn-sm" type="button" id="btnKd2TemplateAddBlock">Add Item</button>
                                     <button class="btn btn-ghost btn-sm" type="button" id="btnKd2TemplateSave">Save Template</button>
                                 </div>
                             </div>
-                            <div class="modal-info">Rows with the same route number run in parallel. Durations are saved as station lead-time defaults.</div>
+                            <div class="modal-info" id="kd2TemplateEditorHint">Drag blocks and spaces to reorder the template. Hover between cards to insert a Process Block or Space.</div>
                             <div class="kd2-template-editor" id="kd2TemplateEditor"></div>
                         </div>
                     </div>

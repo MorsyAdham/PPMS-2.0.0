@@ -74,7 +74,12 @@ window.PPMSModuleRuntime = (() => {
         timelinePlacementStationCode: '',
         timelinePlacementQuery: '',
         templateRemovedStations: new Set(),
+        templateLayouts: [],
         templateNewRowCounter: 0,
+        templateEditorView: 'visual',
+        templateEditorVehicle: '',
+        templateEditorBlocks: [],
+        templateInsertIndex: null,
     };
     const placementPointer = { x: 0, y: 0, ready: false };
     let placementGhostEl = null;
@@ -384,6 +389,26 @@ window.PPMSModuleRuntime = (() => {
         return localDateStr(date);
     }
 
+    function shiftWorkingDateForward(dateStr, workingDays, rules) {
+        let current = localDateStr(normalizeWorkingDateForward(dateStr, rules));
+        let remaining = Math.max(parseInt(workingDays, 10) || 0, 0);
+        while (remaining > 0) {
+            current = nextWorkingDate(current, rules);
+            remaining -= 1;
+        }
+        return current;
+    }
+
+    function shiftWorkingDateBackward(dateStr, workingDays, rules) {
+        let current = localDateStr(normalizeWorkingDate(dateStr, rules));
+        let remaining = Math.max(parseInt(workingDays, 10) || 0, 0);
+        while (remaining > 0) {
+            current = previousWorkingDate(current, rules);
+            remaining -= 1;
+        }
+        return current;
+    }
+
     function buildBackwardWindow(endDateStr, durationDays, rules) {
         const end = normalizeWorkingDate(endDateStr, rules);
         const start = new Date(end);
@@ -632,7 +657,18 @@ window.PPMSModuleRuntime = (() => {
             queryAll(dbRef.from('kd2_process_lead_times').select('*').order('vehicle_type').order('planning_level')),
             queryAll(dbRef.from('kd2_vehicle_units').select('*').order('battalion_id').order('vehicle_type').order('unit_serial')),
         ]);
+        let templateLayouts = [];
         let nonWorkDays = [];
+        try {
+            templateLayouts = await queryAll(
+                dbRef.from('kd2_template_layout_items')
+                    .select('*')
+                    .order('vehicle_type')
+                    .order('sort_order')
+            );
+        } catch (error) {
+            console.warn('KD2 template layout load skipped:', error.message);
+        }
         try {
             nonWorkDays = await queryAll(
                 dbRef.from('planning_non_work_days')
@@ -657,6 +693,7 @@ window.PPMSModuleRuntime = (() => {
         );
         state.leadTimes = leadTimes;
         state.vehicleUnits = vehicleUnits;
+        state.templateLayouts = templateLayouts;
         syncNonWorkDays(nonWorkDays);
     }
 
@@ -854,6 +891,11 @@ window.PPMSModuleRuntime = (() => {
         const value = Number(trimmed);
         if (!Number.isFinite(value) || value <= 0) return NaN;
         return value;
+    }
+
+    function parseGapDaysValue(rawValue) {
+        const value = parseInt(String(rawValue ?? '').trim(), 10);
+        return Number.isFinite(value) && value > 0 ? value : NaN;
     }
 
     function parseRouteSequenceValue(rawValue) {
@@ -2641,6 +2683,7 @@ window.PPMSModuleRuntime = (() => {
         if (overlay) overlay.style.display = 'none';
         restorePlanCreateOverlayHost();
         setPlanCreateError('');
+        state.templateInsertIndex = null;
     }
 
     function selectedCreateStation() {
@@ -2933,6 +2976,134 @@ window.PPMSModuleRuntime = (() => {
         }));
     }
 
+    function selectedTemplateVehicle() {
+        return document.getElementById('kd2PlanCreateVehicle')?.value || 'K9';
+    }
+
+    function isTemplateSpaceBlock(block) {
+        return block?.kind === 'space';
+    }
+
+    function isTemplateProcessBlock(block) {
+        return !isTemplateSpaceBlock(block);
+    }
+
+    function gapSummaryText(gapDays) {
+        const safeGap = parseInt(gapDays, 10);
+        if (!Number.isFinite(safeGap) || safeGap < 1) return 'Set skipped working days';
+        return `Skip ${safeGap} working day${safeGap === 1 ? '' : 's'}`;
+    }
+
+    function createTemplateProcessBlock(vehicle, overrides = {}) {
+        return {
+            kind: 'process',
+            editor_id: overrides.editor_id || '',
+            isNew: overrides.isNew === true,
+            vehicle_type: overrides.vehicle_type || vehicle,
+            category_code: overrides.category_code || 'assembly',
+            station_code: overrides.station_code || null,
+            station_name: overrides.station_name || '',
+            work_center: overrides.work_center || '',
+            route_sequence: Number.isFinite(parseInt(overrides.route_sequence, 10)) ? parseInt(overrides.route_sequence, 10) : 1,
+            planning_level: 'station',
+            lead_time_days: overrides.lead_time_days ?? null,
+            lead_time_source: 'KD2 template',
+            notes: overrides.notes || 'Editable route template default',
+            station_sequence_in_category: overrides.station_sequence_in_category ?? null,
+            parallel_with_previous: Boolean(overrides.parallel_with_previous),
+            gap_days: null,
+            source_process: overrides.source_process || null,
+        };
+    }
+
+    function createTemplateSpaceBlock(vehicle, overrides = {}) {
+        const parsedGap = parseGapDaysValue(overrides.gap_days);
+        return {
+            kind: 'space',
+            editor_id: overrides.editor_id || '',
+            isNew: false,
+            vehicle_type: overrides.vehicle_type || vehicle,
+            category_code: '',
+            station_code: null,
+            station_name: '',
+            work_center: '',
+            route_sequence: null,
+            planning_level: null,
+            lead_time_days: null,
+            lead_time_source: null,
+            notes: 'Template gap',
+            station_sequence_in_category: null,
+            parallel_with_previous: false,
+            gap_days: Number.isNaN(parsedGap) ? (overrides.gap_days ?? 1) : parsedGap,
+            source_process: overrides.source_process || null,
+        };
+    }
+
+    function buildTemplateProcessBlockFromRouteItem(vehicle, item, previousRoute = null, overrides = {}) {
+        const routeSequence = parseRouteSequenceValue(item.route.route_sequence);
+        const safeRouteSequence = Number.isNaN(routeSequence) ? 1 : routeSequence;
+        return createTemplateProcessBlock(vehicle, {
+            editor_id: overrides.editor_id || `existing_${item.route.station_code}`,
+            isNew: false,
+            vehicle_type: vehicle,
+            category_code: item.route.category_code,
+            station_code: item.route.station_code,
+            station_name: item.station.station_name,
+            work_center: item.station.work_center || '',
+            route_sequence: safeRouteSequence,
+            lead_time_days: item.duration || null,
+            notes: 'Editable route template default',
+            station_sequence_in_category: item.station.station_sequence_in_category,
+            parallel_with_previous: overrides.parallel_with_previous ?? (previousRoute !== null && previousRoute === safeRouteSequence),
+            source_process: overrides.source_process || null,
+        });
+    }
+
+    function templateLayoutRowsForVehicle(vehicle) {
+        return state.templateLayouts
+            .filter(row => row.vehicle_type === vehicle)
+            .sort((a, b) =>
+                (parseInt(a.sort_order, 10) || 9999) - (parseInt(b.sort_order, 10) || 9999) ||
+                (a.id || 0) - (b.id || 0)
+            );
+    }
+
+    function templateEditorBlocksForVehicle(vehicle) {
+        const layoutRows = templateLayoutRowsForVehicle(vehicle);
+        if (layoutRows.length) {
+            const routeItems = templateRowsForVehicle(vehicle);
+            const routeItemMap = new Map(routeItems.map(item => [item.route.station_code, item]));
+            const blocks = layoutRows.map((row, index) => {
+                if (row.kind === 'space') {
+                    return createTemplateSpaceBlock(vehicle, {
+                        editor_id: `layout_space_${row.id || index + 1}`,
+                        gap_days: row.gap_days,
+                    });
+                }
+                const routeItem = routeItemMap.get(row.station_code);
+                if (!routeItem) return null;
+                return buildTemplateProcessBlockFromRouteItem(vehicle, routeItem, null, {
+                    editor_id: `existing_${routeItem.route.station_code}`,
+                    parallel_with_previous: Boolean(row.parallel_with_previous),
+                });
+            }).filter(Boolean);
+            if (blocks.length) return normalizeTemplateEditorBlocks(blocks);
+        }
+        let previousRoute = null;
+        return templateRowsForVehicle(vehicle).map(item => {
+            const block = buildTemplateProcessBlockFromRouteItem(vehicle, item, previousRoute);
+            previousRoute = block.route_sequence;
+            return block;
+        });
+    }
+
+    function ensureTemplateEditorState(vehicle, { force = false } = {}) {
+        if (!force && state.templateEditorVehicle === vehicle) return;
+        state.templateEditorVehicle = vehicle;
+        state.templateEditorBlocks = templateEditorBlocksForVehicle(vehicle);
+        state.templateInsertIndex = null;
+    }
+
     function slugifyStationName(value) {
         return String(value || '')
             .toLowerCase()
@@ -2950,132 +3121,1000 @@ window.PPMSModuleRuntime = (() => {
     }
 
     function nextTemplateRoute(vehicle) {
-        const routes = routeItemsForVehicle(vehicle).map(item => parseInt(item.route.route_sequence, 10) || 0);
+        const routes = (state.templateEditorVehicle === vehicle ? state.templateEditorBlocks : [])
+            .filter(isTemplateProcessBlock)
+            .map(item => parseInt(item.route_sequence, 10) || 0);
+        if (!routes.length) {
+            routeItemsForVehicle(vehicle).forEach(item => routes.push(parseInt(item.route.route_sequence, 10) || 0));
+        }
         return Math.max(0, ...routes) + 1;
+    }
+
+    function normalizeTemplateEditorBlocks(blocks) {
+        let routeSequence = 0;
+        let previousWasProcess = false;
+        return blocks.map(block => {
+            if (isTemplateSpaceBlock(block)) {
+                previousWasProcess = false;
+                return createTemplateSpaceBlock(block.vehicle_type || selectedTemplateVehicle(), {
+                    ...block,
+                    parallel_with_previous: false,
+                    route_sequence: null,
+                });
+            }
+            const parallelWithPrevious = previousWasProcess && Boolean(block.parallel_with_previous);
+            if (!parallelWithPrevious) routeSequence += 1;
+            previousWasProcess = true;
+            return createTemplateProcessBlock(block.vehicle_type || selectedTemplateVehicle(), {
+                ...block,
+                route_sequence: routeSequence,
+                parallel_with_previous: parallelWithPrevious,
+                gap_days: null,
+            });
+        });
+    }
+
+    function templateTypeOptions(selectedKind = 'process') {
+        return `
+            <option value="process" ${selectedKind !== 'space' ? 'selected' : ''}>Process Block</option>
+            <option value="space" ${selectedKind === 'space' ? 'selected' : ''}>Space</option>
+        `;
+    }
+
+    function templateEditorHintText() {
+        if (state.templateEditorView === 'visual') {
+            return 'Drag blocks and spaces to reorder the template. Hover between cards to insert a Process Block or Space. Spaces skip working days before the next process group.';
+        }
+        if (state.templateEditorView === 'preview') {
+            return 'Preview how the template will land on the KD2 Gantt using the selected battalion, vehicle, unit, and planned start date.';
+        }
+        return 'Keep rows in the intended order. Adjacent process rows with the same route number run in parallel, and any space row starts the next process on a new route group.';
+    }
+
+    function syncTemplateEditorChrome() {
+        document.querySelectorAll('#kd2TemplateEditorViewToggle .kd2-template-view-btn').forEach(btn => {
+            btn.classList.toggle('active', btn.dataset.view === state.templateEditorView);
+        });
+        const hint = document.getElementById('kd2TemplateEditorHint');
+        if (hint) hint.textContent = templateEditorHintText();
+    }
+
+    function readTemplateBlockFields(node, existingBlock = {}) {
+        const kind = node.querySelector('[data-field="kind"]')?.value || node.dataset.kind || existingBlock.kind || 'process';
+        const vehicle = existingBlock.vehicle_type || selectedTemplateVehicle();
+        if (kind === 'space') {
+            const gapDays = parseGapDaysValue(node.querySelector('[data-field="gapDays"]')?.value);
+            return createTemplateSpaceBlock(vehicle, {
+                ...existingBlock,
+                kind: 'space',
+                editor_id: node.dataset.editorId || existingBlock.editor_id,
+                gap_days: Number.isNaN(gapDays) ? null : gapDays,
+            });
+        }
+
+        const isNew = node.dataset.new === 'true' || existingBlock.isNew;
+        const duration = parseLeadTimeValue(node.querySelector('[data-field="duration"]')?.value);
+        const routeSequence = parseRouteSequenceValue(node.querySelector('[data-field="routeSequence"]')?.value);
+        const stationName = isNew
+            ? node.querySelector('[data-field="stationName"]')?.value?.trim() || ''
+            : existingBlock.station_name || '';
+        const workCenter = isNew
+            ? node.querySelector('[data-field="workCenter"]')?.value?.trim() || ''
+            : existingBlock.work_center || '';
+        const categoryCode = isNew
+            ? node.querySelector('[data-field="categoryCode"]')?.value || ''
+            : existingBlock.category_code || node.dataset.categoryCode || '';
+        return createTemplateProcessBlock(vehicle, {
+            ...existingBlock,
+            editor_id: node.dataset.editorId || existingBlock.editor_id,
+            isNew,
+            vehicle_type: vehicle,
+            category_code: categoryCode,
+            station_code: existingBlock.station_code || node.dataset.stationCode || null,
+            station_name: stationName,
+            work_center: workCenter,
+            route_sequence: Number.isNaN(routeSequence) ? existingBlock.route_sequence : routeSequence,
+            lead_time_days: duration,
+            station_sequence_in_category: existingBlock.station_sequence_in_category,
+        });
+    }
+
+    function syncTemplateEditorStateFromDom({ normalizeForVisual = false } = {}) {
+        const container = document.getElementById('kd2TemplateEditor');
+        if (!container) return;
+        const cards = [...container.querySelectorAll('[data-kd2-template-block]')];
+        if (!cards.length) {
+            state.templateEditorBlocks = [];
+            return;
+        }
+        const previousBlocks = new Map(state.templateEditorBlocks.map(block => [block.editor_id, block]));
+        let blocks = cards.map(node => {
+            const editorId = node.dataset.editorId || '';
+            const existingBlock = previousBlocks.get(editorId) || {};
+            const block = readTemplateBlockFields(node, existingBlock);
+            if (state.templateEditorView === 'visual' && isTemplateProcessBlock(block)) {
+                block.parallel_with_previous = Boolean(node.querySelector('[data-kd2-template-parallel]')?.checked);
+            }
+            return block;
+        });
+
+        if (state.templateEditorView === 'visual') {
+            blocks = normalizeTemplateEditorBlocks(blocks);
+        } else {
+            let previousProcessRoute = null;
+            let previousWasProcess = false;
+            blocks = blocks.map(block => {
+                if (isTemplateSpaceBlock(block)) {
+                    previousWasProcess = false;
+                    previousProcessRoute = null;
+                    return createTemplateSpaceBlock(block.vehicle_type || selectedTemplateVehicle(), block);
+                }
+                const routeSequence = parseRouteSequenceValue(block.route_sequence);
+                const parallelWithPrevious = previousWasProcess && !Number.isNaN(routeSequence) && routeSequence === previousProcessRoute;
+                previousWasProcess = true;
+                previousProcessRoute = routeSequence;
+                return createTemplateProcessBlock(block.vehicle_type || selectedTemplateVehicle(), {
+                    ...block,
+                    route_sequence: Number.isNaN(routeSequence) ? block.route_sequence : routeSequence,
+                    parallel_with_previous: parallelWithPrevious,
+                });
+            });
+            if (normalizeForVisual) blocks = normalizeTemplateEditorBlocks(blocks);
+        }
+
+        state.templateEditorBlocks = blocks;
+    }
+
+    function templateCardMeta(block) {
+        if (isTemplateSpaceBlock(block)) return 'Template gap';
+        const category = state.categories.find(item =>
+            item.vehicle_type === block.vehicle_type &&
+            item.category_code === block.category_code
+        );
+        return [
+            category?.category_name || block.category_code || 'No category',
+            block.work_center || block.station_code || 'No work center',
+        ].join(' · ');
+    }
+
+    function renderTemplateEditorForm(blocks) {
+        if (!blocks.length) {
+            return '<div class="empty-state"><p>No route template is available for this vehicle. Add a process block or space to start one.</p></div>';
+        }
+        return blocks.map((block, index) => {
+            const controls = `
+                <div class="kd2-template-row-actions">
+                    <button type="button" class="kd2-template-shift" data-kd2-template-move="-1" data-editor-id="${escapeHtml(block.editor_id)}" title="Move up" ${index === 0 ? 'disabled' : ''}>↑</button>
+                    <button type="button" class="kd2-template-shift" data-kd2-template-move="1" data-editor-id="${escapeHtml(block.editor_id)}" title="Move down" ${index === blocks.length - 1 ? 'disabled' : ''}>↓</button>
+                    <button type="button" class="kd2-template-remove" data-kd2-template-remove-id="${escapeHtml(block.editor_id)}" title="Remove item">&times;</button>
+                </div>
+            `;
+
+            if (isTemplateSpaceBlock(block)) {
+                return `
+                    <div class="kd2-template-row kd2-template-row-space" data-kd2-template-block data-kind="space" data-editor-id="${escapeHtml(block.editor_id)}">
+                        <div class="kd2-template-row-fields">
+                            <div class="kd2-template-card-field">
+                                <label>Type</label>
+                                <select class="filter-control" data-field="kind">${templateTypeOptions('space')}</select>
+                            </div>
+                            <div class="kd2-template-card-field">
+                                <label>Gap Days</label>
+                                <input type="number" min="1" step="1" class="filter-control kd2-template-gap-days" data-field="gapDays" value="${block.gap_days || ''}" placeholder="days" />
+                            </div>
+                            <div class="kd2-template-card-field kd2-template-card-field-span2">
+                                <label>Summary</label>
+                                <div class="kd2-template-card-field-value kd2-template-space-summary">${escapeHtml(gapSummaryText(block.gap_days))}</div>
+                            </div>
+                        </div>
+                        ${controls}
+                    </div>
+                `;
+            }
+
+            return `
+                <div class="kd2-template-row ${block.isNew ? 'kd2-template-row-new' : ''}" data-kd2-template-block data-kind="process" data-new="${block.isNew ? 'true' : 'false'}" data-editor-id="${escapeHtml(block.editor_id)}" data-category-code="${escapeHtml(block.category_code || '')}" data-station-code="${escapeHtml(block.station_code || '')}">
+                    <div class="kd2-template-row-fields">
+                        <div class="kd2-template-card-field">
+                            <label>Type</label>
+                            <select class="filter-control" data-field="kind">${templateTypeOptions('process')}</select>
+                        </div>
+                        ${block.isNew ? `
+                            <div class="kd2-template-card-field">
+                                <label>Station Name</label>
+                                <input type="text" class="filter-control kd2-template-name-input" data-field="stationName" value="${escapeHtml(block.station_name || '')}" placeholder="Station name" />
+                            </div>
+                            <div class="kd2-template-card-field">
+                                <label>Category</label>
+                                <select class="filter-control kd2-template-category-input" data-field="categoryCode">${templateCategoryOptions(block.vehicle_type, block.category_code || 'assembly')}</select>
+                            </div>
+                            <div class="kd2-template-card-field">
+                                <label>Work Center</label>
+                                <input type="text" class="filter-control kd2-template-workcenter-input" data-field="workCenter" value="${escapeHtml(block.work_center || '')}" placeholder="Work center" />
+                            </div>
+                        ` : `
+                            <div class="kd2-template-card-field kd2-template-card-field-span2">
+                                <label>Station</label>
+                                <div class="kd2-template-card-field-value">${escapeHtml(block.station_name)}</div>
+                            </div>
+                            <div class="kd2-template-card-field">
+                                <label>Category</label>
+                                <div class="kd2-template-card-field-value">${escapeHtml(state.categories.find(item => item.vehicle_type === block.vehicle_type && item.category_code === block.category_code)?.category_name || block.category_code)}</div>
+                            </div>
+                            <div class="kd2-template-card-field">
+                                <label>Work Center</label>
+                                <div class="kd2-template-card-field-value">${escapeHtml(block.work_center || block.station_code || 'No work center')}</div>
+                            </div>
+                        `}
+                        <div class="kd2-template-card-field">
+                            <label>Route</label>
+                            <input type="number" min="1" step="1" class="filter-control kd2-template-route-input" data-field="routeSequence" value="${block.route_sequence || ''}" title="Same route number as the previous process = parallel" />
+                        </div>
+                        <div class="kd2-template-card-field">
+                            <label>Duration</label>
+                            <input type="number" min="1" step="1" class="filter-control kd2-template-duration" data-field="duration" value="${block.lead_time_days || ''}" placeholder="days" />
+                        </div>
+                    </div>
+                    ${controls}
+                </div>
+            `;
+        }).join('');
+    }
+
+    function renderTemplateInsertSlot(index) {
+        const isOpen = state.templateInsertIndex === index;
+        return `
+            <div class="kd2-template-insert-slot ${isOpen ? 'is-open' : ''}" data-kd2-template-insert-slot data-insert-index="${index}">
+                <button type="button" class="kd2-template-insert-btn" data-kd2-template-insert-trigger="${index}" aria-expanded="${isOpen ? 'true' : 'false'}" aria-label="Insert template item">+</button>
+                ${isOpen ? `
+                    <div class="kd2-template-insert-menu" data-kd2-template-insert-menu>
+                        <div class="kd2-template-insert-menu-head">
+                            <span class="kd2-template-insert-menu-kicker">Insert Here</span>
+                            <strong>Add Template Item</strong>
+                            <span>Add a process step or a working-day gap.</span>
+                        </div>
+                        <div class="kd2-template-insert-menu-options">
+                            <button type="button" class="kd2-template-insert-option kd2-template-insert-option-process" data-kd2-template-insert-kind="process" data-insert-index="${index}">
+                                <span class="kd2-template-insert-option-icon" aria-hidden="true">+</span>
+                                <span class="kd2-template-insert-option-copy">
+                                    <strong>Process Block</strong>
+                                    <small>Add a station step with duration.</small>
+                                </span>
+                            </button>
+                            <button type="button" class="kd2-template-insert-option kd2-template-insert-option-space" data-kd2-template-insert-kind="space" data-insert-index="${index}">
+                                <span class="kd2-template-insert-option-icon" aria-hidden="true">::</span>
+                                <span class="kd2-template-insert-option-copy">
+                                    <strong>Space</strong>
+                                    <small>Skip working days before the next step.</small>
+                                </span>
+                            </button>
+                        </div>
+                    </div>
+                ` : ''}
+            </div>
+        `;
+    }
+
+    function renderTemplateEditorVisual(blocks) {
+        const normalizedBlocks = normalizeTemplateEditorBlocks(blocks);
+        const nodes = [];
+        for (let i = 0; i <= normalizedBlocks.length; i += 1) {
+            nodes.push(renderTemplateInsertSlot(i));
+            if (i >= normalizedBlocks.length) continue;
+            const block = normalizedBlocks[i];
+            if (isTemplateSpaceBlock(block)) {
+                nodes.push(`
+                    <article class="kd2-template-card kd2-template-space-card" draggable="true" data-kd2-template-block data-kind="space" data-editor-id="${escapeHtml(block.editor_id)}">
+                        <div class="kd2-template-card-head">
+                            <div class="kd2-template-card-copy">
+                                <strong>Space</strong>
+                                <span>${escapeHtml(gapSummaryText(block.gap_days))}</span>
+                            </div>
+                            <div class="kd2-template-card-tools">
+                                <span class="kd2-template-route-pill kd2-template-space-pill">Space</span>
+                                <span class="kd2-template-drag-handle" title="Drag to reorder">::</span>
+                                <button type="button" class="kd2-template-remove" data-kd2-template-remove-id="${escapeHtml(block.editor_id)}" title="Remove space">&times;</button>
+                            </div>
+                        </div>
+                        <div class="kd2-template-space-body">
+                            <div class="kd2-template-card-field">
+                                <label>Gap Days</label>
+                                <input type="number" min="1" step="1" class="filter-control kd2-template-gap-days" data-field="gapDays" value="${block.gap_days || ''}" placeholder="days" />
+                            </div>
+                            <div class="kd2-template-card-field">
+                                <label>Summary</label>
+                                <div class="kd2-template-card-field-value kd2-template-space-summary">${escapeHtml(gapSummaryText(block.gap_days))}</div>
+                            </div>
+                        </div>
+                    </article>
+                `);
+                continue;
+            }
+            const previousBlock = i > 0 ? normalizedBlocks[i - 1] : null;
+            const canParallel = previousBlock && isTemplateProcessBlock(previousBlock);
+            nodes.push(`
+                <article class="kd2-template-card" draggable="true" data-kd2-template-block data-kind="process" data-new="${block.isNew ? 'true' : 'false'}" data-editor-id="${escapeHtml(block.editor_id)}" data-category-code="${escapeHtml(block.category_code || '')}" data-station-code="${escapeHtml(block.station_code || '')}">
+                    <div class="kd2-template-card-head">
+                        <div class="kd2-template-card-copy">
+                            <strong>${escapeHtml(block.isNew ? (block.station_name || 'New Block') : block.station_name)}</strong>
+                            <span>${escapeHtml(templateCardMeta(block))}</span>
+                        </div>
+                        <div class="kd2-template-card-tools">
+                            <span class="kd2-template-route-pill">Route ${block.route_sequence}${block.parallel_with_previous ? ' · Parallel' : ''}</span>
+                            <span class="kd2-template-drag-handle" title="Drag to reorder">::</span>
+                            <button type="button" class="kd2-template-remove" data-kd2-template-remove-id="${escapeHtml(block.editor_id)}" title="Remove block">&times;</button>
+                        </div>
+                    </div>
+                    <div class="kd2-template-card-fields">
+                        ${block.isNew ? `
+                            <div class="kd2-template-card-field">
+                                <label>Station Name</label>
+                                <input type="text" class="filter-control" data-field="stationName" value="${escapeHtml(block.station_name || '')}" placeholder="Station name" />
+                            </div>
+                            <div class="kd2-template-card-field">
+                                <label>Category</label>
+                                <select class="filter-control" data-field="categoryCode">${templateCategoryOptions(block.vehicle_type, block.category_code || 'assembly')}</select>
+                            </div>
+                            <div class="kd2-template-card-field">
+                                <label>Work Center</label>
+                                <input type="text" class="filter-control" data-field="workCenter" value="${escapeHtml(block.work_center || '')}" placeholder="Work center" />
+                            </div>
+                        ` : `
+                            <div class="kd2-template-card-field">
+                                <label>Station</label>
+                                <div class="kd2-template-card-field-value">${escapeHtml(block.station_name)}</div>
+                            </div>
+                            <div class="kd2-template-card-field">
+                                <label>Category</label>
+                                <div class="kd2-template-card-field-value">${escapeHtml(state.categories.find(item => item.vehicle_type === block.vehicle_type && item.category_code === block.category_code)?.category_name || block.category_code)}</div>
+                            </div>
+                            <div class="kd2-template-card-field">
+                                <label>Work Center</label>
+                                <div class="kd2-template-card-field-value">${escapeHtml(block.work_center || block.station_code || 'No work center')}</div>
+                            </div>
+                        `}
+                        <div class="kd2-template-card-field">
+                            <label>Duration</label>
+                            <input type="number" min="1" step="1" class="filter-control kd2-template-duration" data-field="duration" value="${block.lead_time_days || ''}" placeholder="days" />
+                        </div>
+                    </div>
+                    <div class="kd2-template-card-foot">
+                        <label class="kd2-template-parallel-toggle">
+                            <input type="checkbox" data-kd2-template-parallel ${canParallel && block.parallel_with_previous ? 'checked' : ''} ${canParallel ? '' : 'disabled'} />
+                            <span>${canParallel ? 'Parallel with previous process block' : (i === 0 ? 'First process starts the route' : 'Space above forces a new route')}</span>
+                        </label>
+                    </div>
+                </article>
+            `);
+        }
+        return `
+            <div class="kd2-template-visual-note">Direct block editing is active. Route order comes from card position, and spaces skip working days before the next process group.</div>
+            <div class="kd2-template-visual">
+                ${normalizedBlocks.length ? '' : '<div class="empty-state"><p>No route template is available for this vehicle yet. Use the insert slot to add a Process Block or Space.</p></div>'}
+                ${nodes.join('')}
+            </div>
+        `;
+    }
+
+    const TEMPLATE_PREVIEW_GANTT_PALETTE = [
+        '#06b6d4', '#f97316', '#84cc16', '#6366f1', '#e11d48',
+        '#0ea5e9', '#a855f7', '#d97706', '#4ade80', '#38bdf8',
+    ];
+    const templatePreviewStationColors = {};
+
+    function templatePreviewStationColor(name) {
+        const key = String(name || '').trim() || 'Unnamed station';
+        if (typeof window.__ppmsGanttStationColor === 'function') {
+            return window.__ppmsGanttStationColor(key);
+        }
+        if (!templatePreviewStationColors[key]) {
+            const index = Object.keys(templatePreviewStationColors).length % TEMPLATE_PREVIEW_GANTT_PALETTE.length;
+            templatePreviewStationColors[key] = TEMPLATE_PREVIEW_GANTT_PALETTE[index];
+        }
+        return templatePreviewStationColors[key];
+    }
+
+    function resolveTemplatePreviewGanttColumn(dayIndex, dateStr, clampFallback) {
+        if (dayIndex[dateStr] !== undefined) return dayIndex[dateStr];
+        for (let shift = 1; shift <= 3; shift += 1) {
+            const next = addDays(dateStr, shift);
+            if (dayIndex[next] !== undefined) return dayIndex[next];
+        }
+        for (let shift = 1; shift <= 3; shift += 1) {
+            const previous = addDays(dateStr, -shift);
+            if (dayIndex[previous] !== undefined) return dayIndex[previous];
+        }
+        return clampFallback;
+    }
+
+    function buildTemplatePreviewPackedBars(rows, viewStart, viewEnd, dayIndex, numDays) {
+        const visibleRows = rows
+            .filter(row => row.start_date <= viewEnd && row.end_date >= viewStart)
+            .map(row => {
+                const clippedStart = row.start_date < viewStart ? viewStart : row.start_date;
+                const clippedEnd = row.end_date > viewEnd ? viewEnd : row.end_date;
+                const si = resolveTemplatePreviewGanttColumn(dayIndex, clippedStart, 0);
+                const ei = resolveTemplatePreviewGanttColumn(dayIndex, clippedEnd, Math.max(numDays - 1, 0));
+                if (si === null || ei === null || si > ei) return null;
+                return { task: row, si, ei };
+            })
+            .filter(Boolean)
+            .sort((a, b) =>
+                a.si - b.si ||
+                a.ei - b.ei ||
+                String(a.task.process_station || a.task.station_name || '').localeCompare(String(b.task.process_station || b.task.station_name || ''))
+            );
+
+        const laneEnds = [];
+        visibleRows.forEach(item => {
+            let lane = laneEnds.findIndex(endIndex => item.si > endIndex);
+            if (lane < 0) lane = laneEnds.length;
+            laneEnds[lane] = item.ei;
+            item.lane = lane;
+        });
+        return visibleRows;
+    }
+
+    function buildTemplatePreviewModel(blocks) {
+        const battalionId = parseInt(document.getElementById('kd2PlanCreateBattalion')?.value || '', 10);
+        const startDate = document.getElementById('kd2PlanCreateStart')?.value || '';
+        const vehicle = selectedTemplateVehicle();
+        const unitSelect = document.getElementById('kd2PlanCreateUnit');
+        const normalizedBlocks = normalizeTemplateEditorBlocks(blocks || []);
+        if (!normalizedBlocks.length) {
+            return { emptyMessage: 'No template items are available to preview yet.' };
+        }
+        if (!battalionId) {
+            return { emptyMessage: 'Select a battalion to build the Gantt preview.' };
+        }
+        if (!startDate) {
+            return { emptyMessage: 'Choose a planned start date to build the Gantt preview.' };
+        }
+
+        const rules = planningRulesFor(battalionId, vehicle);
+        const battalion = state.battalions.find(row => row.id === battalionId);
+        const unitSerial = parseInt(unitSelect?.value || '', 10);
+        const unitLabel = unitSelect?.selectedOptions?.[0]?.dataset.unitLabel || unitSelect?.selectedOptions?.[0]?.textContent?.trim() || '';
+        const categoryName = code => state.categories.find(item =>
+            item.vehicle_type === vehicle && item.category_code === code
+        )?.category_name || code || 'No category';
+        const segments = [];
+        let currentGroup = null;
+
+        normalizedBlocks.forEach((block, index) => {
+            if (isTemplateSpaceBlock(block)) {
+                segments.push({
+                    kind: 'space',
+                    gap_days: parseGapDaysValue(block.gap_days),
+                    applies_to_next_process: normalizedBlocks.slice(index + 1).some(isTemplateProcessBlock),
+                });
+                currentGroup = null;
+                return;
+            }
+
+            const duration = parseLeadTimeValue(block.lead_time_days);
+            if (currentGroup && block.parallel_with_previous) {
+                currentGroup.items.push({
+                    block,
+                    duration,
+                    station_name: block.station_name || block.station_code || 'Unnamed station',
+                    category_name: categoryName(block.category_code),
+                });
+                return;
+            }
+
+            currentGroup = {
+                kind: 'process_group',
+                sequence: block.route_sequence,
+                items: [{
+                    block,
+                    duration,
+                    station_name: block.station_name || block.station_code || 'Unnamed station',
+                    category_name: categoryName(block.category_code),
+                }],
+            };
+            segments.push(currentGroup);
+        });
+
+        const invalidBlock = segments
+            .filter(segment => segment.kind === 'process_group')
+            .flatMap(segment => segment.items)
+            .find(item => !item.duration || item.duration < 1);
+        if (invalidBlock) {
+            return { emptyMessage: `Set a valid duration before previewing ${invalidBlock.station_name}.` };
+        }
+
+        let currentStart = localDateStr(normalizeWorkingDateForward(startDate, rules));
+        const rows = [];
+
+        segments.forEach(segment => {
+            if (segment.kind === 'space') {
+                if (!segment.applies_to_next_process) return;
+                const gapDays = Math.max(parseInt(segment.gap_days, 10) || 0, 0);
+                if (gapDays < 1) return;
+                currentStart = shiftWorkingDateForward(currentStart, gapDays, rules);
+                return;
+            }
+
+            const groupRows = segment.items.map(item => {
+                const window = buildForwardWindow(currentStart, item.duration, rules);
+                return {
+                    battalion_id: battalionId,
+                    battalion_code: battalion?.battalion_code || '',
+                    vehicle_type: vehicle,
+                    vehicle,
+                    unit_serial: unitSerial,
+                    unit_label: unitLabel,
+                    vehicle_no: unitLabel,
+                    category: item.category_name,
+                    category_code: item.block.category_code || '',
+                    station_code: item.block.station_code || '',
+                    route_sequence: item.block.route_sequence,
+                    work_center: item.block.work_center || item.block.station_code || '',
+                    process_station: item.station_name,
+                    station_name: item.station_name,
+                    start_date: window.start,
+                    end_date: window.end,
+                    duration: item.duration,
+                };
+            });
+            rows.push(...groupRows);
+            currentStart = nextWorkingDate(maxDateStr(groupRows.map(row => row.end_date)), rules);
+        });
+
+        if (!rows.length) {
+            return { emptyMessage: 'No preview rows are available for the selected template.' };
+        }
+
+        const viewStart = minDateStr(rows.map(row => row.start_date));
+        const viewEnd = maxDateStr(rows.map(row => row.end_date));
+        const days = buildDateRange(viewStart, viewEnd);
+        const visibleOffDays = [...state.nonWorkDaySet].filter(day => day >= viewStart && day <= viewEnd);
+        return {
+            battalion_id: battalionId,
+            battalion_code: battalion?.battalion_code || '—',
+            vehicle,
+            unit_serial: unitSerial,
+            unit_label: unitLabel,
+            laneLabel: `${battalion?.battalion_code || '—'} · ${vehicle || '—'} · ${unitLabel || '—'}`,
+            laneMeta: `${rows.length} block${rows.length === 1 ? '' : 's'} · ${viewStart} -> ${viewEnd}`,
+            viewStart,
+            viewEnd,
+            days,
+            totalDays: Math.max(dayDiff(viewStart, viewEnd) + 1, 1),
+            rules,
+            visibleCategories: [...new Set(rows.map(row => row.category).filter(Boolean))],
+            visibleOffDays,
+            rows,
+        };
+    }
+
+    function renderTemplateEditorPreview(blocks) {
+        const preview = buildTemplatePreviewModel(blocks);
+        if (preview.emptyMessage) {
+            return `<div class="empty-state"><p>${escapeHtml(preview.emptyMessage)}</p></div>`;
+        }
+
+        const PREVIEW_LABEL_W = 198;
+        const PREVIEW_DAY_W = 30;
+        const PREVIEW_ROW_H = 36;
+        const PREVIEW_GROUP_H = 26;
+        const PREVIEW_SUBGROUP_H = 22;
+        const PREVIEW_BAR_H = 18;
+        const PREVIEW_BAR_GAP = 5;
+        const PREVIEW_LANE_H = PREVIEW_BAR_H + PREVIEW_BAR_GAP;
+
+        const days = preview.days.filter(day => parseDateLocal(day).getDay() !== 5);
+        if (!days.length) {
+            return `<div class="empty-state"><p>No visible Gantt columns are available in the selected preview window.</p></div>`;
+        }
+
+        const totalW = days.length * PREVIEW_DAY_W;
+        const innerW = PREVIEW_LABEL_W + totalW;
+        const today = localDateStr(new Date());
+        const dayMeta = days.map(day => {
+            const date = parseDateLocal(day);
+            return {
+                date: day,
+                dayNum: date.getDate(),
+                month: date.toLocaleDateString('en-GB', { month: 'short', year: 'numeric' }),
+                week: weekLabel(day),
+                isSat: date.getDay() === 6,
+                isToday: day === today,
+            };
+        });
+        const dayIndex = Object.fromEntries(days.map((day, index) => [day, index]));
+        const specialZones = getGanttSpecialZones(preview.viewStart, preview.viewEnd);
+
+        const holidayDays = new Set();
+        const holidayLabelsByDay = new Map();
+        specialZones
+            .filter(zone => zone?.type === 'holiday' && zone.start && zone.end)
+            .forEach(zone => {
+                const label = String(zone.label || 'No-work Day').trim() || 'No-work Day';
+                let cursor = zone.start;
+                let guard = 0;
+                while (cursor <= zone.end && guard < 400) {
+                    if (dayIndex[cursor] !== undefined) {
+                        holidayDays.add(cursor);
+                        if (!holidayLabelsByDay.has(cursor)) holidayLabelsByDay.set(cursor, new Set());
+                        holidayLabelsByDay.get(cursor).add(label);
+                    }
+                    cursor = addDays(cursor, 1);
+                    guard += 1;
+                }
+            });
+
+        let monthHtml = `<div class="gh-corner" style="width:${PREVIEW_LABEL_W}px;height:28px"></div>`;
+        let weekHtml = `<div class="gh-corner" style="width:${PREVIEW_LABEL_W}px;height:22px"></div>`;
+        let dayHtml = `<div class="gh-corner gh-corner-label" style="width:${PREVIEW_LABEL_W}px;height:28px">Battalion / Vehicle / Unit</div>`;
+        let runMonth = '';
+        let runMonthSpan = 0;
+        let runWeek = '';
+        let runWeekSpan = 0;
+
+        dayMeta.forEach(meta => {
+            if (meta.month !== runMonth) {
+                if (runMonth) monthHtml += `<div class="gh-month" style="width:${runMonthSpan * PREVIEW_DAY_W}px">${escapeHtml(runMonth)}</div>`;
+                runMonth = meta.month;
+                runMonthSpan = 1;
+            } else {
+                runMonthSpan += 1;
+            }
+
+            if (meta.week !== runWeek) {
+                if (runWeek) weekHtml += `<div class="gh-week" style="width:${runWeekSpan * PREVIEW_DAY_W}px">${escapeHtml(runWeek)}</div>`;
+                runWeek = meta.week;
+                runWeekSpan = 1;
+            } else {
+                runWeekSpan += 1;
+            }
+
+            const holidayLabels = holidayLabelsByDay.get(meta.date);
+            const dayTitle = holidayLabels?.size ? ` title="${escapeHtml([...holidayLabels].join(', '))}"` : '';
+            dayHtml += `<div class="gh-day${meta.isSat ? ' gh-day-sat' : ''}${holidayDays.has(meta.date) ? ' gh-day-holiday' : ''}${meta.isToday ? ' gh-day-today' : ''}" data-gantt-date="${meta.date}" style="width:${PREVIEW_DAY_W}px;height:28px"${dayTitle}>${meta.dayNum}</div>`;
+        });
+
+        if (runMonth) monthHtml += `<div class="gh-month" style="width:${runMonthSpan * PREVIEW_DAY_W}px">${escapeHtml(runMonth)}</div>`;
+        if (runWeek) weekHtml += `<div class="gh-week" style="width:${runWeekSpan * PREVIEW_DAY_W}px">${escapeHtml(runWeek)}</div>`;
+
+        const bgCells = dayMeta.map(meta =>
+            `<div class="gc-cell${meta.isSat ? ' gc-cell-sat' : ''}" data-gantt-date="${meta.date}" style="width:${PREVIEW_DAY_W}px"></div>`
+        ).join('');
+
+        let zonesHtml = '';
+        specialZones.forEach(zone => {
+            const start = zone.start > preview.viewStart ? zone.start : preview.viewStart;
+            const end = zone.end < preview.viewEnd ? zone.end : preview.viewEnd;
+            const startIndex = resolveTemplatePreviewGanttColumn(dayIndex, start, null);
+            const endIndex = resolveTemplatePreviewGanttColumn(dayIndex, end, null);
+            if (startIndex === null || endIndex === null || startIndex > endIndex) return;
+            const left = PREVIEW_LABEL_W + startIndex * PREVIEW_DAY_W;
+            const width = (endIndex - startIndex + 1) * PREVIEW_DAY_W;
+            const zoneTitle = zone.type === 'holiday' ? '' : ` title="${escapeHtml(zone.label || zone.type)}"`;
+            const zoneLabel = zone.type === 'holiday' ? '' : `<span class="gc-zone-label">${escapeHtml(zone.label || zone.type)}</span>`;
+            zonesHtml += `
+                <div class="gc-zone gc-zone-${escapeHtml(zone.type)}" style="left:${left}px;width:${width}px"${zoneTitle}>
+                    ${zoneLabel}
+                </div>
+            `;
+        });
+        if (dayIndex[today] !== undefined) {
+            const todayLeft = PREVIEW_LABEL_W + dayIndex[today] * PREVIEW_DAY_W + Math.floor(PREVIEW_DAY_W / 2);
+            zonesHtml += `<div class="gc-today-line" style="left:${todayLeft}px"></div>`;
+        }
+
+        const positioned = buildTemplatePreviewPackedBars(preview.rows, preview.viewStart, preview.viewEnd, dayIndex, days.length);
+        const numLanes = positioned.length ? Math.max(...positioned.map(item => item.lane)) + 1 : 1;
+        const rowH = Math.max(PREVIEW_ROW_H, numLanes * PREVIEW_LANE_H + PREVIEW_BAR_GAP * 2);
+
+        const barsHtml = positioned.map(({ task, si, ei, lane }) => {
+            const left = si * PREVIEW_DAY_W;
+            const width = Math.max((ei - si + 1) * PREVIEW_DAY_W - 3, 6);
+            const top = PREVIEW_BAR_GAP + lane * PREVIEW_LANE_H + Math.floor((PREVIEW_LANE_H - PREVIEW_BAR_H) / 2);
+            const title = [
+                `${preview.battalion_code || '—'}  ${preview.vehicle || '—'}  ${preview.unit_label || '—'}`,
+                `Station      : ${task.process_station || task.station_name || '—'}`,
+                `Work Center  : ${task.work_center || task.station_code || task.category_code || '—'}`,
+                `Planned      : ${formatDate(task.start_date)} -> ${formatDate(task.end_date)}`,
+            ].filter(Boolean).join('\n');
+            return `
+                <div
+                    class="gc-bar kd2-template-preview-bar"
+                    style="left:${left}px;width:${width}px;height:${PREVIEW_BAR_H}px;top:${top}px;transform:none;background:${templatePreviewStationColor(task.process_station || task.station_name)}"
+                    title="${escapeHtml(title)}">
+                    <span class="gc-bar-text">${escapeHtml(`${task.work_center || task.station_code || task.category_code || '—'} · ${task.process_station || task.station_name || 'Block'}`)}</span>
+                </div>
+            `;
+        }).join('');
+
+        const legendStations = [...new Set(preview.rows.map(row => String(row.process_station || row.station_name || '').trim()).filter(Boolean))]
+            .sort((a, b) => a.localeCompare(b, undefined, { numeric: true }));
+        const legendHtml = legendStations.length ? `
+            <div class="gantt-legend">
+                <div class="gantt-legend-head">
+                    <span class="gantt-legend-title">Visible Stations</span>
+                    <span class="gantt-legend-meta">${legendStations.length} station${legendStations.length === 1 ? '' : 's'} in range</span>
+                </div>
+                <div class="gantt-legend-grid">
+                    ${legendStations.map(name => `
+                        <div class="gantt-legend-item">
+                            <span class="gantt-legend-dot" style="background:${templatePreviewStationColor(name)}"></span>
+                            <span class="gantt-legend-label">${escapeHtml(name)}</span>
+                        </div>
+                    `).join('')}
+                </div>
+            </div>
+        ` : '';
+
+        const zoneKeyHtml = specialZones.length ? `
+            <div class="gantt-zone-key">
+                <span class="gantt-zone-key-item gantt-zone-key-holiday">
+                    <span class="gantt-zone-key-swatch"></span>Holiday
+                </span>
+            </div>
+        ` : '';
+
+        return `
+            <div class="kd2-template-gantt-preview">
+                ${legendHtml}
+                ${zoneKeyHtml}
+                <div class="gantt-scroll-root kd2-template-gantt-scroll">
+                    <div class="gantt-wrap" style="min-width:${innerW}px">
+                        <div class="gantt-head">
+                            <div class="gh-row gh-row-month">${monthHtml}</div>
+                            <div class="gh-row gh-row-week">${weekHtml}</div>
+                            <div class="gh-row gh-row-day">${dayHtml}</div>
+                        </div>
+                        <div class="gantt-body">
+                            ${zonesHtml}
+                            <div class="gr gr-group" style="height:${PREVIEW_GROUP_H}px">
+                                <div class="gr-label gr-group-label" style="width:${PREVIEW_LABEL_W}px">
+                                    <svg class="gr-label-icon" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.8">
+                                        <rect x="2" y="3" width="12" height="10" rx="1.5"></rect>
+                                        <path d="M5 8h6M5 11h4"></path>
+                                    </svg>
+                                    ${escapeHtml(preview.battalion_code || '—')}
+                                </div>
+                                <div class="gr-track gr-track-group" style="width:${totalW}px">${bgCells}</div>
+                            </div>
+                            <div class="gr gr-subgroup" style="height:${PREVIEW_SUBGROUP_H}px">
+                                <div class="gr-label gr-subgroup-label" style="width:${PREVIEW_LABEL_W}px">
+                                    <span class="gr-subgroup-badge">${escapeHtml(preview.vehicle || '—')}</span>
+                                </div>
+                                <div class="gr-track gr-track-subgroup" style="width:${totalW}px">${bgCells}</div>
+                            </div>
+                            <div class="gr" style="height:${rowH}px">
+                                <div class="gr-label gr-unit-label" style="width:${PREVIEW_LABEL_W}px">
+                                    <span class="gr-unit-dot"></span>
+                                    <span class="gr-unit-name">${escapeHtml(`${preview.vehicle || '—'} · ${preview.unit_label || '—'}`)}</span>
+                                </div>
+                                <div class="gr-track" style="width:${totalW}px;height:${rowH}px">
+                                    ${bgCells}
+                                    ${barsHtml}
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        `;
     }
 
     function renderTemplateEditor() {
         const container = document.getElementById('kd2TemplateEditor');
         if (!container) return;
-        const vehicle = document.getElementById('kd2PlanCreateVehicle')?.value || 'K9';
-        const rows = templateRowsForVehicle(vehicle)
-            .filter(item => !state.templateRemovedStations.has(item.route.station_code));
-        if (!rows.length) {
-            container.innerHTML = '<div class="empty-state"><p>No route template is available for this vehicle.</p></div><div class="kd2-template-new-rows" id="kd2TemplateNewRows"></div>';
-            return;
+        const vehicle = selectedTemplateVehicle();
+        ensureTemplateEditorState(vehicle);
+        if (state.templateInsertIndex !== null && state.templateInsertIndex > state.templateEditorBlocks.length) {
+            state.templateInsertIndex = state.templateEditorBlocks.length;
         }
-        const groups = groupRouteItems(rows);
-        container.innerHTML = groups.map(group => `
-            <div class="kd2-template-route">
-                <div class="kd2-template-route-label">Route ${group.sequence}${group.items.length > 1 ? ' · Parallel' : ''}</div>
-                ${group.items.map(item => `
-                    <div class="kd2-template-row" data-kd2-template-row data-existing="true" data-category-code="${escapeHtml(item.route.category_code)}" data-station-code="${escapeHtml(item.route.station_code)}">
-                        <span>
-                            <strong>${escapeHtml(item.station.station_name)}</strong>
-                            <small>${escapeHtml(item.category.category_name)} · ${escapeHtml(item.station.work_center || item.station.station_code)}</small>
-                        </span>
-                        <input type="number" min="1" step="1" class="filter-control kd2-template-route-input" data-field="routeSequence" data-category-code="${escapeHtml(item.route.category_code)}" data-station-code="${escapeHtml(item.route.station_code)}" value="${item.route.route_sequence}" title="Same route number = parallel" />
-                        <input type="number" min="1" step="1" class="filter-control kd2-template-duration" data-category-code="${escapeHtml(item.route.category_code)}" data-station-code="${escapeHtml(item.route.station_code)}" value="${item.duration || ''}" placeholder="days" />
-                        <button type="button" class="kd2-template-remove" data-kd2-template-remove="${escapeHtml(item.route.station_code)}" title="Remove from template">&times;</button>
-                    </div>
-                `).join('')}
-            </div>
-        `).join('') + '<div class="kd2-template-new-rows" id="kd2TemplateNewRows"></div>';
+        syncTemplateEditorChrome();
+        container.classList.toggle('kd2-template-editor-preview', state.templateEditorView === 'preview');
+        container.innerHTML = state.templateEditorView === 'visual'
+            ? renderTemplateEditorVisual(state.templateEditorBlocks)
+            : state.templateEditorView === 'preview'
+                ? renderTemplateEditorPreview(state.templateEditorBlocks)
+                : renderTemplateEditorForm(state.templateEditorBlocks);
     }
 
-    function addTemplateDraftRow() {
-        const container = document.getElementById('kd2TemplateNewRows') || document.getElementById('kd2TemplateEditor');
-        if (!container) return;
-        const vehicle = document.getElementById('kd2PlanCreateVehicle')?.value || 'K9';
+    function createNewTemplateItem(kind, vehicle) {
         state.templateNewRowCounter += 1;
-        const rowId = `new_${state.templateNewRowCounter}`;
-        container.insertAdjacentHTML('beforeend', `
-            <div class="kd2-template-route kd2-template-draft" data-kd2-template-draft="${rowId}">
-                <div class="kd2-template-route-label">New Block</div>
-                <div class="kd2-template-row kd2-template-row-new" data-kd2-template-row data-new="true">
-                    <input type="text" class="filter-control kd2-template-name-input" data-field="stationName" placeholder="Station name" />
-                    <select class="filter-control kd2-template-category-input" data-field="categoryCode">${templateCategoryOptions(vehicle)}</select>
-                    <input type="text" class="filter-control kd2-template-workcenter-input" data-field="workCenter" placeholder="Work center" />
-                    <input type="number" min="1" step="1" class="filter-control kd2-template-route-input" data-field="routeSequence" value="${nextTemplateRoute(vehicle)}" title="Same route number = parallel" />
-                    <input type="number" min="1" step="1" class="filter-control kd2-template-duration" data-field="duration" placeholder="days" />
-                    <button type="button" class="kd2-template-remove" data-kd2-template-remove-draft="${rowId}" title="Remove new block">&times;</button>
-                </div>
-            </div>
-        `);
+        if (kind === 'space') {
+            return createTemplateSpaceBlock(vehicle, {
+                editor_id: `space_${state.templateNewRowCounter}`,
+                gap_days: 1,
+            });
+        }
+        return createTemplateProcessBlock(vehicle, {
+            editor_id: `new_${state.templateNewRowCounter}`,
+            isNew: true,
+            vehicle_type: vehicle,
+            category_code: 'assembly',
+            station_code: null,
+            station_name: '',
+            work_center: '',
+            route_sequence: nextTemplateRoute(vehicle),
+            lead_time_days: null,
+            notes: 'Editable route template default',
+            station_sequence_in_category: null,
+            parallel_with_previous: false,
+        });
     }
 
-    function readTemplateRows() {
-        const vehicle = document.getElementById('kd2PlanCreateVehicle')?.value || 'K9';
-        const rows = [];
-        document.querySelectorAll('[data-kd2-template-row]').forEach(node => {
-            const isNew = node.dataset.new === 'true';
-            const durationInput = node.querySelector('.kd2-template-duration');
-            const duration = parseInt(durationInput?.value || '', 10);
-            const routeInput = node.querySelector('.kd2-template-route-input');
-            const routeSequence = parseRouteSequenceValue(routeInput?.value);
-            const categoryCode = isNew
-                ? node.querySelector('[data-field="categoryCode"]')?.value
-                : node.dataset.categoryCode;
-            const stationName = isNew ? node.querySelector('[data-field="stationName"]')?.value?.trim() : '';
-            const workCenter = isNew ? node.querySelector('[data-field="workCenter"]')?.value?.trim() : '';
-            rows.push({
-                isNew,
-                vehicle_type: vehicle,
-                category_code: categoryCode,
-                station_code: isNew ? null : node.dataset.stationCode,
-                station_name: stationName,
-                work_center: workCenter,
-                route_sequence: routeSequence,
-                planning_level: 'station',
-                lead_time_days: Number.isFinite(duration) && duration > 0 ? duration : null,
-                lead_time_source: 'KD2 template',
-                notes: 'Editable route template default',
+    function addTemplateDraftRow(kind = 'process', insertIndex = null) {
+        syncTemplateEditorStateFromDom({ normalizeForVisual: state.templateEditorView === 'visual' });
+        const vehicle = selectedTemplateVehicle();
+        ensureTemplateEditorState(vehicle);
+        const safeIndex = Number.isInteger(insertIndex) ? Math.max(0, Math.min(insertIndex, state.templateEditorBlocks.length)) : state.templateEditorBlocks.length;
+        state.templateEditorBlocks.splice(safeIndex, 0, createNewTemplateItem(kind, vehicle));
+        if (state.templateEditorView === 'visual') {
+            state.templateEditorBlocks = normalizeTemplateEditorBlocks(state.templateEditorBlocks);
+        }
+        state.templateInsertIndex = null;
+        renderTemplateEditor();
+    }
+
+    function readTemplateRows({ normalize = false } = {}) {
+        syncTemplateEditorStateFromDom();
+        const blocks = normalize ? normalizeTemplateEditorBlocks(state.templateEditorBlocks) : state.templateEditorBlocks;
+        return blocks.map(block => ({ ...block }));
+    }
+
+    function moveTemplateEditorBlock(editorId, delta) {
+        syncTemplateEditorStateFromDom({ normalizeForVisual: state.templateEditorView === 'visual' });
+        const index = state.templateEditorBlocks.findIndex(block => block.editor_id === editorId);
+        if (index < 0) return;
+        const nextIndex = index + delta;
+        if (nextIndex < 0 || nextIndex >= state.templateEditorBlocks.length) return;
+        const [moved] = state.templateEditorBlocks.splice(index, 1);
+        state.templateEditorBlocks.splice(nextIndex, 0, moved);
+        state.templateEditorBlocks = normalizeTemplateEditorBlocks(state.templateEditorBlocks);
+        state.templateInsertIndex = null;
+        renderTemplateEditor();
+    }
+
+    function toggleTemplateInsertChooser(index) {
+        syncTemplateEditorStateFromDom({ normalizeForVisual: state.templateEditorView === 'visual' });
+        const safeIndex = Math.max(0, Math.min(index, state.templateEditorBlocks.length));
+        state.templateInsertIndex = state.templateInsertIndex === safeIndex ? null : safeIndex;
+        renderTemplateEditor();
+    }
+
+    function convertTemplateBlockKind(editorId, nextKind) {
+        syncTemplateEditorStateFromDom({ normalizeForVisual: false });
+        const index = state.templateEditorBlocks.findIndex(block => block.editor_id === editorId);
+        if (index < 0) return;
+        const block = state.templateEditorBlocks[index];
+        if ((nextKind === 'space' && isTemplateSpaceBlock(block)) || (nextKind === 'process' && isTemplateProcessBlock(block))) return;
+        if (nextKind === 'space') {
+            if (block.station_code && !block.isNew) state.templateRemovedStations.add(block.station_code);
+            state.templateEditorBlocks[index] = createTemplateSpaceBlock(block.vehicle_type, {
+                editor_id: block.editor_id,
+                gap_days: 1,
+                source_process: { ...block },
             });
+        } else {
+            const restored = block.source_process
+                ? createTemplateProcessBlock(block.vehicle_type, {
+                    ...block.source_process,
+                    editor_id: block.editor_id,
+                })
+                : createTemplateProcessBlock(block.vehicle_type, {
+                    editor_id: block.editor_id,
+                    isNew: true,
+                    vehicle_type: block.vehicle_type,
+                    category_code: 'assembly',
+                    station_code: null,
+                    station_name: '',
+                    work_center: '',
+                    route_sequence: nextTemplateRoute(block.vehicle_type),
+                    lead_time_days: null,
+                    station_sequence_in_category: null,
+                    parallel_with_previous: false,
+                });
+            if (restored.station_code && !restored.isNew) state.templateRemovedStations.delete(restored.station_code);
+            state.templateEditorBlocks[index] = restored;
+        }
+        state.templateEditorBlocks = normalizeTemplateEditorBlocks(state.templateEditorBlocks);
+        state.templateInsertIndex = null;
+        renderTemplateEditor();
+    }
+
+    function buildTemplateLayoutSegments(vehicle) {
+        const layoutBlocks = templateEditorBlocksForVehicle(vehicle);
+        const routeItemMap = new Map(templateRowsForVehicle(vehicle).map(item => [item.route.station_code, item]));
+        const segments = [];
+        let currentGroup = null;
+
+        layoutBlocks.forEach((block, index) => {
+            if (isTemplateSpaceBlock(block)) {
+                const hasFollowingProcess = layoutBlocks.slice(index + 1).some(isTemplateProcessBlock);
+                segments.push({
+                    kind: 'space',
+                    gap_days: parseGapDaysValue(block.gap_days),
+                    applies_to_next_process: hasFollowingProcess,
+                });
+                currentGroup = null;
+                return;
+            }
+
+            const routeItem = routeItemMap.get(block.station_code);
+            if (!routeItem) return;
+            const processItem = {
+                layout: block,
+                route: routeItem.route,
+                station: routeItem.station,
+                category: routeItem.category,
+                duration: block.lead_time_days ?? routeItem.duration ?? defaultDurationForStation(vehicle, routeItem.route.category_code, routeItem.route.station_code),
+            };
+            if (!currentGroup || !block.parallel_with_previous) {
+                currentGroup = {
+                    kind: 'process_group',
+                    sequence: block.route_sequence,
+                    items: [],
+                };
+                segments.push(currentGroup);
+            }
+            currentGroup.items.push(processItem);
         });
-        return rows;
+
+        return {
+            layoutBlocks,
+            segments,
+            processItems: segments.flatMap(segment => segment.kind === 'process_group' ? segment.items : []),
+        };
     }
 
     async function saveTemplateDefaults({ silent = false } = {}) {
         if (!dbRef) return false;
-        const rows = readTemplateRows();
+        const rows = readTemplateRows({ normalize: true });
         const selectedVehicle = document.getElementById('kd2PlanCreateVehicle')?.value || 'K9';
         if (!rows.length && !state.templateRemovedStations.size) {
             setPlanCreateError('No template rows are available to save.');
             return false;
         }
-        const missingName = rows.find(row => row.isNew && !row.station_name);
+        const processRows = rows.filter(isTemplateProcessBlock);
+        const missingName = processRows.find(row => row.isNew && !row.station_name);
         if (missingName) {
             setPlanCreateError('Every new template block needs a station name.');
             return false;
         }
-        const missingCategory = rows.find(row => !row.category_code);
+        const missingCategory = processRows.find(row => !row.category_code);
         if (missingCategory) {
             setPlanCreateError('Every template row needs a category.');
             return false;
         }
-        const invalid = rows.find(row => row.lead_time_days === null);
+        const invalid = processRows.find(row => row.lead_time_days === null);
         if (invalid) {
             setPlanCreateError('Every template row needs a duration before saving or adding the template.');
             return false;
         }
-        const invalidRoute = rows.find(row => Number.isNaN(row.route_sequence));
-        if (invalidRoute) {
-            setPlanCreateError('Every template row needs a route number greater than 0. Same route number means parallel.');
+        const invalidGap = rows.find(row => isTemplateSpaceBlock(row) && Number.isNaN(parseGapDaysValue(row.gap_days)));
+        if (invalidGap) {
+            setPlanCreateError('Every space block needs skipped working days greater than 0.');
             return false;
         }
         const vehicle = rows[0]?.vehicle_type || selectedVehicle;
         const before = state.leadTimes.filter(row => row.vehicle_type === vehicle);
-        const routeBefore = state.stations
+        const routeBefore = state.routes
             .filter(row => row.vehicle_type === vehicle)
             .map(row => ({ station_code: row.station_code, route_sequence: row.route_sequence }));
+        const layoutBefore = templateLayoutRowsForVehicle(vehicle).map(row => ({
+            sort_order: row.sort_order,
+            kind: row.kind,
+            station_code: row.station_code,
+            parallel_with_previous: row.parallel_with_previous,
+            gap_days: row.gap_days,
+        }));
         const existingCodes = new Set(state.stations.map(row => `${row.vehicle_type}||${row.station_code}`));
         const categorySequenceCounters = new Map();
-        for (const row of rows) {
+        for (const row of processRows) {
             if (!row.isNew) continue;
             const base = `${row.vehicle_type.toLowerCase()}_${row.category_code}_${slugifyStationName(row.station_name)}`;
             let stationCode = base;
             let suffix = 2;
-            while (existingCodes.has(`${row.vehicle_type}||${stationCode}`) || rows.some(other => other !== row && other.station_code === stationCode)) {
+            while (existingCodes.has(`${row.vehicle_type}||${stationCode}`) || processRows.some(other => other !== row && other.station_code === stationCode)) {
                 stationCode = `${base}_${suffix}`;
                 suffix += 1;
             }
@@ -3088,9 +4127,9 @@ window.PPMSModuleRuntime = (() => {
             row.station_sequence_in_category = currentMax + 1;
             categorySequenceCounters.set(key, row.station_sequence_in_category);
         }
-        const leadRows = rows.map(({ isNew, route_sequence, station_name, work_center, station_sequence_in_category, ...row }) => row);
+        const leadRows = processRows.map(({ isNew, kind, parallel_with_previous, gap_days, source_process, route_sequence, station_name, work_center, station_sequence_in_category, ...row }) => row);
 
-        for (const row of rows) {
+        for (const row of processRows) {
             const stationPayload = row.isNew
                 ? {
                     vehicle_type: row.vehicle_type,
@@ -3145,13 +4184,37 @@ window.PPMSModuleRuntime = (() => {
             if (routeError) throw routeError;
         }
 
+        const { error: deleteLayoutError } = await dbRef
+            .from('kd2_template_layout_items')
+            .delete()
+            .eq('vehicle_type', vehicle);
+        if (deleteLayoutError) throw deleteLayoutError;
+
+        const layoutRows = rows.map((row, index) => ({
+            vehicle_type: vehicle,
+            sort_order: index + 1,
+            kind: row.kind,
+            station_code: isTemplateProcessBlock(row) ? row.station_code : null,
+            parallel_with_previous: isTemplateProcessBlock(row) ? Boolean(row.parallel_with_previous) : false,
+            gap_days: isTemplateSpaceBlock(row) ? parseGapDaysValue(row.gap_days) : null,
+        }));
+        if (layoutRows.length) {
+            const { error: insertLayoutError } = await dbRef
+                .from('kd2_template_layout_items')
+                .insert(layoutRows);
+            if (insertLayoutError) throw insertLayoutError;
+        }
+
         await writeAudit('UPSERT', 'kd2_process_lead_times', vehicle || 'template', before, leadRows);
         await writeAudit('UPDATE', 'kd2_process_routes', vehicle || 'template', routeBefore, rows.map(row => ({
-            station_code: row.station_code,
-            route_sequence: row.route_sequence,
+            station_code: row.station_code || null,
+            route_sequence: row.route_sequence || null,
         })));
+        await writeAudit('REPLACE', 'kd2_template_layout_items', vehicle || 'template', layoutBefore, layoutRows);
         state.templateRemovedStations.clear();
+        state.templateInsertIndex = null;
         await loadWorkspaceData();
+        ensureTemplateEditorState(vehicle, { force: true });
         renderTemplateEditor();
         updatePlanCreateDurationFromStation(true);
         if (!silent) toast('KD2 template defaults saved.', 'success');
@@ -3184,6 +4247,10 @@ window.PPMSModuleRuntime = (() => {
         battalionSelect.value = String(filteredBattalion?.id || state.battalions[0].id);
         state.templateRemovedStations.clear();
         state.templateNewRowCounter = 0;
+        state.templateEditorView = 'visual';
+        state.templateEditorVehicle = '';
+        state.templateEditorBlocks = [];
+        state.templateInsertIndex = null;
         const defaultDate = document.getElementById('kd2TimelineStart')?.value || localDateStr(new Date());
         const defaultVehicle = getVehicleFilterValue() || state.timelinePlacementVehicle || 'K9';
         document.getElementById('kd2PlanCreateVehicle').value = defaultVehicle;
@@ -3627,15 +4694,14 @@ window.PPMSModuleRuntime = (() => {
                 }
 
                 const rules = planningRulesFor(battalion.id, vehicle);
-                const routeRows = routeItemsForVehicle(vehicle);
-                const routeGroups = groupRouteItems(routeRows);
+                const { segments, processItems } = buildTemplateLayoutSegments(vehicle);
 
-                if (!routeRows.length) {
+                if (!processItems.length) {
                     issues.push(`${vehicle}: route definition missing`);
                     continue;
                 }
 
-                const missingLead = routeRows.find(item => !resolveLeadTime(vehicle, item.route.category_code, item.route.station_code));
+                const missingLead = processItems.find(item => !resolveLeadTime(vehicle, item.route.category_code, item.route.station_code));
                 if (missingLead) {
                     issues.push(`${vehicle}: missing lead time for ${missingLead.station?.station_name || missingLead.route.station_code}`);
                     continue;
@@ -3645,8 +4711,14 @@ window.PPMSModuleRuntime = (() => {
                 units.forEach(unit => {
                     let currentEnd = deadline;
                     const reversed = [];
-                    for (let i = routeGroups.length - 1; i >= 0; i -= 1) {
-                        const group = routeGroups[i];
+                    for (let i = segments.length - 1; i >= 0; i -= 1) {
+                        const group = segments[i];
+                        if (group.kind === 'space') {
+                            if (group.applies_to_next_process) {
+                                currentEnd = shiftWorkingDateBackward(currentEnd, group.gap_days || 0, rules);
+                            }
+                            continue;
+                        }
                         const groupRows = [];
                         for (const item of group.items) {
                             const duration = resolveLeadTime(vehicle, item.route.category_code, item.route.station_code);
@@ -3685,7 +4757,7 @@ window.PPMSModuleRuntime = (() => {
                         reversed.push(...groupRows);
                         currentEnd = previousWorkingDate(minDateStr(groupRows.map(row => row.planned_start_date)), rules);
                     }
-                    if (reversed.length === routeRows.length) planRows.push(...reversed.reverse());
+                    if (reversed.length === processItems.length) planRows.push(...reversed.reverse());
                 });
             }
 
@@ -3853,19 +4925,18 @@ window.PPMSModuleRuntime = (() => {
             const saved = await saveTemplateDefaults({ silent: true });
             if (!saved) return;
 
-            const routeRows = templateRowsForVehicle(vehicle);
-            const routeGroups = groupRouteItems(routeRows);
-            if (!routeRows.length) {
+            const { segments, processItems } = buildTemplateLayoutSegments(vehicle);
+            if (!processItems.length) {
                 setPlanCreateError('The selected vehicle has no route template.');
                 return;
             }
-            const missingDuration = routeRows.find(item => !item.duration);
+            const missingDuration = processItems.find(item => !item.duration);
             if (missingDuration) {
                 setPlanCreateError(`Missing duration for ${missingDuration.station?.station_name || missingDuration.route.station_code}.`);
                 return;
             }
 
-            const stationCodes = routeRows.map(item => item.route.station_code);
+            const stationCodes = [...new Set(processItems.map(item => item.route.station_code))];
             const { data: duplicateRows, error: duplicateError } = await dbRef
                 .from('kd2_plan')
                 .select('station_code')
@@ -3882,7 +4953,13 @@ window.PPMSModuleRuntime = (() => {
             const rules = planningRulesFor(battalionId, vehicle);
             let currentStart = localDateStr(normalizeWorkingDateForward(startDate, rules));
             const planRows = [];
-            routeGroups.forEach(group => {
+            segments.forEach(group => {
+                if (group.kind === 'space') {
+                    if (group.applies_to_next_process) {
+                        currentStart = shiftWorkingDateForward(currentStart, group.gap_days || 0, rules);
+                    }
+                    return;
+                }
                 const groupRows = group.items.map(item => {
                     const window = buildForwardWindow(currentStart, item.duration, rules);
                     return {
@@ -4028,7 +5105,10 @@ window.PPMSModuleRuntime = (() => {
             renderRouteFlow();
             if (document.getElementById('kd2LeadTimeOverlay')?.style.display === 'flex') renderLeadTimeEditor();
             if (document.getElementById('kd2NoWorkOverlay')?.style.display === 'flex') renderNoWorkDays();
-            if (document.getElementById('kd2PlanCreateOverlay')?.style.display === 'flex') updatePlanCreateEndFromDuration();
+            if (document.getElementById('kd2PlanCreateOverlay')?.style.display === 'flex') {
+                updatePlanCreateEndFromDuration();
+                if (currentPlanCreateMode() === 'template') renderTemplateEditor();
+            }
             updateGenerationTarget();
             syncTimelinePlacementUi();
         } catch (error) {
@@ -4145,11 +5225,18 @@ window.PPMSModuleRuntime = (() => {
         document.getElementById('kd2PlanCreateBattalion')?.addEventListener('change', () => {
             populatePlanCreateUnits();
             updatePlanCreateEndFromDuration();
+            if (currentPlanCreateMode() === 'template') renderTemplateEditor();
+        });
+        document.getElementById('kd2PlanCreateUnit')?.addEventListener('change', () => {
+            if (currentPlanCreateMode() === 'template' && state.templateEditorView === 'preview') renderTemplateEditor();
         });
         document.getElementById('kd2PlanCreateVehicle')?.addEventListener('change', () => {
             setTimelinePlacementVehicle(document.getElementById('kd2PlanCreateVehicle').value || 'K9');
             state.templateRemovedStations.clear();
             state.templateNewRowCounter = 0;
+            state.templateEditorVehicle = '';
+            state.templateEditorBlocks = [];
+            state.templateInsertIndex = null;
             populatePlanCreateStations();
             populatePlanCreateUnits();
             if (currentPlanCreateMode() === 'template') renderTemplateEditor();
@@ -4161,7 +5248,10 @@ window.PPMSModuleRuntime = (() => {
             updatePlanCreateCategory();
             updatePlanCreateDurationFromStation(true);
         });
-        document.getElementById('kd2PlanCreateStart')?.addEventListener('change', updatePlanCreateEndFromDuration);
+        document.getElementById('kd2PlanCreateStart')?.addEventListener('change', () => {
+            updatePlanCreateEndFromDuration();
+            if (currentPlanCreateMode() === 'template' && state.templateEditorView === 'preview') renderTemplateEditor();
+        });
         document.getElementById('kd2PlanCreateDuration')?.addEventListener('input', updatePlanCreateEndFromDuration);
         document.getElementById('kd2PlanCreateModeToggle')?.addEventListener('click', e => {
             const btn = e.target.closest('.kd2-create-mode-btn');
@@ -4175,18 +5265,136 @@ window.PPMSModuleRuntime = (() => {
                 setPlanCreateError(error.message);
             }
         });
-        document.getElementById('btnKd2TemplateAddBlock')?.addEventListener('click', addTemplateDraftRow);
-        document.getElementById('kd2TemplateEditor')?.addEventListener('click', e => {
-            const removeExisting = e.target.closest('[data-kd2-template-remove]');
-            if (removeExisting) {
-                state.templateRemovedStations.add(removeExisting.dataset.kd2TemplateRemove);
-                removeExisting.closest('[data-kd2-template-row]')?.remove();
+        document.getElementById('btnKd2TemplateAddBlock')?.addEventListener('click', () => {
+            if (state.templateEditorView === 'preview') {
+                state.templateEditorView = 'visual';
+                state.templateInsertIndex = state.templateEditorBlocks.length;
+                renderTemplateEditor();
                 return;
             }
-            const removeDraft = e.target.closest('[data-kd2-template-remove-draft]');
-            if (removeDraft) {
-                removeDraft.closest('[data-kd2-template-draft]')?.remove();
+            if (state.templateEditorView === 'visual') {
+                toggleTemplateInsertChooser(state.templateEditorBlocks.length);
+                return;
             }
+            addTemplateDraftRow('process');
+        });
+        document.getElementById('kd2TemplateEditorViewToggle')?.addEventListener('click', e => {
+            const btn = e.target.closest('.kd2-template-view-btn');
+            if (!btn) return;
+            const nextView = btn.dataset.view === 'form'
+                ? 'form'
+                : btn.dataset.view === 'preview'
+                    ? 'preview'
+                    : 'visual';
+            if (state.templateEditorView !== 'preview') {
+                syncTemplateEditorStateFromDom({ normalizeForVisual: nextView !== 'form' });
+            }
+            state.templateEditorView = nextView;
+            renderTemplateEditor();
+        });
+        document.getElementById('kd2TemplateEditor')?.addEventListener('click', e => {
+            const insertTrigger = e.target.closest('[data-kd2-template-insert-trigger]');
+            if (insertTrigger) {
+                e.stopPropagation();
+                toggleTemplateInsertChooser(parseInt(insertTrigger.dataset.kd2TemplateInsertTrigger, 10) || 0);
+                return;
+            }
+            const insertOption = e.target.closest('[data-kd2-template-insert-kind]');
+            if (insertOption) {
+                e.stopPropagation();
+                addTemplateDraftRow(
+                    insertOption.dataset.kd2TemplateInsertKind === 'space' ? 'space' : 'process',
+                    parseInt(insertOption.dataset.insertIndex, 10) || 0
+                );
+                return;
+            }
+            const moveBtn = e.target.closest('[data-kd2-template-move]');
+            if (moveBtn) {
+                moveTemplateEditorBlock(
+                    moveBtn.dataset.editorId || '',
+                    parseInt(moveBtn.dataset.kd2TemplateMove, 10) || 0
+                );
+                return;
+            }
+            const removeBtn = e.target.closest('[data-kd2-template-remove-id]');
+            if (removeBtn) {
+                syncTemplateEditorStateFromDom({ normalizeForVisual: state.templateEditorView === 'visual' });
+                const blockId = removeBtn.dataset.kd2TemplateRemoveId;
+                const block = state.templateEditorBlocks.find(item => item.editor_id === blockId);
+                if (block?.station_code && !block.isNew) state.templateRemovedStations.add(block.station_code);
+                state.templateEditorBlocks = state.templateEditorBlocks.filter(item => item.editor_id !== blockId);
+                state.templateEditorBlocks = normalizeTemplateEditorBlocks(state.templateEditorBlocks);
+                state.templateInsertIndex = null;
+                renderTemplateEditor();
+                return;
+            }
+            if (state.templateInsertIndex !== null && !e.target.closest('[data-kd2-template-insert-menu]')) {
+                state.templateInsertIndex = null;
+                renderTemplateEditor();
+            }
+        });
+        document.getElementById('kd2TemplateEditor')?.addEventListener('change', e => {
+            if (!e.target.closest('[data-kd2-template-block]')) return;
+            const row = e.target.closest('[data-kd2-template-block]');
+            if (e.target.matches('[data-field="kind"]')) {
+                convertTemplateBlockKind(row?.dataset.editorId || '', e.target.value === 'space' ? 'space' : 'process');
+                return;
+            }
+            if (e.target.matches('[data-kd2-template-parallel]')) {
+                syncTemplateEditorStateFromDom({ normalizeForVisual: true });
+                renderTemplateEditor();
+                return;
+            }
+            if (e.target.matches('[data-field="gapDays"]')) {
+                syncTemplateEditorStateFromDom({ normalizeForVisual: state.templateEditorView === 'visual' });
+                renderTemplateEditor();
+            }
+        });
+        document.getElementById('kd2TemplateEditor')?.addEventListener('dragstart', e => {
+            if (state.templateEditorView !== 'visual') return;
+            const card = e.target.closest('[data-kd2-template-block]');
+            if (!card) return;
+            card.classList.add('kd2-template-card-dragging');
+            state.templateInsertIndex = null;
+            e.dataTransfer.effectAllowed = 'move';
+            e.dataTransfer.setData('text/plain', card.dataset.editorId || '');
+        });
+        document.getElementById('kd2TemplateEditor')?.addEventListener('dragover', e => {
+            if (state.templateEditorView !== 'visual') return;
+            const container = e.currentTarget;
+            const dragging = container.querySelector('.kd2-template-card-dragging');
+            if (!dragging) return;
+            e.preventDefault();
+            const slot = e.target.closest('[data-kd2-template-insert-slot]');
+            if (slot && !slot.contains(dragging)) {
+                slot.parentElement?.insertBefore(dragging, slot.nextSibling);
+                return;
+            }
+            const target = e.target.closest('[data-kd2-template-block]');
+            if (!target || target === dragging) {
+                if (e.target === container || e.target.closest('.kd2-template-visual')) {
+                    container.querySelector('.kd2-template-visual')?.appendChild(dragging);
+                }
+                return;
+            }
+            const rect = target.getBoundingClientRect();
+            const insertAfter = e.clientY > rect.top + rect.height / 2;
+            target.parentElement?.insertBefore(dragging, insertAfter ? target.nextSibling : target);
+        });
+        document.getElementById('kd2TemplateEditor')?.addEventListener('drop', e => {
+            if (state.templateEditorView !== 'visual') return;
+            e.preventDefault();
+            syncTemplateEditorStateFromDom({ normalizeForVisual: true });
+            renderTemplateEditor();
+        });
+        document.getElementById('kd2TemplateEditor')?.addEventListener('dragend', e => {
+            e.target.closest('.kd2-template-card')?.classList.remove('kd2-template-card-dragging');
+        });
+        document.addEventListener('click', e => {
+            if (state.templateInsertIndex === null) return;
+            if (e.target.closest('#kd2TemplateEditorWrap')) return;
+            state.templateInsertIndex = null;
+            renderTemplateEditor();
         });
         document.getElementById('kd2LeadTimeClose')?.addEventListener('click', closeLeadTimeModal);
         document.getElementById('btnKd2LeadTimeCancel')?.addEventListener('click', closeLeadTimeModal);
