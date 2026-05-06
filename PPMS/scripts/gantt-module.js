@@ -55,6 +55,17 @@
                     </button>
                 </div>
                 <div class="filter-item" style="padding-top:18px">
+                    <button class="btn-theme gantt-theme-btn" id="btnGanttTheme" title="Toggle light / dark theme" aria-label="Toggle light / dark theme">
+                        <svg class="icon-sun" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.8">
+                            <circle cx="10" cy="10" r="4" />
+                            <path d="M10 2v2M10 16v2M2 10h2M16 10h2M4.22 4.22l1.42 1.42M14.36 14.36l1.42 1.42M4.22 15.78l1.42-1.42M14.36 5.64l1.42-1.42" />
+                        </svg>
+                        <svg class="icon-moon" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.8">
+                            <path d="M17.5 12A7.5 7.5 0 018 2.5a7.5 7.5 0 100 15 7.5 7.5 0 009.5-5.5z" />
+                        </svg>
+                    </button>
+                </div>
+                <div class="filter-item" style="padding-top:18px">
                     <button class="btn btn-outline gantt-fullscreen-btn" id="btnGanttFullscreen" aria-pressed="false">
                         <svg viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.8">
                             <path d="M3 8V3h5" />
@@ -163,15 +174,6 @@
                             Redo
                         </button>
                     </div>
-                    <button class="btn btn-outline btn-sm gantt-fullscreen-btn" id="btnGanttEditFullscreen" aria-pressed="false">
-                        <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.8">
-                            <path d="M2 6V2h4" />
-                            <path d="M14 6V2h-4" />
-                            <path d="M2 10v4h4" />
-                            <path d="M14 10v4h-4" />
-                        </svg>
-                        <span id="btnGanttEditFullscreenLabel">Full Screen</span>
-                    </button>
                     <button class="btn btn-ghost btn-sm" id="btnGanttEditDone">Done</button>
                 </div>
                 <div class="gantt-visual-placement-bar" id="ganttVisualPlacementBar" style="display:none">
@@ -190,6 +192,10 @@
                                         <option value="K10">K10</option>
                                         <option value="K11">K11</option>
                                     </select>
+                                </div>
+                                <div class="filter-item kd2-timeline-filter">
+                                    <label class="filter-label" for="ganttVisualPlacementFilter">Filter</label>
+                                    <input id="ganttVisualPlacementFilter" class="filter-control" type="text" placeholder="Hull, turret, assembly..." />
                                 </div>
                                 <button class="btn btn-ghost btn-sm" id="btnGanttVisualPlacementCancel">Cancel Placement</button>
                             </div>

@@ -632,9 +632,13 @@ async function loadUnitCodes() {
                 if (r.unit_label) unitCodeMap[r.vehicle_type + '||' + r.unit_label] = code;
                 unitCodeMap[r.vehicle_type + '||' + fallbackLabel] = code;
                 unitRegistryRows.push({
+                    battalion_id: r.battalion_id,
                     battalion_code: battalionCode || '—',
                     vehicle: r.vehicle_type,
+                    vehicle_type: r.vehicle_type,
                     vehicle_no: r.unit_label || fallbackLabel,
+                    unit_serial: r.unit_serial,
+                    unit_label: r.unit_label || fallbackLabel,
                     unit_code: code,
                 });
             });
@@ -2625,6 +2629,7 @@ function themeChartColors() {
 document.addEventListener('DOMContentLoaded', () => {
     // Wire theme toggle
     document.getElementById('btnTheme')?.addEventListener('click', toggleTheme);
+    document.getElementById('btnGanttTheme')?.addEventListener('click', toggleTheme);
     initializeApp();
 });
 /* ================================================================
@@ -2655,6 +2660,7 @@ function ganttStationColor(name) {
     }
     return _stationColors[name];
 }
+window.__ppmsGanttStationColor = ganttStationColor;
 
 /* ──────────────────────────────────────────────────────────────────
    SPECIAL BACKGROUND ZONES
@@ -2766,6 +2772,7 @@ function wireGanttControls() {
 function renderGantt(plans, startDate, endDate) {
     const inner = document.getElementById('ganttInner');
     if (!inner) return;
+    const previousGanttScroll = saveGanttScrollPos();
 
     if (!startDate || !endDate || startDate > endDate) {
         inner.innerHTML = `
@@ -2779,6 +2786,7 @@ function renderGantt(plans, startDate, endDate) {
         const legend = document.getElementById('ganttLegend');
         if (legend) legend.innerHTML = '';
         syncGanttLegendUi();
+        _ganttHasRenderedOnce = false;
         return;
     }
 
@@ -2853,10 +2861,12 @@ function renderGantt(plans, startDate, endDate) {
     );
 
     const groups = {};
+    const laneMetaMap = {};
     const ensureGroupLane = (groupKey, laneKey) => {
         if (!groups[groupKey]) groups[groupKey] = {};
         if (!groups[groupKey][laneKey]) groups[groupKey][laneKey] = [];
     };
+    const laneMetaKey = (groupKey, laneKey) => `${groupKey}|||${laneKey}`;
     const vehicleFilter = getVal('filterVehicle');
     const unitFilter = getVal('filterUnit');
     const battalionFilter = isKD2Module() ? getVal('filterBattalion') : '';
@@ -2870,12 +2880,26 @@ function renderGantt(plans, startDate, endDate) {
             const groupKey = isKD2Module() ? (row.battalion_code || '—') : row.vehicle;
             const laneKey = isKD2Module() ? `${row.vehicle}||${row.vehicle_no}` : row.vehicle_no;
             ensureGroupLane(groupKey, laneKey);
+            laneMetaMap[laneMetaKey(groupKey, laneKey)] = {
+                battalion_id: row.battalion_id ?? null,
+                battalion_code: row.battalion_code || '',
+                vehicle_type: row.vehicle_type || row.vehicle || '',
+                unit_serial: row.unit_serial ?? null,
+                unit_label: row.unit_label || row.vehicle_no || '',
+            };
         });
     visible.forEach(p => {
         const groupKey = isKD2Module() ? (p.battalion_code || '—') : p.vehicle;
         const laneKey = isKD2Module() ? `${p.vehicle}||${p.vehicle_no}` : p.vehicle_no;
         ensureGroupLane(groupKey, laneKey);
         groups[groupKey][laneKey].push(p);
+        laneMetaMap[laneMetaKey(groupKey, laneKey)] = {
+            battalion_id: p.battalion_id ?? null,
+            battalion_code: p.battalion_code || '',
+            vehicle_type: p.vehicle_type || p.vehicle || '',
+            unit_serial: p.unit_serial ?? null,
+            unit_label: p.unit_label || p.vehicle_no || '',
+        };
     });
 
     const groupKeys = Object.keys(groups).sort((a, b) =>
@@ -2885,6 +2909,7 @@ function renderGantt(plans, startDate, endDate) {
     );
 
     if (!groupKeys.length) {
+        clearGanttHoverGuide();
         inner.innerHTML = `
       <div class="gantt-empty-state">
         <svg viewBox="0 0 48 48" fill="none" stroke="currentColor" stroke-width="1.5">
@@ -2898,6 +2923,7 @@ function renderGantt(plans, startDate, endDate) {
         syncGanttLegendUi();
         const zoneKeyEl = document.getElementById('ganttZoneKey');
         if (zoneKeyEl) zoneKeyEl.style.display = 'none';
+        _ganttHasRenderedOnce = false;
         return;
     }
 
@@ -2930,7 +2956,7 @@ function renderGantt(plans, startDate, endDate) {
         const holidayLabels = holidayLabelsByDay.get(dm.date);
         const dayTitle = holidayLabels?.size ? ` title="${esc([...holidayLabels].join(', '))}"` : '';
         dHtml += `<div class="gh-day${dm.isSat ? ' gh-day-sat' : ''}${holidayDays.has(dm.date) ? ' gh-day-holiday' : ''}${dm.isToday ? ' gh-day-today' : ''}"
-      style="width:${GANTT_DAY_W}px;height:28px"${dayTitle}>${dm.dayNum}</div>`;
+      data-gantt-date="${dm.date}" style="width:${GANTT_DAY_W}px;height:28px"${dayTitle}>${dm.dayNum}</div>`;
     });
 
     // Flush last groups
@@ -2939,7 +2965,7 @@ function renderGantt(plans, startDate, endDate) {
 
     // ── 4. Background day cells (shared template per row) ─────────
     const bgCells = dayMeta.map(dm =>
-        `<div class="gc-cell${dm.isSat ? ' gc-cell-sat' : ''}" style="width:${GANTT_DAY_W}px"></div>`
+        `<div class="gc-cell${dm.isSat ? ' gc-cell-sat' : ''}" data-gantt-date="${dm.date}" style="width:${GANTT_DAY_W}px"></div>`
     ).join('');
 
     // ── 5. Special zone bands ──────────────────────────────────────
@@ -3020,6 +3046,7 @@ function renderGantt(plans, startDate, endDate) {
             const tasks = groups[groupKey][unit] || [];
             const laneVehicle = isKD2Module() ? unit.split('||')[0] : groupKey;
             const laneUnit = isKD2Module() ? unit.split('||').slice(1).join('||') : unit;
+            const laneMeta = laneMetaMap[laneMetaKey(groupKey, unit)] || {};
 
             // ── Lane assignment for overlapping bars ─────────────────────
             // Sort by start date so we process left-to-right
@@ -3132,7 +3159,15 @@ function renderGantt(plans, startDate, endDate) {
             <span class="gr-unit-name">${esc(isKD2Module() ? `${laneVehicle} · ${unitLabel(laneVehicle, laneUnit)}` : unitLabel(laneVehicle, laneUnit))}</span>
             ${isKD2Module() && _ganttEditMode && _ganttSelectLaneMode && anchorTask ? `<button type="button" class="gantt-lane-select-btn" data-gantt-lane-select="${anchorTask.id}" aria-pressed="${laneSelected ? 'true' : 'false'}">${laneSelected ? 'Clear lane' : 'Select lane'}</button>` : ''}
           </div>
-          <div class="gr-track" style="width:${totalW}px;height:${rowH}px">
+          <div class="gr-track" style="width:${totalW}px;height:${rowH}px"
+            data-kd2-track="${isKD2Module() ? 'true' : ''}"
+            data-kd2-lane-key="${esc(unit)}"
+            data-battalion-id="${esc(laneMeta.battalion_id ?? '')}"
+            data-battalion-code="${esc(laneMeta.battalion_code || groupKey || '')}"
+            data-vehicle-type="${esc(laneMeta.vehicle_type || laneVehicle || '')}"
+            data-unit-serial="${esc(laneMeta.unit_serial ?? '')}"
+            data-unit-label="${esc(laneMeta.unit_label || laneUnit || '')}"
+            data-gantt-days="${esc(days.join(','))}">
             ${bgCells}
             ${bars}
           </div>
@@ -3142,6 +3177,7 @@ function renderGantt(plans, startDate, endDate) {
     });
 
     // ── 7. Assemble ────────────────────────────────────────────────
+    clearGanttHoverGuide();
     inner.innerHTML = `
     <div class="gantt-wrap" style="min-width:${innerW}px">
       <div class="gantt-head">
@@ -3151,6 +3187,7 @@ function renderGantt(plans, startDate, endDate) {
       </div>
       <div class="gantt-body">${bodyHtml}</div>
     </div>`;
+    wireGanttHoverGuide();
 
     // ── 8. Legend ──────────────────────────────────────────────────
     const legend = document.getElementById('ganttLegend');
@@ -3177,8 +3214,10 @@ function renderGantt(plans, startDate, endDate) {
     const zoneKeyEl = document.getElementById('ganttZoneKey');
     if (zoneKeyEl) zoneKeyEl.style.display = specialZones.length ? 'flex' : 'none';
 
-    // ── 10. Auto-scroll to today ───────────────────────────────────
-    if (dayIndex[today] !== undefined) {
+    // ── 10. Preserve viewport after edits/reloads ──────────────────
+    if (_ganttHasRenderedOnce && previousGanttScroll) {
+        restoreGanttScrollPos(previousGanttScroll);
+    } else if (dayIndex[today] !== undefined) {
         const scrollRoot = document.getElementById('ganttScrollRoot');
         if (scrollRoot) {
             const todayPx = GANTT_LABEL_W + dayIndex[today] * GANTT_DAY_W;
@@ -3186,6 +3225,7 @@ function renderGantt(plans, startDate, endDate) {
             setTimeout(() => { scrollRoot.scrollLeft = offset; }, 60);
         }
     }
+    _ganttHasRenderedOnce = true;
 }
 
 /* ================================================================
@@ -5081,6 +5121,9 @@ const _laneOrder = {};
 let _ganttLegendOpen = false;
 let _ganttFullscreenEventsBound = false;
 let _ganttFullscreenHandlersBound = false;
+let _ganttHoverDate = '';
+let _ganttHoverRowEl = null;
+let _ganttHasRenderedOnce = false;
 
 /* ── Undo / Redo stacks ─────────────────────────────────────────── */
 // Each entry: array of { id, newStart, newEnd, oldStart, oldEnd }
@@ -5104,7 +5147,6 @@ function syncGanttFullscreenButtons() {
     if (host) host.classList.toggle('is-fullscreen', active);
     [
         ['btnGanttFullscreen', 'btnGanttFullscreenLabel'],
-        ['btnGanttEditFullscreen', 'btnGanttEditFullscreenLabel'],
     ].forEach(([buttonId, labelId]) => {
         const btn = document.getElementById(buttonId);
         if (btn) {
@@ -5143,7 +5185,6 @@ function bindGanttFullscreenUi() {
     if (!_ganttFullscreenHandlersBound) {
         _ganttFullscreenHandlersBound = true;
         document.getElementById('btnGanttFullscreen')?.addEventListener('click', () => toggleGanttFullscreen());
-        document.getElementById('btnGanttEditFullscreen')?.addEventListener('click', () => toggleGanttFullscreen());
     }
     if (!_ganttFullscreenEventsBound) {
         _ganttFullscreenEventsBound = true;
@@ -5163,6 +5204,93 @@ function syncGanttLegendUi() {
         btn.setAttribute('aria-expanded', hasContent && _ganttLegendOpen ? 'true' : 'false');
     }
     if (label) label.textContent = hasContent && _ganttLegendOpen ? 'Hide Legend' : 'Show Legend';
+}
+
+function clearGanttHoverGuide() {
+    if (_ganttHoverRowEl) {
+        _ganttHoverRowEl.classList.remove('gantt-hover-row');
+        _ganttHoverRowEl = null;
+    }
+    if (_ganttHoverDate) {
+        document.querySelectorAll(`[data-gantt-date="${_ganttHoverDate}"]`).forEach(node => {
+            node.classList.remove('gantt-hover-col');
+        });
+        _ganttHoverDate = '';
+    }
+}
+
+function syncGanttHoverGuide(rowEl, dateStr) {
+    if (_ganttHoverRowEl !== rowEl) {
+        if (_ganttHoverRowEl) _ganttHoverRowEl.classList.remove('gantt-hover-row');
+        _ganttHoverRowEl = rowEl || null;
+        _ganttHoverRowEl?.classList.add('gantt-hover-row');
+    }
+    if (_ganttHoverDate !== dateStr) {
+        if (_ganttHoverDate) {
+            document.querySelectorAll(`[data-gantt-date="${_ganttHoverDate}"]`).forEach(node => {
+                node.classList.remove('gantt-hover-col');
+            });
+        }
+        _ganttHoverDate = dateStr || '';
+        if (_ganttHoverDate) {
+            document.querySelectorAll(`[data-gantt-date="${_ganttHoverDate}"]`).forEach(node => {
+                node.classList.add('gantt-hover-col');
+            });
+        }
+    }
+}
+
+function resolveGanttHoverDate(track, clientX) {
+    const days = String(track?.dataset?.ganttDays || '').split(',').filter(Boolean);
+    if (!days.length) return '';
+    const rect = track.getBoundingClientRect();
+    if (!rect.width) return '';
+    const offset = Math.max(0, Math.min(rect.width - 1, clientX - rect.left));
+    const dayWidth = rect.width / Math.max(days.length, 1);
+    const index = Math.max(0, Math.min(days.length - 1, Math.floor(offset / Math.max(dayWidth, 1))));
+    return days[index] || '';
+}
+
+function _ganttHoverMoveHandler(event) {
+    const track = event.target.closest('.gr-track[data-gantt-days]');
+    const row = track?.closest('.gr');
+    const dateStr = track ? resolveGanttHoverDate(track, event.clientX) : '';
+    if (!track || !row || !dateStr) {
+        clearGanttHoverGuide();
+        return;
+    }
+    syncGanttHoverGuide(row, dateStr);
+}
+
+function _ganttHoverLeaveHandler() {
+    clearGanttHoverGuide();
+}
+
+function wireGanttHoverGuide() {
+    const inner = document.getElementById('ganttInner');
+    if (!inner) return;
+    inner.removeEventListener('pointermove', _ganttHoverMoveHandler);
+    inner.removeEventListener('pointerleave', _ganttHoverLeaveHandler);
+    inner.addEventListener('pointermove', _ganttHoverMoveHandler);
+    inner.addEventListener('pointerleave', _ganttHoverLeaveHandler);
+}
+
+function saveGanttScrollPos() {
+    const root = document.getElementById('ganttScrollRoot');
+    if (!root) return null;
+    return {
+        left: root.scrollLeft || 0,
+        top: root.scrollTop || 0,
+    };
+}
+
+function restoreGanttScrollPos(pos) {
+    const root = document.getElementById('ganttScrollRoot');
+    if (!root || !pos) return;
+    requestAnimationFrame(() => {
+        root.scrollLeft = pos.left || 0;
+        root.scrollTop = pos.top || 0;
+    });
 }
 
 function _pushUndo(changes) {
@@ -5827,6 +5955,158 @@ renderGantt = function (plans, startDate, endDate) {
    GANTT BLOCK MANAGEMENT — delete & add
    ================================================================ */
 
+function showGanttConfirmDialog({
+    title = 'Confirm Action',
+    message = '',
+    confirmLabel = 'Confirm',
+    cancelLabel = 'Cancel',
+    danger = false,
+} = {}) {
+    return new Promise(resolve => {
+        const overlay = document.createElement('div');
+        overlay.className = 'modal-overlay';
+        overlay.setAttribute('role', 'dialog');
+        overlay.setAttribute('aria-modal', 'true');
+
+        overlay.innerHTML = `
+            <div class="modal" style="max-width:420px">
+                <div class="modal-header">
+                    <h4 class="modal-title">${esc(title)}</h4>
+                    <button class="modal-close" type="button" aria-label="Close">&times;</button>
+                </div>
+                <div class="modal-body">
+                    <div class="modal-info" style="white-space:pre-line">${esc(message)}</div>
+                </div>
+                <div class="modal-footer">
+                    <button class="btn btn-ghost" type="button" data-confirm-cancel>${esc(cancelLabel)}</button>
+                    <button class="btn ${danger ? 'btn-danger' : 'btn-primary'}" type="button" data-confirm-ok>${esc(confirmLabel)}</button>
+                </div>
+            </div>`;
+
+        const host = isGanttFullscreen() ? (getGanttCardHost() || document.body) : document.body;
+        host.appendChild(overlay);
+
+        const cancelBtn = overlay.querySelector('[data-confirm-cancel]');
+        const confirmBtn = overlay.querySelector('[data-confirm-ok]');
+        const closeBtn = overlay.querySelector('.modal-close');
+
+        function cleanup(result) {
+            document.removeEventListener('keydown', onKeyDown, true);
+            overlay.remove();
+            resolve(result);
+        }
+
+        function onKeyDown(event) {
+            if (event.key === 'Escape') {
+                event.preventDefault();
+                cleanup(false);
+            }
+        }
+
+        overlay.addEventListener('click', event => {
+            if (event.target === overlay) cleanup(false);
+        });
+        cancelBtn?.addEventListener('click', () => cleanup(false));
+        closeBtn?.addEventListener('click', () => cleanup(false));
+        confirmBtn?.addEventListener('click', () => cleanup(true));
+        document.addEventListener('keydown', onKeyDown, true);
+        confirmBtn?.focus();
+    });
+}
+
+function cloneGanttTaskSnapshot(task) {
+    return JSON.parse(JSON.stringify(task));
+}
+
+function planRestorePayload(task) {
+    if (isKD2Module()) {
+        return {
+            id: task.id,
+            battalion_id: task.battalion_id,
+            vehicle_type: task.vehicle_type || task.vehicle,
+            unit_serial: task.unit_serial ?? task.vehicle_no ?? null,
+            unit_label: task.unit_label ?? task.vehicle_no ?? null,
+            category_code: task.category_code ?? null,
+            station_code: task.station_code ?? null,
+            planned_start_date: task.planned_start_date || task.start_date,
+            planned_end_date: task.planned_end_date || task.end_date,
+            planning_source: task.planning_source || 'manual',
+            remark: task.remark || null,
+        };
+    }
+    return {
+        id: task.id,
+        vehicle: task.vehicle,
+        vehicle_no: task.vehicle_no,
+        process_station: task.process_station,
+        week: task.week || weekLabel(task.start_date),
+        start_date: task.start_date,
+        end_date: task.end_date,
+        remark: task.remark || null,
+    };
+}
+
+function progressRestorePayload(task) {
+    if (!task?.progress?.id) return null;
+    return {
+        id: task.progress.id,
+        plan_id: task.id,
+        completed: !!task.progress.completed,
+        completion_date: task.progress.completion_date || null,
+        actual_start_date: task.progress.actual_start_date || null,
+        notes: task.progress.notes || null,
+        updated_at: task.progress.updated_at || new Date().toISOString(),
+    };
+}
+
+async function removeGanttTaskSnapshots(tasks, auditLabel = 'delete') {
+    if (!tasks.length) return;
+    const progressIds = tasks.map(task => task.progress?.id).filter(Boolean);
+    if (progressIds.length) {
+        const { error: progressError } = await db.from(getModuleProgressTable()).delete().in('id', progressIds);
+        if (progressError) throw progressError;
+    }
+
+    const planIds = tasks.map(task => task.id);
+    const { error } = await db.from(getModulePlanTable()).delete().in('id', planIds);
+    if (error) throw error;
+
+    if (tasks.length === 1) {
+        const task = tasks[0];
+        await auditLog('DELETE', getModulePlanTable(), task.id, {
+            vehicle: task.vehicle,
+            vehicle_no: task.vehicle_no,
+            process_station: task.process_station,
+            start_date: task.start_date,
+            end_date: task.end_date,
+        }, null);
+        return;
+    }
+
+    await auditLog('DELETE', getModulePlanTable(), auditLabel, {
+        count: tasks.length,
+        ids: planIds,
+    }, null);
+}
+
+async function restoreGanttTaskSnapshots(tasks, auditLabel = 'restore') {
+    if (!tasks.length) return;
+    const planPayload = tasks.map(planRestorePayload);
+    const { error: planError } = await db.from(getModulePlanTable()).upsert(planPayload, { onConflict: 'id' });
+    if (planError) throw planError;
+
+    const progressPayload = tasks.map(progressRestorePayload).filter(Boolean);
+    if (progressPayload.length) {
+        const { error: progressError } = await db.from(getModuleProgressTable()).upsert(progressPayload, { onConflict: 'id' });
+        if (progressError) throw progressError;
+    }
+
+    await auditLog('INSERT', getModulePlanTable(), auditLabel, null, {
+        count: tasks.length,
+        ids: tasks.map(task => task.id),
+    });
+}
+
 /* ── Delete a block ──────────────────────────────────────────────── */
 async function deleteGanttBlock(planId) {
     if (!canEditPlan()) { showToast('Only planners and admins can delete blocks.', 'error'); return; }
@@ -5834,25 +6114,26 @@ async function deleteGanttBlock(planId) {
     const task = currentData.find(t => t.id === planId);
     if (!task) return;
 
-    if (!confirm(`Delete "${task.process_station}" for ${task.vehicle} ${task.vehicle_no}?\n${formatDate(task.start_date)} → ${formatDate(task.end_date)}\n\nThis cannot be undone.`)) return;
+    const confirmed = await showGanttConfirmDialog({
+        title: 'Delete Block',
+        message: `Delete "${task.process_station}" for ${task.vehicle} ${task.vehicle_no}?\n${formatDate(task.start_date)} -> ${formatDate(task.end_date)}\n\nYou can undo this from Gantt history.`,
+        confirmLabel: 'Delete',
+        danger: true,
+    });
+    if (!confirmed) return;
 
     try {
-        // Delete any associated progress record first
-        if (task.progress?.id) {
-            await db.from(getModuleProgressTable()).delete().eq('id', task.progress.id);
-        }
-
-        const { error } = await db.from(getModulePlanTable()).delete().eq('id', planId);
-        if (error) throw error;
-
-        await auditLog('DELETE', getModulePlanTable(), planId,
-            {
-                vehicle: task.vehicle, vehicle_no: task.vehicle_no, process_station: task.process_station,
-                start_date: task.start_date, end_date: task.end_date
-            }, null);
+        const snapshots = [cloneGanttTaskSnapshot(task)];
+        await removeGanttTaskSnapshots(snapshots, 'delete-single');
 
         // Remove from in-memory data
         currentData = currentData.filter(t => t.id !== planId);
+        _selectedGanttPlanIds.delete(planId);
+        _pushUndoAction({
+            label: 'block delete',
+            undo: () => restoreGanttTaskSnapshots(snapshots, 'undo-delete'),
+            redo: () => removeGanttTaskSnapshots(snapshots, 'redo-delete'),
+        });
 
         showToast(`"${task.process_station}" deleted.`, 'success');
 
@@ -5870,26 +6151,26 @@ async function deleteSelectedGanttBlocks() {
     if (!canEditPlan()) { showToast('Only planners and admins can delete blocks.', 'error'); return; }
     const selectedTasks = currentData.filter(task => _selectedGanttPlanIds.has(task.id));
     if (!selectedTasks.length) return;
-    if (!confirm(`Delete ${selectedTasks.length} selected block${selectedTasks.length > 1 ? 's' : ''}?\n\nThis cannot be undone.`)) return;
+    const confirmed = await showGanttConfirmDialog({
+        title: 'Delete Selected Blocks',
+        message: `Delete ${selectedTasks.length} selected block${selectedTasks.length > 1 ? 's' : ''}?\n\nYou can undo this from Gantt history.`,
+        confirmLabel: 'Delete',
+        danger: true,
+    });
+    if (!confirmed) return;
 
     try {
-        const progressIds = selectedTasks.map(task => task.progress?.id).filter(Boolean);
-        if (progressIds.length) {
-            const { error: progressError } = await db.from(getModuleProgressTable()).delete().in('id', progressIds);
-            if (progressError) throw progressError;
-        }
-
-        const planIds = selectedTasks.map(task => task.id);
-        const { error } = await db.from(getModulePlanTable()).delete().in('id', planIds);
-        if (error) throw error;
-
-        await auditLog('DELETE', getModulePlanTable(), 'batch-delete', {
-            count: selectedTasks.length,
-            ids: planIds,
-        }, null);
+        const snapshots = selectedTasks.map(cloneGanttTaskSnapshot);
+        const planIds = snapshots.map(task => task.id);
+        await removeGanttTaskSnapshots(snapshots, 'batch-delete');
 
         currentData = currentData.filter(task => !planIds.includes(task.id));
         planIds.forEach(id => _selectedGanttPlanIds.delete(id));
+        _pushUndoAction({
+            label: `${snapshots.length} block delete${snapshots.length > 1 ? 's' : ''}`,
+            undo: () => restoreGanttTaskSnapshots(snapshots, 'undo-batch-delete'),
+            redo: () => removeGanttTaskSnapshots(snapshots, 'redo-batch-delete'),
+        });
         _syncSelectedBlockUi();
         showToast(`${selectedTasks.length} selected block${selectedTasks.length > 1 ? 's' : ''} deleted.`, 'success');
 
@@ -5915,6 +6196,23 @@ function wireBarDeleteButtons() {
 }
 
 function _ganttBarClickHandler(e) {
+    const placementTrack = e.target.closest('.gr-track[data-kd2-track="true"]');
+    const clickedBar = e.target.closest('.gc-bar');
+    if (placementTrack && !clickedBar && isKD2Module() && getModuleRuntime()?.isPlacementActive?.()) {
+        e.stopPropagation();
+        const days = String(placementTrack.dataset.ganttDays || '').split(',').filter(Boolean);
+        if (days.length) {
+            const rect = placementTrack.getBoundingClientRect();
+            const offset = Math.max(0, Math.min(rect.width - 1, e.clientX - rect.left));
+            const dayWidth = rect.width / Math.max(days.length, 1);
+            const dayIndex = Math.max(0, Math.min(days.length - 1, Math.floor(offset / Math.max(dayWidth, 1))));
+            const plannedStart = days[dayIndex] || '';
+            if (plannedStart) {
+                getModuleRuntime()?.placePlanBlockFromGanttTrack?.(placementTrack, plannedStart);
+            }
+        }
+        return;
+    }
     const laneSelectBtn = e.target.closest('[data-gantt-lane-select]');
     if (laneSelectBtn) {
         e.stopPropagation();

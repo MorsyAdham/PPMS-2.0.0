@@ -72,9 +72,18 @@ window.PPMSModuleRuntime = (() => {
         timelinePlacementMenuOpen: false,
         timelinePlacementVehicle: 'K9',
         timelinePlacementStationCode: '',
+        timelinePlacementQuery: '',
         templateRemovedStations: new Set(),
         templateNewRowCounter: 0,
     };
+    const placementPointer = { x: 0, y: 0, ready: false };
+    let placementGhostEl = null;
+    let planCreateOverlayHome = null;
+    const PLACEMENT_GHOST_PALETTE = [
+        '#3b82f6', '#8b5cf6', '#ec4899', '#f59e0b', '#10b981',
+        '#06b6d4', '#f97316', '#84cc16', '#6366f1', '#e11d48',
+        '#0ea5e9', '#a855f7', '#d97706', '#4ade80', '#38bdf8',
+    ];
 
     function getActiveModule() {
         const stored = localStorage.getItem(MODULE_KEY);
@@ -1152,6 +1161,110 @@ window.PPMSModuleRuntime = (() => {
         ) || null;
     }
 
+    function fallbackPlacementColor(name) {
+        const key = String(name || '');
+        let hash = 0;
+        for (let i = 0; i < key.length; i += 1) hash = ((hash << 5) - hash) + key.charCodeAt(i);
+        return PLACEMENT_GHOST_PALETTE[Math.abs(hash) % PLACEMENT_GHOST_PALETTE.length];
+    }
+
+    function placementGhostColor(station) {
+        const name = station?.station_name || station?.station_code || 'KD2';
+        const colorFn = window.__ppmsGanttStationColor;
+        if (typeof colorFn === 'function') {
+            try { return colorFn(name); } catch { /* noop */ }
+        }
+        return fallbackPlacementColor(name);
+    }
+
+    function rememberPlacementPointer(clientX, clientY) {
+        if (!Number.isFinite(clientX) || !Number.isFinite(clientY)) return;
+        placementPointer.x = clientX;
+        placementPointer.y = clientY;
+        placementPointer.ready = true;
+    }
+
+    function placementGhostHost() {
+        return document.fullscreenElement || document.body;
+    }
+
+    function ensurePlacementGhost() {
+        const host = placementGhostHost();
+        if (!host) return null;
+        const hostIsBody = host === document.body;
+        if (!placementGhostEl) {
+            placementGhostEl = document.createElement('div');
+            placementGhostEl.id = 'kd2PlacementGhost';
+            placementGhostEl.className = 'kd2-placement-ghost gc-bar';
+            placementGhostEl.setAttribute('aria-hidden', 'true');
+            placementGhostEl.innerHTML = `
+                <span class="gc-bar-text" data-kd2-placement-title></span>`;
+            Object.assign(placementGhostEl.style, {
+                position: hostIsBody ? 'fixed' : 'absolute',
+                left: '0px',
+                top: '0px',
+                zIndex: '2147483647',
+                minWidth: '140px',
+                maxWidth: '240px',
+                height: '34px',
+                padding: '0 12px',
+                border: '1px solid rgba(255,255,255,.12)',
+                borderRadius: '5px',
+                display: 'flex',
+                alignItems: 'center',
+                overflow: 'hidden',
+                pointerEvents: 'none',
+                boxShadow: '0 16px 34px rgba(15,23,42,.34)',
+                transform: 'translate(18px, 18px) rotate(-2deg)',
+                opacity: '0.96',
+            });
+        }
+        placementGhostEl.style.position = hostIsBody ? 'fixed' : 'absolute';
+        if (!hostIsBody && window.getComputedStyle(host).position === 'static') {
+            host.style.position = 'relative';
+        }
+        if (placementGhostEl.parentElement !== host) host.appendChild(placementGhostEl);
+        return placementGhostEl;
+    }
+
+    function removePlacementGhost() {
+        if (!placementGhostEl) return;
+        placementGhostEl.remove();
+        placementGhostEl = null;
+    }
+
+    function positionPlacementGhost() {
+        const ghost = ensurePlacementGhost();
+        if (!ghost) return;
+        const fallbackX = Math.round((window.innerWidth || document.documentElement.clientWidth || 0) / 2);
+        const fallbackY = Math.round((window.innerHeight || document.documentElement.clientHeight || 0) / 2);
+        const pointerX = placementPointer.ready ? placementPointer.x : fallbackX;
+        const pointerY = placementPointer.ready ? placementPointer.y : fallbackY;
+        const host = placementGhostHost();
+        if (host && host !== document.body) {
+            const rect = host.getBoundingClientRect();
+            ghost.style.left = `${Math.max(pointerX - rect.left, 0)}px`;
+            ghost.style.top = `${Math.max(pointerY - rect.top, 0)}px`;
+            return;
+        }
+        ghost.style.left = `${pointerX}px`;
+        ghost.style.top = `${pointerY}px`;
+    }
+
+    function syncTimelinePlacementGhost() {
+        const station = currentPlacementStation();
+        if (!state.timelinePlacementActive || !station) {
+            removePlacementGhost();
+            return;
+        }
+        const ghost = ensurePlacementGhost();
+        if (!ghost) return;
+        ghost.style.background = placementGhostColor(station);
+        ghost.style.visibility = 'visible';
+        ghost.querySelector('[data-kd2-placement-title]')?.replaceChildren(document.createTextNode(`${station.vehicle_type || 'KD2'} · ${station.station_name || station.station_code || 'Selected station'}`));
+        positionPlacementGhost();
+    }
+
     function setTimelinePlacementVehicle(vehicle) {
         const safeVehicle = VEHICLES.includes(vehicle) ? vehicle : 'K9';
         state.timelinePlacementVehicle = safeVehicle;
@@ -1178,6 +1291,16 @@ window.PPMSModuleRuntime = (() => {
         syncTimelinePlacementUi();
     }
 
+    function clearTimelinePlacementStation() {
+        state.timelinePlacementStationCode = '';
+        syncTimelinePlacementUi();
+    }
+
+    function setTimelinePlacementQuery(value) {
+        state.timelinePlacementQuery = String(value || '').trim();
+        syncTimelinePlacementUi();
+    }
+
     function setTimelinePlacementMenuOpen(on) {
         state.timelinePlacementMenuOpen = !!on;
         const timelineMenu = document.getElementById('kd2TimelineVisualMenu');
@@ -1194,6 +1317,7 @@ window.PPMSModuleRuntime = (() => {
         const container = document.getElementById(containerId);
         if (!container) return;
         const vehicle = state.timelinePlacementVehicle;
+        const query = String(state.timelinePlacementQuery || '').trim().toLowerCase();
         const groups = state.categories
             .filter(row => row.vehicle_type === vehicle)
             .sort((a, b) => (a.category_sequence || 9999) - (b.category_sequence || 9999))
@@ -1201,12 +1325,23 @@ window.PPMSModuleRuntime = (() => {
                 category,
                 stations: state.stations
                     .filter(row => row.vehicle_type === vehicle && row.category_code === category.category_code)
+                    .filter(row => {
+                        if (!query) return true;
+                        const haystack = [
+                            category.category_name,
+                            row.station_name,
+                            row.work_center,
+                            row.station_code,
+                            row.vehicle_type,
+                        ].join(' ').toLowerCase();
+                        return haystack.includes(query);
+                    })
                     .sort((a, b) => (a.route_sequence || 9999) - (b.route_sequence || 9999) || (a.station_sequence_in_category || 9999) - (b.station_sequence_in_category || 9999)),
             }))
             .filter(group => group.stations.length);
 
         if (!groups.length) {
-            container.innerHTML = '<div class="empty-state"><p>No KD2 stations are available for this vehicle.</p></div>';
+            container.innerHTML = `<div class="empty-state"><p>${query ? 'No visual blocks match the current filter.' : 'No KD2 stations are available for this vehicle.'}</p></div>`;
             return;
         }
 
@@ -1215,25 +1350,63 @@ window.PPMSModuleRuntime = (() => {
                 <div class="kd2-timeline-palette-group-title">${escapeHtml(group.category.category_name)}</div>
                 <div class="kd2-timeline-palette-items">
                     ${group.stations.map(station => `
+                        ${(() => {
+                const swatchColor = escapeHtml(placementGhostColor(station));
+                return `
                         <button
                             type="button"
                             class="kd2-timeline-palette-item${state.timelinePlacementStationCode === station.station_code ? ' kd2-timeline-palette-item-active' : ''}"
                             data-kd2-placement-station="${escapeHtml(station.station_code)}"
-                            data-kd2-placement-vehicle="${escapeHtml(vehicle)}">
-                            <strong>${escapeHtml(station.station_name)}</strong>
-                            <span>${escapeHtml(station.work_center || station.station_code)} · Route ${escapeHtml(station.route_sequence)}</span>
-                            <span>${escapeHtml(leadTimeText(vehicle, station.category_code, station.station_code))}</span>
+                            data-kd2-placement-vehicle="${escapeHtml(vehicle)}"
+                            style="--kd2-placement-color:${swatchColor}">
+                            <span class="kd2-placement-palette-bar">
+                                <span class="gc-bar-text">${escapeHtml(`${station.vehicle_type || vehicle} · ${station.station_name}`)}</span>
+                            </span>
+                            <span class="kd2-placement-palette-meta">${escapeHtml(station.work_center || station.station_code)} · Route ${escapeHtml(station.route_sequence)}</span>
+                            <span class="kd2-placement-palette-meta">${escapeHtml(leadTimeText(vehicle, station.category_code, station.station_code))}</span>
                         </button>
+                    `;
+            })()}
                     `).join('')}
                 </div>
             </div>
         `).join('');
 
         container.querySelectorAll('[data-kd2-placement-station]').forEach(btn => {
-            btn.addEventListener('click', () => {
+            btn.addEventListener('pointerdown', event => {
+                if (event.button !== undefined && event.button !== 0) return;
+                const stationCode = btn.dataset.kd2PlacementStation || '';
+                const vehicleCode = btn.dataset.kd2PlacementVehicle || state.timelinePlacementVehicle;
+                const isSameSelection = state.timelinePlacementStationCode === stationCode && state.timelinePlacementVehicle === vehicleCode;
+                if (isSameSelection) {
+                    rememberPlacementPointer(event.clientX, event.clientY);
+                    clearTimelinePlacementStation();
+                    cancelTimelinePlacement({ keepMenuOpen: true, skipRender: !state.timelineEditMode });
+                    return;
+                }
+                setTimelinePlacementStation(btn.dataset.kd2PlacementStation, btn.dataset.kd2PlacementVehicle);
+                rememberPlacementPointer(event.clientX, event.clientY);
+                if (activateOnSelect) beginTimelinePlacement({ keepMenuState: !closeMenuOnSelect });
+                if (closeMenuOnSelect) setTimelinePlacementMenuOpen(false);
+                syncTimelinePlacementGhost();
+            });
+            btn.addEventListener('click', event => {
+                if (event.detail > 0) {
+                    event.preventDefault();
+                    return;
+                }
+                const stationCode = btn.dataset.kd2PlacementStation || '';
+                const vehicleCode = btn.dataset.kd2PlacementVehicle || state.timelinePlacementVehicle;
+                const isSameSelection = state.timelinePlacementStationCode === stationCode && state.timelinePlacementVehicle === vehicleCode;
+                if (isSameSelection) {
+                    clearTimelinePlacementStation();
+                    cancelTimelinePlacement({ keepMenuOpen: true, skipRender: !state.timelineEditMode });
+                    return;
+                }
                 setTimelinePlacementStation(btn.dataset.kd2PlacementStation, btn.dataset.kd2PlacementVehicle);
                 if (activateOnSelect) beginTimelinePlacement({ keepMenuState: !closeMenuOnSelect });
                 if (closeMenuOnSelect) setTimelinePlacementMenuOpen(false);
+                syncTimelinePlacementGhost();
             });
         });
     }
@@ -1246,8 +1419,12 @@ window.PPMSModuleRuntime = (() => {
         const ganttHint = document.getElementById('ganttVisualPlacementHint');
         const timelineVehicle = document.getElementById('kd2TimelinePlacementVehicle');
         const ganttVehicle = document.getElementById('ganttVisualPlacementVehicle');
+        const timelineFilter = document.getElementById('kd2TimelinePlacementFilter');
+        const ganttFilter = document.getElementById('ganttVisualPlacementFilter');
         if (timelineVehicle && timelineVehicle.value !== state.timelinePlacementVehicle) timelineVehicle.value = state.timelinePlacementVehicle;
         if (ganttVehicle && ganttVehicle.value !== state.timelinePlacementVehicle) ganttVehicle.value = state.timelinePlacementVehicle;
+        if (timelineFilter && timelineFilter.value !== state.timelinePlacementQuery) timelineFilter.value = state.timelinePlacementQuery;
+        if (ganttFilter && ganttFilter.value !== state.timelinePlacementQuery) ganttFilter.value = state.timelinePlacementQuery;
 
         const station = currentPlacementStation();
         const summaryText = station
@@ -1268,6 +1445,7 @@ window.PPMSModuleRuntime = (() => {
 
         renderPlacementPalette('kd2TimelineVisualPalette', { activateOnSelect: true, closeMenuOnSelect: true });
         renderPlacementPalette('ganttVisualPalette', { activateOnSelect: true, closeMenuOnSelect: false });
+        syncTimelinePlacementGhost();
     }
 
     function syncTimelineSelectionUi() {
@@ -1414,6 +1592,59 @@ window.PPMSModuleRuntime = (() => {
         const dayWidth = rect.width / Math.max(totalDays, 1);
         const dayOffset = Math.max(0, Math.min(totalDays - 1, Math.floor(offset / Math.max(dayWidth, 1))));
         return addDays(viewStart, dayOffset);
+    }
+
+    async function placePlanBlockOnLane(lane, plannedStart) {
+        if (!state.timelinePlacementActive) return false;
+        if (!canManageKD2()) {
+            toast('Only planners and admins can add KD2 plan rows.', 'error');
+            return false;
+        }
+
+        const station = currentPlacementStation();
+        if (!station) {
+            toast('Select a KD2 station before placing a block.', 'error');
+            return false;
+        }
+        if (!lane?.battalion_id || !lane?.unit_serial) {
+            toast('The selected lane is missing battalion or unit details.', 'error');
+            return false;
+        }
+        if (!plannedStart) return false;
+        if (lane.vehicle_type !== station.vehicle_type) {
+            toast(`Placement blocked: ${station.station_name} belongs to ${station.vehicle_type} and must be placed on a matching lane.`, 'error');
+            return false;
+        }
+
+        try {
+            const duration = defaultDurationForStation(station.vehicle_type, station.category_code, station.station_code);
+            if (!duration) throw new Error(`Missing default duration for ${station.station_name}.`);
+            await createPlanBlock({
+                battalionId: lane.battalion_id,
+                vehicle: lane.vehicle_type,
+                unitSerial: lane.unit_serial,
+                unitLabel: lane.unit_label,
+                stationCode: station.station_code,
+                startDate: plannedStart,
+                duration,
+                remark: null,
+            });
+            state.timelineLastDragAt = Date.now();
+            const hasReload = typeof helpers.reloadAll === 'function';
+            cancelTimelinePlacement({ skipRender: hasReload, keepMenuOpen: true });
+            toast(`KD2 block placed on ${lane.battalion_code} / ${lane.unit_label}.`, 'success');
+            if (hasReload) await helpers.reloadAll();
+            else renderSchedule();
+            return true;
+        } catch (error) {
+            toast(`KD2 placement failed: ${error.message}`, 'error');
+            return false;
+        }
+    }
+
+    async function placePlanBlockFromGanttTrack(track, plannedStart) {
+        const lane = timelineLaneFromTrack(track);
+        return placePlanBlockOnLane(lane, plannedStart);
     }
 
     function applyTimelinePreviewWindow(bar, viewStart, viewEnd, totalDays, window) {
@@ -1566,25 +1797,7 @@ window.PPMSModuleRuntime = (() => {
                 }
                 const plannedStart = dateFromTrackPointer(track, event.clientX);
                 if (!plannedStart) return;
-                try {
-                    const duration = defaultDurationForStation(station.vehicle_type, station.category_code, station.station_code);
-                    if (!duration) throw new Error(`Missing default duration for ${station.station_name}.`);
-                    await createPlanBlock({
-                        battalionId: lane.battalion_id,
-                        vehicle: lane.vehicle_type,
-                        unitSerial: lane.unit_serial,
-                        unitLabel: lane.unit_label,
-                        stationCode: station.station_code,
-                        startDate: plannedStart,
-                        duration,
-                        remark: null,
-                    });
-                    state.timelineLastDragAt = Date.now();
-                    toast(`KD2 block placed on ${lane.battalion_code} / ${lane.unit_label}.`, 'success');
-                    await helpers.reloadAll?.();
-                } catch (error) {
-                    toast(`KD2 placement failed: ${error.message}`, 'error');
-                }
+                await placePlanBlockOnLane(lane, plannedStart);
             });
         });
         document.querySelectorAll('.kd2-timeline-bar[data-kd2-plan-id]').forEach(bar => {
@@ -2401,9 +2614,32 @@ window.PPMSModuleRuntime = (() => {
         el.style.display = message ? 'flex' : 'none';
     }
 
+    function movePlanCreateOverlayToActiveHost() {
+        const overlay = document.getElementById('kd2PlanCreateOverlay');
+        if (!overlay) return;
+        if (!planCreateOverlayHome && overlay.parentNode) {
+            planCreateOverlayHome = {
+                parent: overlay.parentNode,
+                nextSibling: overlay.nextSibling,
+            };
+        }
+        const host = document.fullscreenElement || planCreateOverlayHome?.parent || document.body;
+        if (overlay.parentNode !== host) host.appendChild(overlay);
+    }
+
+    function restorePlanCreateOverlayHost() {
+        const overlay = document.getElementById('kd2PlanCreateOverlay');
+        if (!overlay || !planCreateOverlayHome?.parent) return;
+        const { parent, nextSibling } = planCreateOverlayHome;
+        if (overlay.parentNode === parent) return;
+        if (nextSibling && nextSibling.parentNode === parent) parent.insertBefore(overlay, nextSibling);
+        else parent.appendChild(overlay);
+    }
+
     function closePlanCreateModal() {
         const overlay = document.getElementById('kd2PlanCreateOverlay');
         if (overlay) overlay.style.display = 'none';
+        restorePlanCreateOverlayHost();
         setPlanCreateError('');
     }
 
@@ -2639,9 +2875,9 @@ window.PPMSModuleRuntime = (() => {
         toast(`Placement mode active for ${station.station_name}.`, 'info');
     }
 
-    function cancelTimelinePlacement({ skipRender = false } = {}) {
+    function cancelTimelinePlacement({ skipRender = false, keepMenuOpen = false } = {}) {
         state.timelinePlacementActive = false;
-        setTimelinePlacementMenuOpen(false);
+        setTimelinePlacementMenuOpen(!!keepMenuOpen);
         syncTimelinePlacementUi();
         if (!skipRender) renderSchedule();
     }
@@ -2966,6 +3202,7 @@ window.PPMSModuleRuntime = (() => {
         setPlanCreateMode('block');
         setPlanCreateError('');
         syncTimelinePlacementUi();
+        movePlanCreateOverlayToActiveHost();
         document.getElementById('kd2PlanCreateOverlay').style.display = 'flex';
     }
 
@@ -3824,6 +4061,14 @@ window.PPMSModuleRuntime = (() => {
             event.stopPropagation();
             toggleTimelineVisualMenu();
         });
+        document.addEventListener('pointermove', event => {
+            rememberPlacementPointer(event.clientX, event.clientY);
+            if (state.timelinePlacementActive && placementGhostEl) positionPlacementGhost();
+        }, { passive: true });
+        document.addEventListener('fullscreenchange', () => {
+            if (state.timelinePlacementActive) syncTimelinePlacementGhost();
+            else removePlacementGhost();
+        });
         document.getElementById('btnKd2TimelineRefresh')?.addEventListener('click', () => renderSchedule());
         document.getElementById('btnKd2TimelineEdit')?.addEventListener('click', () => setTimelineEditMode(true));
         document.getElementById('btnKd2TimelineEditDone')?.addEventListener('click', () => setTimelineEditMode(false));
@@ -3847,6 +4092,12 @@ window.PPMSModuleRuntime = (() => {
         });
         document.getElementById('ganttVisualPlacementVehicle')?.addEventListener('change', event => {
             setTimelinePlacementVehicle(event.target.value);
+        });
+        document.getElementById('kd2TimelinePlacementFilter')?.addEventListener('input', event => {
+            setTimelinePlacementQuery(event.target.value);
+        });
+        document.getElementById('ganttVisualPlacementFilter')?.addEventListener('input', event => {
+            setTimelinePlacementQuery(event.target.value);
         });
         document.getElementById('btnKd2TimelinePlacementCancel')?.addEventListener('click', () => {
             cancelTimelinePlacement();
@@ -3978,6 +4229,7 @@ window.PPMSModuleRuntime = (() => {
         getActiveModule,
         getActiveConfig,
         isKD2,
+        isPlacementActive: () => state.timelinePlacementActive,
         setActiveModule,
         getCategory,
         applyModuleShell,
@@ -3990,6 +4242,7 @@ window.PPMSModuleRuntime = (() => {
         openPlanEdit,
         openPlanCreateModal,
         openNoWorkModal,
+        placePlanBlockFromGanttTrack,
         toggleTimelineVisualMenu,
         shiftPlanRowToStart,
         getGanttSpecialZones,
