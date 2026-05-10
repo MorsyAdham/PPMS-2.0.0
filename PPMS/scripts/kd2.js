@@ -63,6 +63,8 @@ window.PPMSModuleRuntime = (() => {
         nonWorkDaySet: new Set(),
         routeVehicle: 'K9',
         timelineRows: [],
+        timelineViewMode: 'unit',
+        timelineProcessVehicle: 'K9',
         timelineEditMode: false,
         timelineMoveMode: 'block',
         timelineSelectLaneMode: false,
@@ -75,15 +77,19 @@ window.PPMSModuleRuntime = (() => {
         timelinePlacementQuery: '',
         templateRemovedStations: new Set(),
         templateLayouts: [],
+        templateLayoutTableAvailable: true,
         templateNewRowCounter: 0,
         templateEditorView: 'visual',
         templateEditorVehicle: '',
         templateEditorBlocks: [],
         templateInsertIndex: null,
+        processEditorVehicle: 'K9',
     };
     const placementPointer = { x: 0, y: 0, ready: false };
     let placementGhostEl = null;
     let planCreateOverlayHome = null;
+    let planEditOverlayHome = null;
+    let processOverlayHome = null;
     const PLACEMENT_GHOST_PALETTE = [
         '#3b82f6', '#8b5cf6', '#ec4899', '#f59e0b', '#10b981',
         '#06b6d4', '#f97316', '#84cc16', '#6366f1', '#e11d48',
@@ -145,6 +151,19 @@ window.PPMSModuleRuntime = (() => {
     function toast(message, type = 'info') {
         if (typeof window.showToast === 'function') window.showToast(message, type);
         else console[type === 'error' ? 'error' : 'log'](message);
+    }
+
+    function isMissingSchemaTableError(error, tableName) {
+        const message = String(error?.message || error || '').toLowerCase();
+        const publicName = `public.${String(tableName || '').toLowerCase()}`;
+        const bareName = String(tableName || '').toLowerCase();
+        return message.includes(`could not find the table '${publicName}' in the schema cache`) ||
+            message.includes(`relation "${publicName}" does not exist`) ||
+            message.includes(`relation "${bareName}" does not exist`);
+    }
+
+    function templateLayoutMigrationMessage() {
+        return "Spaces in KD2 templates require the 'kd2_template_layout_items' table. Run 'PPMS/sql/migrations/kd2_template_layout_items.sql' in Supabase, then reload the page.";
     }
 
     function populateCategoryFilter(categories) {
@@ -252,6 +271,24 @@ window.PPMSModuleRuntime = (() => {
         return trimmed || null;
     }
 
+    function isNoWorkRowActive(row) {
+        return row?.is_active !== false;
+    }
+
+    function noWorkStatusLabel(isActive) {
+        return isActive ? 'Active' : 'Inactive';
+    }
+
+    function getNonWorkDateStatusMap(rows = state.nonWorkDays) {
+        const statusByDate = new Map();
+        rows
+            .filter(row => row?.module_id === NON_WORK_MODULE_ID && row.off_date)
+            .forEach(row => {
+                statusByDate.set(row.off_date, isNoWorkRowActive(row) ? 'active' : 'inactive');
+            });
+        return statusByDate;
+    }
+
     function buildDateRange(startDateStr, endDateStr) {
         if (!startDateStr || !endDateStr || endDateStr < startDateStr) return [];
         const dates = [];
@@ -279,12 +316,14 @@ window.PPMSModuleRuntime = (() => {
         const groups = [];
         sortedRows.forEach(row => {
             const label = normalizeNoWorkLabel(row.label);
+            const isActive = isNoWorkRowActive(row);
             const current = groups[groups.length - 1];
-            if (!current || current.label !== label || addDays(current.end, 1) !== row.off_date) {
+            if (!current || current.label !== label || current.is_active !== isActive || addDays(current.end, 1) !== row.off_date) {
                 groups.push({
                     start: row.off_date,
                     end: row.off_date,
                     label,
+                    is_active: isActive,
                     rows: [row],
                 });
                 return;
@@ -337,9 +376,13 @@ window.PPMSModuleRuntime = (() => {
     function syncNonWorkDays(rows = []) {
         state.nonWorkDays = rows
             .filter(row => row?.module_id === NON_WORK_MODULE_ID && row.off_date)
-            .map(row => ({ ...row, label: normalizeNoWorkLabel(row.label) }))
+            .map(row => ({
+                ...row,
+                label: normalizeNoWorkLabel(row.label),
+                is_active: isNoWorkRowActive(row),
+            }))
             .sort((a, b) => String(a.off_date).localeCompare(String(b.off_date)));
-        state.nonWorkDaySet = new Set(state.nonWorkDays.map(row => row.off_date));
+        state.nonWorkDaySet = new Set(state.nonWorkDays.filter(isNoWorkRowActive).map(row => row.off_date));
     }
 
     function withWorkingRules(rules = {}) {
@@ -409,6 +452,18 @@ window.PPMSModuleRuntime = (() => {
         return current;
     }
 
+    function shiftWorkingDateByOffset(dateStr, offsetDays, rules) {
+        let offset = parseInt(offsetDays, 10) || 0;
+        if (offset === 0) return localDateStr(normalizeWorkingDateForward(dateStr, rules));
+        if (offset > 0) return shiftWorkingDateForward(dateStr, offset, rules);
+        let current = localDateStr(normalizeWorkingDate(dateStr, rules));
+        while (offset < 0) {
+            current = previousWorkingDate(current, rules);
+            offset += 1;
+        }
+        return current;
+    }
+
     function buildBackwardWindow(endDateStr, durationDays, rules) {
         const end = normalizeWorkingDate(endDateStr, rules);
         const start = new Date(end);
@@ -442,6 +497,31 @@ window.PPMSModuleRuntime = (() => {
             return workingDuration;
         }
         return Math.max(dayDiff(startDateStr, endDateStr) + 1, 1);
+    }
+
+    function workingDayOffsetBetween(anchorDateStr, targetDateStr, rules) {
+        if (!anchorDateStr || !targetDateStr) return 0;
+        if (anchorDateStr === targetDateStr) return 0;
+        if (targetDateStr > anchorDateStr) {
+            let current = localDateStr(normalizeWorkingDateForward(anchorDateStr, rules));
+            let offset = 0;
+            let guard = 0;
+            while (current < targetDateStr && guard < 1000) {
+                current = nextWorkingDate(current, rules);
+                offset += 1;
+                guard += 1;
+            }
+            return current === targetDateStr ? offset : Math.max(dayDiff(anchorDateStr, targetDateStr), 0);
+        }
+        let current = localDateStr(normalizeWorkingDate(anchorDateStr, rules));
+        let offset = 0;
+        let guard = 0;
+        while (current > targetDateStr && guard < 1000) {
+            current = previousWorkingDate(current, rules);
+            offset -= 1;
+            guard += 1;
+        }
+        return current === targetDateStr ? offset : Math.min(dayDiff(anchorDateStr, targetDateStr), 0);
     }
 
     function shiftPlanWindowByCalendarDays(startDateStr, endDateStr, deltaDays, rules) {
@@ -659,6 +739,7 @@ window.PPMSModuleRuntime = (() => {
         ]);
         let templateLayouts = [];
         let nonWorkDays = [];
+        state.templateLayoutTableAvailable = true;
         try {
             templateLayouts = await queryAll(
                 dbRef.from('kd2_template_layout_items')
@@ -667,6 +748,9 @@ window.PPMSModuleRuntime = (() => {
                     .order('sort_order')
             );
         } catch (error) {
+            if (isMissingSchemaTableError(error, 'kd2_template_layout_items')) {
+                state.templateLayoutTableAvailable = false;
+            }
             console.warn('KD2 template layout load skipped:', error.message);
         }
         try {
@@ -775,6 +859,234 @@ window.PPMSModuleRuntime = (() => {
         const overlay = document.getElementById('kd2LeadTimeOverlay');
         if (overlay) overlay.style.display = 'none';
         setLeadTimeError('');
+    }
+
+    function setProcessError(message) {
+        const el = document.getElementById('kd2ProcessError');
+        if (!el) return;
+        el.textContent = message;
+        el.style.display = message ? 'flex' : 'none';
+    }
+
+    function closeProcessModal() {
+        const overlay = document.getElementById('kd2ProcessOverlay');
+        if (overlay) overlay.style.display = 'none';
+        restoreProcessOverlayHost();
+        setProcessError('');
+    }
+
+    function processEditorVehicle() {
+        return document.getElementById('kd2ProcessVehicle')?.value || state.processEditorVehicle || state.routeVehicle || 'K9';
+    }
+
+    function processCategoriesForVehicle(vehicle) {
+        return state.categories
+            .filter(row => row.vehicle_type === vehicle)
+            .sort((a, b) => a.category_sequence - b.category_sequence);
+    }
+
+    function processStationsForVehicle(vehicle) {
+        const categoryOrder = new Map(processCategoriesForVehicle(vehicle).map((row, index) => [row.category_code, index]));
+        return state.stations
+            .filter(row => row.vehicle_type === vehicle)
+            .sort((a, b) => {
+                const categoryDiff = (categoryOrder.get(a.category_code) ?? 999) - (categoryOrder.get(b.category_code) ?? 999);
+                if (categoryDiff !== 0) return categoryDiff;
+                const stationDiff = (parseInt(a.station_sequence_in_category, 10) || 0) - (parseInt(b.station_sequence_in_category, 10) || 0);
+                if (stationDiff !== 0) return stationDiff;
+                return String(a.station_name || '').localeCompare(String(b.station_name || ''));
+            });
+    }
+
+    function nextProcessCategorySequence(vehicle, categoryCode, excludeStationCode = '') {
+        return Math.max(0, ...state.stations
+            .filter(row =>
+                row.vehicle_type === vehicle &&
+                row.category_code === categoryCode &&
+                row.station_code !== excludeStationCode
+            )
+            .map(row => parseInt(row.station_sequence_in_category, 10) || 0)) + 1;
+    }
+
+    function nextProcessRouteSequence(vehicle, excludeStationCode = '') {
+        return Math.max(0, ...state.stations
+            .filter(row => row.vehicle_type === vehicle && row.station_code !== excludeStationCode)
+            .map(row => parseInt(row.route_sequence, 10) || 0)) + 1;
+    }
+
+    function setProcessFormStatus(message) {
+        const el = document.getElementById('kd2ProcessFormStatus');
+        if (!el) return;
+        el.textContent = message;
+    }
+
+    function syncProcessCategoryOptions(selected = '') {
+        const select = document.getElementById('kd2ProcessCategory');
+        if (!select) return;
+        const vehicle = processEditorVehicle();
+        const categories = processCategoriesForVehicle(vehicle);
+        if (!categories.length) {
+            select.innerHTML = '<option value="">No KD2 categories available</option>';
+            return;
+        }
+        const resolved = categories.some(row => row.category_code === selected) ? selected : categories[0].category_code;
+        select.innerHTML = categories.map(row => `
+            <option value="${escapeHtml(row.category_code)}" ${row.category_code === resolved ? 'selected' : ''}>
+                ${escapeHtml(row.category_name)}
+            </option>
+        `).join('');
+    }
+
+    function resetProcessForm({ vehicle = processEditorVehicle(), categoryCode = '' } = {}) {
+        state.processEditorVehicle = vehicle;
+        const vehicleSelect = document.getElementById('kd2ProcessVehicle');
+        if (vehicleSelect) vehicleSelect.value = vehicle;
+
+        const categories = processCategoriesForVehicle(vehicle);
+        const resolvedCategory = categories.some(row => row.category_code === categoryCode)
+            ? categoryCode
+            : (categories[0]?.category_code || '');
+
+        syncProcessCategoryOptions(resolvedCategory);
+        document.getElementById('kd2ProcessStationCodeOriginal').value = '';
+        document.getElementById('kd2ProcessName').value = '';
+        document.getElementById('kd2ProcessWorkCenter').value = '';
+        document.getElementById('kd2ProcessSequence').value = resolvedCategory ? nextProcessCategorySequence(vehicle, resolvedCategory) : '';
+        document.getElementById('kd2ProcessRouteSequence').value = nextProcessRouteSequence(vehicle);
+        document.getElementById('kd2ProcessLeadTime').value = '';
+        document.getElementById('kd2ProcessLeadSource').value = '';
+        document.getElementById('kd2ProcessStationNotes').value = '';
+        document.getElementById('kd2ProcessLeadNotes').value = '';
+        setProcessFormStatus('Creating a new process station.');
+        setProcessError('');
+    }
+
+    function loadProcessIntoForm(vehicle, stationCode) {
+        const station = state.stations.find(row => row.vehicle_type === vehicle && row.station_code === stationCode);
+        if (!station) {
+            setProcessError('The selected process station is no longer available.');
+            return;
+        }
+        const lead = leadTimeRecord(vehicle, 'station', station.category_code, station.station_code);
+        state.processEditorVehicle = vehicle;
+        document.getElementById('kd2ProcessVehicle').value = vehicle;
+        syncProcessCategoryOptions(station.category_code);
+        document.getElementById('kd2ProcessStationCodeOriginal').value = station.station_code;
+        document.getElementById('kd2ProcessCategory').value = station.category_code;
+        document.getElementById('kd2ProcessName').value = station.station_name || '';
+        document.getElementById('kd2ProcessWorkCenter').value = station.work_center || '';
+        document.getElementById('kd2ProcessSequence').value = station.station_sequence_in_category || '';
+        document.getElementById('kd2ProcessRouteSequence').value = station.route_sequence || '';
+        document.getElementById('kd2ProcessLeadTime').value = lead?.lead_time_days ?? '';
+        document.getElementById('kd2ProcessLeadSource').value = lead?.lead_time_source || '';
+        document.getElementById('kd2ProcessStationNotes').value = station.notes || '';
+        document.getElementById('kd2ProcessLeadNotes').value = lead?.notes || '';
+        setProcessFormStatus(`Editing ${station.station_name} (${station.station_code}).`);
+        setProcessError('');
+    }
+
+    function renderProcessEditor() {
+        const container = document.getElementById('kd2ProcessBody');
+        const summary = document.getElementById('kd2ProcessSummary');
+        const vehicleSelect = document.getElementById('kd2ProcessVehicle');
+        if (!container || !summary || !vehicleSelect) return;
+
+        const vehicle = processEditorVehicle();
+        state.processEditorVehicle = vehicle;
+        vehicleSelect.value = vehicle;
+        const categories = processCategoriesForVehicle(vehicle);
+        const stations = processStationsForVehicle(vehicle);
+
+        if (!categories.length) {
+            syncProcessCategoryOptions('');
+            summary.textContent = `${vehicle} route master is not loaded yet.`;
+            container.innerHTML = '<div class="empty-state"><p>No KD2 process categories were found for this vehicle.</p></div>';
+            setProcessFormStatus('Create KD2 categories before adding process stations.');
+            return;
+        }
+
+        const currentCategory = document.getElementById('kd2ProcessCategory')?.value || '';
+        syncProcessCategoryOptions(currentCategory);
+
+        summary.textContent = `${vehicle}: ${stations.length} active process station${stations.length === 1 ? '' : 's'} across ${categories.length} categories. Edit one row or add a new station below.`;
+        container.innerHTML = categories.map(category => {
+            const categoryStations = stations.filter(station => station.category_code === category.category_code);
+            return `
+                <section class="kd2-process-category">
+                    <div class="kd2-process-category-head">
+                        <div>
+                            <strong>${escapeHtml(category.category_name)}</strong>
+                            <span class="kd2-leadtime-code">${escapeHtml(category.category_code)} · Category ${category.category_sequence}</span>
+                        </div>
+                        <span class="kd2-route-badge">${categoryStations.length} station${categoryStations.length === 1 ? '' : 's'}</span>
+                    </div>
+                    ${categoryStations.length ? `
+                        <div class="kd2-process-table-wrap">
+                            <table class="table kd2-process-table">
+                                <thead>
+                                    <tr>
+                                        <th>Station</th>
+                                        <th>Work Center</th>
+                                        <th>Order</th>
+                                        <th>Route</th>
+                                        <th>Lead Time</th>
+                                        <th>Notes</th>
+                                        <th>Actions</th>
+                                    </tr>
+                                </thead>
+                                <tbody>
+                                    ${categoryStations.map(station => {
+                                        const lead = leadTimeRecord(vehicle, 'station', station.category_code, station.station_code);
+                                        return `
+                                            <tr>
+                                                <td>
+                                                    <strong>${escapeHtml(station.station_name)}</strong>
+                                                    <span class="kd2-process-code">${escapeHtml(station.station_code)}</span>
+                                                </td>
+                                                <td>${escapeHtml(station.work_center || '—')}</td>
+                                                <td>${station.station_sequence_in_category}</td>
+                                                <td>${station.route_sequence}</td>
+                                                <td>${escapeHtml(leadTimeText(vehicle, station.category_code, station.station_code))}</td>
+                                                <td>${escapeHtml(station.notes || lead?.notes || '—')}</td>
+                                                <td>
+                                                    <div class="kd2-process-actions">
+                                                        <button class="kd2-action-link" type="button" data-kd2-process-edit="${escapeHtml(station.station_code)}">Edit</button>
+                                                        <button class="kd2-action-link btn-kd2-danger" type="button" data-kd2-process-delete="${escapeHtml(station.station_code)}">Retire</button>
+                                                    </div>
+                                                </td>
+                                            </tr>
+                                        `;
+                                    }).join('')}
+                                </tbody>
+                            </table>
+                        </div>
+                    ` : `
+                        <div class="empty-state" style="padding:18px 16px"><p>No active process stations in this category yet.</p></div>
+                    `}
+                </section>
+            `;
+        }).join('');
+    }
+
+    async function openProcessModal(preferredVehicle = state.routeVehicle || 'K9') {
+        if (!canManageKD2()) {
+            toast('Only planners and admins can edit KD2 processes.', 'error');
+            return;
+        }
+        try {
+            if (!state.categories.length || !state.stations.length) await loadWorkspaceData();
+        } catch (error) {
+            toast(`KD2 route setup load failed: ${error.message}`, 'error');
+            return;
+        }
+
+        const vehicle = VEHICLES.includes(preferredVehicle) ? preferredVehicle : (state.routeVehicle || 'K9');
+        state.processEditorVehicle = vehicle;
+        resetProcessForm({ vehicle });
+        renderProcessEditor();
+        setProcessError('');
+        moveProcessOverlayToActiveHost();
+        document.getElementById('kd2ProcessOverlay').style.display = 'flex';
     }
 
     function renderLeadTimeEditor() {
@@ -901,6 +1213,198 @@ window.PPMSModuleRuntime = (() => {
     function parseRouteSequenceValue(rawValue) {
         const value = parseInt(String(rawValue ?? '').trim(), 10);
         return Number.isFinite(value) && value > 0 ? value : NaN;
+    }
+
+    async function generateUniqueStationCode(vehicle, categoryCode, stationName) {
+        const base = `${vehicle.toLowerCase()}_${categoryCode}_${slugifyStationName(stationName)}`;
+        const existingRows = await queryAll(
+            dbRef.from('kd2_process_stations')
+                .select('station_code')
+                .eq('vehicle_type', vehicle)
+        );
+        const existingCodes = new Set(existingRows.map(row => row.station_code));
+        let stationCode = base;
+        let suffix = 2;
+        while (existingCodes.has(stationCode)) {
+            stationCode = `${base}_${suffix}`;
+            suffix += 1;
+        }
+        return stationCode;
+    }
+
+    async function saveProcessStation() {
+        if (!dbRef) return;
+        if (!canManageKD2()) {
+            toast('Only planners and admins can edit KD2 processes.', 'error');
+            return;
+        }
+
+        const vehicle = processEditorVehicle();
+        const originalStationCode = document.getElementById('kd2ProcessStationCodeOriginal')?.value || '';
+        const categoryCode = document.getElementById('kd2ProcessCategory')?.value || '';
+        const stationName = document.getElementById('kd2ProcessName')?.value?.trim() || '';
+        const workCenter = document.getElementById('kd2ProcessWorkCenter')?.value?.trim() || '';
+        const stationNotes = document.getElementById('kd2ProcessStationNotes')?.value?.trim() || '';
+        const leadSource = document.getElementById('kd2ProcessLeadSource')?.value?.trim() || '';
+        const leadNotes = document.getElementById('kd2ProcessLeadNotes')?.value?.trim() || '';
+        const stationSequence = parseRouteSequenceValue(document.getElementById('kd2ProcessSequence')?.value || '');
+        const routeSequence = parseRouteSequenceValue(document.getElementById('kd2ProcessRouteSequence')?.value || '');
+        const leadTime = parseLeadTimeValue(document.getElementById('kd2ProcessLeadTime')?.value || '');
+
+        if (!categoryCode) {
+            setProcessError('Select a KD2 category before saving the process.');
+            return;
+        }
+        if (!stationName) {
+            setProcessError('Station name is required.');
+            return;
+        }
+        if (Number.isNaN(stationSequence)) {
+            setProcessError('Station order must be a whole number greater than 0.');
+            return;
+        }
+        if (Number.isNaN(routeSequence)) {
+            setProcessError('Route must be a whole number greater than 0.');
+            return;
+        }
+        if (Number.isNaN(leadTime)) {
+            setProcessError('Lead time must be blank or greater than 0.');
+            return;
+        }
+        if (state.stations.some(row =>
+            row.vehicle_type === vehicle &&
+            row.category_code === categoryCode &&
+            String(row.station_code) !== String(originalStationCode) &&
+            (parseInt(row.station_sequence_in_category, 10) || 0) === stationSequence
+        )) {
+            setProcessError(`Station order ${stationSequence} is already used in this category.`);
+            return;
+        }
+
+        const beforeStation = originalStationCode
+            ? state.stations.find(row => row.vehicle_type === vehicle && row.station_code === originalStationCode) || null
+            : null;
+        const beforeRoute = originalStationCode
+            ? state.routes.find(row => row.vehicle_type === vehicle && row.station_code === originalStationCode) || null
+            : null;
+        const beforeLead = beforeStation
+            ? leadTimeRecord(vehicle, 'station', beforeStation.category_code, originalStationCode)
+            : null;
+        const stationCode = originalStationCode || await generateUniqueStationCode(vehicle, categoryCode, stationName);
+        const stationPayload = {
+            vehicle_type: vehicle,
+            category_code: categoryCode,
+            station_code: stationCode,
+            station_name: stationName,
+            work_center: workCenter || null,
+            station_sequence_in_category: stationSequence,
+            route_sequence: routeSequence,
+            is_active: true,
+            notes: stationNotes || null,
+        };
+        const routePayload = {
+            vehicle_type: vehicle,
+            category_code: categoryCode,
+            station_code: stationCode,
+            route_sequence: routeSequence,
+            is_active: true,
+        };
+        const leadPayload = {
+            vehicle_type: vehicle,
+            category_code: categoryCode,
+            station_code: stationCode,
+            planning_level: 'station',
+            lead_time_days: leadTime,
+            lead_time_source: leadSource || null,
+            notes: leadNotes || null,
+        };
+
+        try {
+            const stationQuery = originalStationCode
+                ? dbRef.from('kd2_process_stations')
+                    .update(stationPayload)
+                    .eq('vehicle_type', vehicle)
+                    .eq('station_code', originalStationCode)
+                : dbRef.from('kd2_process_stations')
+                    .upsert(stationPayload, { onConflict: 'vehicle_type,station_code' });
+            const { error: stationError } = await stationQuery;
+            if (stationError) throw stationError;
+
+            const { error: routeError } = await dbRef
+                .from('kd2_process_routes')
+                .upsert(routePayload, { onConflict: 'vehicle_type,station_code' });
+            if (routeError) throw routeError;
+
+            if (beforeLead?.id) {
+                const { error: leadError } = await dbRef
+                    .from('kd2_process_lead_times')
+                    .upsert({ id: beforeLead.id, ...leadPayload }, { onConflict: 'id' });
+                if (leadError) throw leadError;
+            } else {
+                const { error: leadError } = await dbRef
+                    .from('kd2_process_lead_times')
+                    .insert(leadPayload);
+                if (leadError) throw leadError;
+            }
+
+            await writeAudit('UPSERT', 'kd2_process_stations', `${vehicle}:${stationCode}`, beforeStation, stationPayload);
+            await writeAudit('UPSERT', 'kd2_process_routes', `${vehicle}:${stationCode}`, beforeRoute, routePayload);
+            await writeAudit('UPSERT', 'kd2_process_lead_times', beforeLead?.id || `${vehicle}:${stationCode}:station`, beforeLead, leadPayload);
+
+            toast(`KD2 process "${stationName}" ${originalStationCode ? 'updated' : 'created'}.`, 'success');
+            await refreshWorkspace();
+            await helpers.reloadAll?.();
+            resetProcessForm({ vehicle, categoryCode });
+            renderProcessEditor();
+        } catch (error) {
+            setProcessError(error.message);
+        }
+    }
+
+    async function deleteProcessStation(vehicle, stationCode) {
+        if (!dbRef) return;
+        if (!canManageKD2()) {
+            toast('Only planners and admins can edit KD2 processes.', 'error');
+            return;
+        }
+        const station = state.stations.find(row => row.vehicle_type === vehicle && row.station_code === stationCode);
+        if (!station) {
+            setProcessError('The selected process station is no longer available.');
+            return;
+        }
+        if (!window.confirm(`Retire "${station.station_name}" for ${vehicle}?\nExisting KD2 plan history will be kept.`)) {
+            return;
+        }
+
+        const beforeRoute = state.routes.find(row => row.vehicle_type === vehicle && row.station_code === stationCode) || null;
+        try {
+            const { error: stationError } = await dbRef
+                .from('kd2_process_stations')
+                .update({ is_active: false })
+                .eq('vehicle_type', vehicle)
+                .eq('station_code', stationCode);
+            if (stationError) throw stationError;
+
+            const { error: routeError } = await dbRef
+                .from('kd2_process_routes')
+                .update({ is_active: false })
+                .eq('vehicle_type', vehicle)
+                .eq('station_code', stationCode);
+            if (routeError) throw routeError;
+
+            await writeAudit('UPDATE', 'kd2_process_stations', `${vehicle}:${stationCode}`, station, { ...station, is_active: false });
+            await writeAudit('UPDATE', 'kd2_process_routes', `${vehicle}:${stationCode}`, beforeRoute, beforeRoute ? { ...beforeRoute, is_active: false } : { vehicle_type: vehicle, station_code: stationCode, is_active: false });
+
+            toast(`"${station.station_name}" retired.`, 'success');
+            await refreshWorkspace();
+            await helpers.reloadAll?.();
+            if (document.getElementById('kd2ProcessStationCodeOriginal')?.value === stationCode) {
+                resetProcessForm({ vehicle, categoryCode: station.category_code });
+            }
+            renderProcessEditor();
+        } catch (error) {
+            setProcessError(error.message);
+        }
     }
 
     async function saveLeadTimes() {
@@ -1050,6 +1554,7 @@ window.PPMSModuleRuntime = (() => {
     function closePlanEdit() {
         const overlay = document.getElementById('kd2PlanEditOverlay');
         if (overlay) overlay.style.display = 'none';
+        restorePlanEditOverlayHost();
         setPlanEditError('');
     }
 
@@ -1059,7 +1564,39 @@ window.PPMSModuleRuntime = (() => {
         document.querySelectorAll('.gc-bar-menu-trigger').forEach(btn => btn.setAttribute('aria-expanded', 'false'));
     }
 
-    function timelineLaneKey(row) {
+    function currentTimelineViewMode() {
+        return state.timelineViewMode === 'process' ? 'process' : 'unit';
+    }
+
+    function isTimelineProcessView() {
+        return currentTimelineViewMode() === 'process';
+    }
+
+    function resolveTimelineProcessVehicle(rows = state.timelineRows) {
+        const filteredVehicle = getVehicleFilterValue();
+        if (VEHICLES.includes(filteredVehicle)) {
+            state.timelineProcessVehicle = filteredVehicle;
+            return filteredVehicle;
+        }
+        const availableVehicles = [...new Set((rows || [])
+            .map(row => row.vehicle_type || row.vehicle || '')
+            .filter(vehicle => VEHICLES.includes(vehicle)))]
+            .sort((a, b) => vehicleSortValue(a) - vehicleSortValue(b));
+        if (availableVehicles.includes(state.timelineProcessVehicle)) return state.timelineProcessVehicle;
+        if (availableVehicles.length) {
+            state.timelineProcessVehicle = availableVehicles[0];
+            return state.timelineProcessVehicle;
+        }
+        state.timelineProcessVehicle = VEHICLES.includes(state.timelineProcessVehicle) ? state.timelineProcessVehicle : 'K9';
+        return state.timelineProcessVehicle;
+    }
+
+    function timelineLaneKey(row, viewMode = currentTimelineViewMode(), processVehicle = resolveTimelineProcessVehicle()) {
+        if (viewMode === 'process') {
+            const vehicle = row.vehicle || row.vehicle_type || '';
+            if (!vehicle || vehicle !== processVehicle) return '';
+            return ['process', vehicle, row.station_code || '', row.route_sequence || '', row.station_sequence_in_category || ''].join('||');
+        }
         return [row.battalion_id ?? row.battalion_code ?? '', row.vehicle ?? row.vehicle_type ?? '', row.unit_serial ?? row.vehicle_no ?? ''].join('||');
     }
 
@@ -1080,11 +1617,30 @@ window.PPMSModuleRuntime = (() => {
         return preferredLabel || `${vehicle}-${String(unitSerial).padStart(2, '0')}`;
     }
 
-    function laneDescriptorFromRow(row) {
+    function laneDescriptorFromRow(row, viewMode = currentTimelineViewMode(), processVehicle = resolveTimelineProcessVehicle()) {
+        if (viewMode === 'process') {
+            const vehicle = row.vehicle || row.vehicle_type || '';
+            if (!vehicle || vehicle !== processVehicle) return null;
+            const station = state.stations.find(item =>
+                item.vehicle_type === vehicle &&
+                item.station_code === row.station_code &&
+                stationAllowedForVehicle(item)
+            ) || null;
+            return {
+                key: timelineLaneKey(row, viewMode, processVehicle),
+                vehicle_type: vehicle,
+                station_code: row.station_code || '',
+                station_name: row.process_station || row.station_name || station?.station_name || row.station_code || '',
+                work_center: row.work_center || station?.work_center || '',
+                route_sequence: parseInt(row.route_sequence, 10) || station?.route_sequence || 9999,
+                station_sequence_in_category: parseInt(row.station_sequence_in_category, 10) || station?.station_sequence_in_category || 9999,
+                category_code: row.category_code || station?.category_code || '',
+            };
+        }
         const vehicle = row.vehicle || row.vehicle_type || '';
         const unitSerial = parseInt(row.unit_serial, 10) || null;
         return {
-            key: timelineLaneKey(row),
+            key: timelineLaneKey(row, viewMode, processVehicle),
             battalion_id: row.battalion_id ?? null,
             battalion_code: row.battalion_code || '',
             vehicle_type: vehicle,
@@ -1105,7 +1661,7 @@ window.PPMSModuleRuntime = (() => {
         return tokens.has(unitFilter);
     }
 
-    function buildTimelineLaneDefinitions(rows = state.timelineRows) {
+    function buildUnitTimelineLaneDefinitions(rows = state.timelineRows) {
         const laneMap = new Map();
         const addLane = lane => {
             if (!lane?.key) return;
@@ -1113,7 +1669,7 @@ window.PPMSModuleRuntime = (() => {
             else laneMap.set(lane.key, { ...laneMap.get(lane.key), ...lane });
         };
 
-        rows.forEach(row => addLane(laneDescriptorFromRow(row)));
+        rows.forEach(row => addLane(laneDescriptorFromRow(row, 'unit')));
 
         const battalionFilter = getBattalionFilterValue();
         const vehicleFilter = getVehicleFilterValue();
@@ -1184,6 +1740,26 @@ window.PPMSModuleRuntime = (() => {
             (a.unit_serial || 0) - (b.unit_serial || 0) ||
             String(a.unit_label || '').localeCompare(String(b.unit_label || ''))
         );
+    }
+
+    function buildProcessTimelineLaneDefinitions(rows = state.timelineRows) {
+        const vehicle = resolveTimelineProcessVehicle(rows);
+        return routeItemsForVehicle(vehicle).map(item => ({
+            key: ['process', vehicle, item.route.station_code || '', item.route.route_sequence || '', item.station.station_sequence_in_category || ''].join('||'),
+            vehicle_type: vehicle,
+            station_code: item.route.station_code || '',
+            station_name: item.station.station_name || item.route.station_code || '',
+            work_center: item.station.work_center || item.station.station_code || '',
+            route_sequence: parseInt(item.route.route_sequence, 10) || 9999,
+            station_sequence_in_category: parseInt(item.station.station_sequence_in_category, 10) || 9999,
+            category_code: item.route.category_code || item.station.category_code || '',
+        }));
+    }
+
+    function buildTimelineLaneDefinitions(rows = state.timelineRows, viewMode = currentTimelineViewMode()) {
+        return viewMode === 'process'
+            ? buildProcessTimelineLaneDefinitions(rows)
+            : buildUnitTimelineLaneDefinitions(rows);
     }
 
     function firstPlacementStation(vehicle) {
@@ -1463,26 +2039,33 @@ window.PPMSModuleRuntime = (() => {
         const ganttVehicle = document.getElementById('ganttVisualPlacementVehicle');
         const timelineFilter = document.getElementById('kd2TimelinePlacementFilter');
         const ganttFilter = document.getElementById('ganttVisualPlacementFilter');
+        const processView = isTimelineProcessView();
         if (timelineVehicle && timelineVehicle.value !== state.timelinePlacementVehicle) timelineVehicle.value = state.timelinePlacementVehicle;
         if (ganttVehicle && ganttVehicle.value !== state.timelinePlacementVehicle) ganttVehicle.value = state.timelinePlacementVehicle;
         if (timelineFilter && timelineFilter.value !== state.timelinePlacementQuery) timelineFilter.value = state.timelinePlacementQuery;
         if (ganttFilter && ganttFilter.value !== state.timelinePlacementQuery) ganttFilter.value = state.timelinePlacementQuery;
 
         const station = currentPlacementStation();
-        const summaryText = station
-            ? `${station.station_name} is active. Click once on a ${station.vehicle_type} lane and date to place it.`
-            : 'Select a station block, then place it on a matching lane.';
-        const hintText = station
-            ? 'Friday and saved no-work days are normalized automatically when the new KD2 block is created.'
-            : 'The selected station stays active until you change it or cancel placement mode.';
+        const summaryText = processView
+            ? 'Visual placement is only available in unit view.'
+            : station
+                ? `${station.station_name} is active. Click once on a ${station.vehicle_type} lane and date to place it.`
+                : 'Select a station block, then place it on a matching lane.';
+        const hintText = processView
+            ? 'Switch back to unit view to place a new KD2 station block on a unit lane.'
+            : station
+                ? 'Friday and saved no-work days are normalized automatically when the new KD2 block is created.'
+                : 'The selected station stays active until you change it or cancel placement mode.';
         if (summary) summary.textContent = summaryText;
         if (hint) hint.textContent = hintText;
         if (ganttSummary) ganttSummary.textContent = summaryText;
         if (ganttHint) ganttHint.textContent = hintText;
-        if (bar) bar.style.display = state.timelinePlacementActive ? '' : 'none';
+        if (bar) bar.style.display = state.timelinePlacementActive && !processView ? '' : 'none';
         ['btnKd2VisualAdd', 'btnGanttVisualAdd'].forEach(id => {
             const btn = document.getElementById(id);
-            if (btn) btn.setAttribute('aria-pressed', state.timelinePlacementActive ? 'true' : 'false');
+            if (!btn) return;
+            btn.disabled = processView;
+            btn.setAttribute('aria-pressed', state.timelinePlacementActive && !processView ? 'true' : 'false');
         });
 
         renderPlacementPalette('kd2TimelineVisualPalette', { activateOnSelect: true, closeMenuOnSelect: true });
@@ -1505,15 +2088,72 @@ window.PPMSModuleRuntime = (() => {
         });
     }
 
+    function canUseLaneTimelineOperations() {
+        return !isTimelineProcessView();
+    }
+
+    function syncTimelineViewControls(rows = state.timelineRows) {
+        const processVehicle = resolveTimelineProcessVehicle(rows);
+        const unitBtn = document.getElementById('btnKd2TimelineViewUnit');
+        const processBtn = document.getElementById('btnKd2TimelineViewProcess');
+        const subtitle = document.getElementById('kd2TimelineSubtitle');
+        const meta = document.getElementById('kd2TimelineViewMeta');
+        const laneBtn = document.getElementById('btnKd2TimelineModeLane');
+        const fromBlockBtn = document.getElementById('btnKd2TimelineModeFromBlock');
+        const selectLaneBtn = document.getElementById('btnKd2TimelineSelectLane');
+        const visualAddBtn = document.getElementById('btnKd2VisualAdd');
+        const processView = isTimelineProcessView();
+
+        [unitBtn, processBtn].forEach(btn => {
+            if (!btn) return;
+            const active = btn.dataset.view === currentTimelineViewMode();
+            btn.classList.toggle('kd2-timeline-view-btn-active', active);
+            btn.setAttribute('aria-pressed', active ? 'true' : 'false');
+        });
+
+        if (subtitle) {
+            subtitle.textContent = processView
+                ? `Process view uses the ${processVehicle} route order and labels each block by battalion and unit.`
+                : 'Manual and generated KD2 plan rows grouped by battalion and unit. Click a bar to manage one plan block.';
+        }
+        if (meta) {
+            meta.textContent = processView
+                ? `Process view is locked to the ${processVehicle} route. Use the vehicle filter to switch routes.`
+                : 'Unit view shows battalion / vehicle / unit lanes.';
+        }
+
+        [laneBtn, fromBlockBtn, selectLaneBtn].forEach(btn => {
+            if (!btn) return;
+            btn.disabled = processView;
+        });
+        if (visualAddBtn) visualAddBtn.disabled = processView;
+    }
+
+    function setTimelineViewMode(viewMode, { skipRender = false } = {}) {
+        const nextMode = viewMode === 'process' ? 'process' : 'unit';
+        state.timelineViewMode = nextMode;
+        if (nextMode === 'process') {
+            state.timelineMoveMode = 'block';
+            state.timelineSelectLaneMode = false;
+            if (state.timelinePlacementActive) cancelTimelinePlacement({ skipRender: true });
+            setTimelinePlacementMenuOpen(false);
+        }
+        syncTimelineViewControls();
+        setTimelineMoveMode(state.timelineMoveMode);
+        setTimelineSelectLaneMode(state.timelineSelectLaneMode, { skipRender: true });
+        if (!skipRender) renderSchedule();
+    }
+
     function setTimelineMoveMode(mode) {
-        state.timelineMoveMode = ['lane', 'from-block'].includes(mode) ? mode : 'block';
+        const safeMode = ['lane', 'from-block'].includes(mode) ? mode : 'block';
+        state.timelineMoveMode = canUseLaneTimelineOperations() ? safeMode : 'block';
         document.querySelectorAll('.kd2-timeline-mode-btn[data-mode="block"], .kd2-timeline-mode-btn[data-mode="from-block"], .kd2-timeline-mode-btn[data-mode="lane"]').forEach(btn => {
             btn.classList.toggle('kd2-timeline-mode-active', btn.dataset.mode === state.timelineMoveMode);
         });
     }
 
     function setTimelineSelectLaneMode(on, { skipRender = false } = {}) {
-        state.timelineSelectLaneMode = !!on;
+        state.timelineSelectLaneMode = canUseLaneTimelineOperations() ? !!on : false;
         const btn = document.getElementById('btnKd2TimelineSelectLane');
         if (btn) {
             btn.classList.toggle('kd2-timeline-mode-active', state.timelineSelectLaneMode);
@@ -1541,11 +2181,22 @@ window.PPMSModuleRuntime = (() => {
         renderSchedule();
     }
 
-    function buildTimelineGroups(rows) {
+    function buildTimelineGroups(rows, viewMode = currentTimelineViewMode()) {
         const rowsByLane = new Map();
         rows
             .slice()
             .sort((a, b) => {
+                if (viewMode === 'process') {
+                    const startCmp = String(a.start_date || '').localeCompare(String(b.start_date || ''));
+                    if (startCmp !== 0) return startCmp;
+                    const endCmp = String(a.end_date || '').localeCompare(String(b.end_date || ''));
+                    if (endCmp !== 0) return endCmp;
+                    const battalionCmp = String(a.battalion_code || '').localeCompare(String(b.battalion_code || ''));
+                    if (battalionCmp !== 0) return battalionCmp;
+                    const unitCmp = String(a.vehicle_no || a.unit_label || '').localeCompare(String(b.vehicle_no || b.unit_label || ''), undefined, { numeric: true });
+                    if (unitCmp !== 0) return unitCmp;
+                    return comparePlanRowsByLaneOrder(a, b);
+                }
                 const battalionCmp = String(a.battalion_code || '').localeCompare(String(b.battalion_code || ''));
                 if (battalionCmp !== 0) return battalionCmp;
                 const vehicleCmp = vehicleSortValue(a.vehicle) - vehicleSortValue(b.vehicle);
@@ -1555,24 +2206,59 @@ window.PPMSModuleRuntime = (() => {
                 return comparePlanRowsByLaneOrder(a, b);
             })
             .forEach(row => {
-                const key = timelineLaneKey(row);
+                const key = timelineLaneKey(row, viewMode);
+                if (!key) return;
                 if (!rowsByLane.has(key)) rowsByLane.set(key, []);
                 rowsByLane.get(key).push(row);
             });
 
-        return buildTimelineLaneDefinitions(state.timelineRows).map(lane => {
+        return buildTimelineLaneDefinitions(state.timelineRows, viewMode).map(lane => {
             const laneRows = rowsByLane.get(lane.key) || [];
-            const meta = laneRows.length
-                ? `${laneRows.length} block${laneRows.length === 1 ? '' : 's'} · ${minDateStr(laneRows.map(row => row.start_date))} -> ${maxDateStr(laneRows.map(row => row.end_date))}`
-                : 'No visible blocks in the current timeline window';
             return {
                 key: lane.key,
-                label: `${lane.battalion_code || '—'} · ${lane.vehicle_type || '—'} · ${lane.unit_label || lane.vehicle_no || '—'}`,
-                meta,
+                label: viewMode === 'process'
+                    ? lane.station_name || lane.station_code || 'Process'
+                    : `${lane.battalion_code || '—'} · ${lane.vehicle_type || '—'} · ${lane.unit_label || lane.vehicle_no || '—'}`,
+                meta: viewMode === 'process'
+                    ? `${lane.work_center || lane.station_code || 'No work center'} · Route ${lane.route_sequence || '—'}`
+                    : laneRows.length
+                        ? `${laneRows.length} block${laneRows.length === 1 ? '' : 's'} · ${minDateStr(laneRows.map(row => row.start_date))} -> ${maxDateStr(laneRows.map(row => row.end_date))}`
+                        : 'No visible blocks in the current timeline window',
                 lane,
                 rows: laneRows,
             };
         });
+    }
+
+    function buildTimelinePackedBars(rows, viewStart, viewEnd, viewMode = currentTimelineViewMode()) {
+        const visibleRows = rows
+            .filter(row => row.start_date <= viewEnd && row.end_date >= viewStart)
+            .map(row => {
+                const clippedStart = row.start_date < viewStart ? viewStart : row.start_date;
+                const clippedEnd = row.end_date > viewEnd ? viewEnd : row.end_date;
+                const si = Math.max(dayDiff(viewStart, clippedStart), 0);
+                const ei = Math.max(dayDiff(viewStart, clippedEnd), si);
+                return { row, clippedStart, clippedEnd, si, ei };
+            })
+            .sort((a, b) => {
+                if (a.si !== b.si) return a.si - b.si;
+                if (a.ei !== b.ei) return a.ei - b.ei;
+                if (viewMode === 'process') {
+                    const battalionCmp = String(a.row.battalion_code || '').localeCompare(String(b.row.battalion_code || ''));
+                    if (battalionCmp !== 0) return battalionCmp;
+                    return String(a.row.vehicle_no || a.row.unit_label || '').localeCompare(String(b.row.vehicle_no || b.row.unit_label || ''), undefined, { numeric: true });
+                }
+                return comparePlanRowsByLaneOrder(a.row, b.row);
+            });
+
+        const laneEnds = [];
+        visibleRows.forEach(item => {
+            let lane = laneEnds.findIndex(endIndex => item.si > endIndex);
+            if (lane < 0) lane = laneEnds.length;
+            laneEnds[lane] = item.ei;
+            item.stackLane = lane;
+        });
+        return visibleRows;
     }
 
     async function persistTimelineChanges(changes, auditRecordId) {
@@ -1638,6 +2324,10 @@ window.PPMSModuleRuntime = (() => {
 
     async function placePlanBlockOnLane(lane, plannedStart) {
         if (!state.timelinePlacementActive) return false;
+        if (isTimelineProcessView()) {
+            toast('Switch to unit view before placing a KD2 block.', 'error');
+            return false;
+        }
         if (!canManageKD2()) {
             toast('Only planners and admins can add KD2 plan rows.', 'error');
             return false;
@@ -1775,11 +2465,12 @@ window.PPMSModuleRuntime = (() => {
     async function moveTimelineBlock(anchorRow, deltaDays, destinationLane = null) {
         if (!dbRef) return { laneChanged: false, movedCount: 0 };
         const rowsToMove = await loadTimelineMoveRows(anchorRow);
-        const destination = destinationLane || laneDescriptorFromRow(anchorRow);
+        const destination = destinationLane || laneDescriptorFromRow(anchorRow, 'unit');
         if (!destination?.battalion_id || !destination?.vehicle_type || !destination?.unit_serial) {
             throw new Error('Destination lane details are incomplete.');
         }
-        const laneChanged = destination.key !== timelineLaneKey(anchorRow);
+        const unitLaneKey = timelineLaneKey(anchorRow, 'unit');
+        const laneChanged = destination.key !== unitLaneKey;
         if (laneChanged) await ensureTimelineMoveAllowed(rowsToMove, destination);
 
         const rules = planningRulesFor(destination.battalion_id, destination.vehicle_type);
@@ -1805,9 +2496,9 @@ window.PPMSModuleRuntime = (() => {
         await persistTimelineChanges(
             changes,
             state.timelineMoveMode === 'lane'
-                ? `timeline-lane:${timelineLaneKey(anchorRow)}:${destination.key}`
+                ? `timeline-lane:${unitLaneKey}:${destination.key}`
                 : state.timelineMoveMode === 'from-block'
-                    ? `timeline-from-block:${timelineLaneKey(anchorRow)}:${anchorRow.id}:${destination.key}`
+                    ? `timeline-from-block:${unitLaneKey}:${anchorRow.id}:${destination.key}`
                     : `timeline-block:${anchorRow.id}:${destination.key}`
         );
         return { laneChanged, movedCount: changes.length };
@@ -1818,6 +2509,7 @@ window.PPMSModuleRuntime = (() => {
         document.querySelectorAll('.kd2-timeline-track[data-kd2-track]').forEach(track => {
             track.addEventListener('pointerup', async event => {
                 if (!state.timelinePlacementActive) return;
+                if (isTimelineProcessView()) return;
                 if (event.target.closest('.kd2-timeline-bar')) return;
                 if (!canManageKD2()) {
                     toast('Only planners and admins can add KD2 plan rows.', 'error');
@@ -1870,7 +2562,7 @@ window.PPMSModuleRuntime = (() => {
                 const previewIds = resizeEdge
                     ? new Set([anchorRow.id])
                     : state.timelineMoveMode === 'lane'
-                        ? new Set(state.timelineRows.filter(row => timelineLaneKey(row) === timelineLaneKey(anchorRow)).map(row => row.id))
+                        ? new Set(state.timelineRows.filter(row => timelineLaneKey(row, 'unit') === timelineLaneKey(anchorRow, 'unit')).map(row => row.id))
                         : state.timelineMoveMode === 'from-block'
                             ? new Set(getPlanMoveRowsFromAnchor(anchorRow, state.timelineRows).map(row => row.id))
                             : new Set([anchorRow.id]);
@@ -1901,6 +2593,10 @@ window.PPMSModuleRuntime = (() => {
                         item.style.transform = `translateX(${deltaDays * dayWidth}px)`;
                     });
                     clearTimelineDropTargets();
+                    if (!canUseLaneTimelineOperations()) {
+                        activeDropTrack = null;
+                        return;
+                    }
                     const dropTrack = document.elementFromPoint(moveEvent.clientX, moveEvent.clientY)?.closest('.kd2-timeline-track[data-kd2-track]');
                     if (dropTrack && dropTrack !== track) {
                         dropTrack.classList.add('kd2-timeline-track-drop-target');
@@ -1957,7 +2653,9 @@ window.PPMSModuleRuntime = (() => {
                     }
 
                     if (!deltaDays && !activeDropTrack) return;
-                    const destinationLane = activeDropTrack ? timelineLaneFromTrack(activeDropTrack) : laneDescriptorFromRow(anchorRow);
+                    const destinationLane = activeDropTrack && canUseLaneTimelineOperations()
+                        ? timelineLaneFromTrack(activeDropTrack)
+                        : laneDescriptorFromRow(anchorRow, 'unit');
                     state.timelineLastDragAt = Date.now();
                     try {
                         const result = await moveTimelineBlock(anchorRow, deltaDays, destinationLane);
@@ -1992,8 +2690,14 @@ window.PPMSModuleRuntime = (() => {
         if (!legend || !wrap || !startInput || !endInput) return;
 
         state.timelineRows = Array.isArray(rows) ? rows.slice() : [];
-        const timelineRows = state.timelineRows.filter(row => row.start_date && row.end_date);
-        const laneDefinitions = buildTimelineLaneDefinitions(state.timelineRows);
+        syncTimelineViewControls(state.timelineRows);
+        const viewMode = currentTimelineViewMode();
+        const processVehicle = resolveTimelineProcessVehicle(state.timelineRows);
+        const processView = viewMode === 'process';
+        const timelineRows = state.timelineRows
+            .filter(row => row.start_date && row.end_date)
+            .filter(row => !processView || (row.vehicle_type || row.vehicle) === processVehicle);
+        const laneDefinitions = buildTimelineLaneDefinitions(state.timelineRows, viewMode);
         const canRenderEmptyLanes = laneDefinitions.length > 0;
         if (!timelineRows.length && !canRenderEmptyLanes) {
             legend.innerHTML = '';
@@ -2023,7 +2727,7 @@ window.PPMSModuleRuntime = (() => {
         }
 
         const visibleRows = timelineRows.filter(row => row.end_date >= viewStart && row.start_date <= viewEnd);
-        const groups = buildTimelineGroups(visibleRows);
+        const groups = buildTimelineGroups(visibleRows, viewMode);
         if (!visibleRows.length && !groups.length) {
             legend.innerHTML = '';
             wrap.innerHTML = '<div class="empty-state"><p>No KD2 plan rows fall inside the selected timeline window.</p></div>';
@@ -2033,16 +2737,26 @@ window.PPMSModuleRuntime = (() => {
         }
 
         const visibleCategories = [...new Set(visibleRows.map(row => row.category).filter(Boolean))];
-        const visibleOffDays = [...state.nonWorkDaySet].filter(day => day >= viewStart && day <= viewEnd);
+        const noWorkStatusByDate = getNonWorkDateStatusMap();
+        const visibleNoWorkDays = [...noWorkStatusByDate.entries()]
+            .filter(([day]) => day >= viewStart && day <= viewEnd)
+            .sort((left, right) => left[0].localeCompare(right[0]));
+        const hasActiveNoWorkDays = visibleNoWorkDays.some(([, status]) => status === 'active');
+        const hasInactiveNoWorkDays = visibleNoWorkDays.some(([, status]) => status === 'inactive');
         legend.innerHTML = visibleCategories.map(category => `
             <span class="kd2-legend-item">
                 <span class="kd2-legend-swatch ${categoryClassName(category)}"></span>
                 ${escapeHtml(category)}
             </span>
-        `).join('') + (visibleOffDays.length ? `
+        `).join('') + (hasActiveNoWorkDays ? `
             <span class="kd2-legend-item">
                 <span class="kd2-legend-swatch kd2-legend-offday"></span>
                 No-work Day
+            </span>
+        ` : '') + (hasInactiveNoWorkDays ? `
+            <span class="kd2-legend-item">
+                <span class="kd2-legend-swatch kd2-legend-offday-inactive"></span>
+                Inactive no-work Day
             </span>
         ` : '');
 
@@ -2052,39 +2766,57 @@ window.PPMSModuleRuntime = (() => {
             const day = addDays(viewStart, i);
             const dayClasses = ['kd2-timeline-day'];
             if (parseDateLocal(day).getDay() === 5) dayClasses.push('kd2-timeline-day-friday');
-            if (state.nonWorkDaySet.has(day)) dayClasses.push('kd2-timeline-day-off');
+            const noWorkStatus = noWorkStatusByDate.get(day) || '';
+            if (noWorkStatus === 'active') dayClasses.push('kd2-timeline-day-off');
+            else if (noWorkStatus === 'inactive') dayClasses.push('kd2-timeline-day-off-inactive');
             days.push(`<div class="${dayClasses.join(' ')}"><strong>${escapeHtml(day.slice(8))}</strong>${escapeHtml(day.slice(5, 7))}</div>`);
         }
         wrap.innerHTML = `
             <div class="kd2-timeline-head" style="grid-template-columns: 240px repeat(${totalDays}, minmax(44px, 1fr));">
-                <div class="kd2-timeline-corner">Battalion / Unit</div>
+                <div class="kd2-timeline-corner">${escapeHtml(processView ? `Process / ${processVehicle} Route` : 'Battalion / Unit')}</div>
                 ${days.join('')}
             </div>
             ${groups.map(group => {
-                const laneRows = state.timelineRows.filter(row => timelineLaneKey(row) === group.key);
-                const zoneHtml = visibleOffDays.map(day => {
+                const laneRows = state.timelineRows.filter(row => timelineLaneKey(row, viewMode, processVehicle) === group.key);
+                const zoneHtml = visibleNoWorkDays.map(([day, status]) => {
                     const startOffset = Math.max(dayDiff(viewStart, day), 0);
-                    return `<div class="kd2-timeline-track-zone" style="left:${(startOffset / totalDays) * 100}%;width:${(1 / totalDays) * 100}%;" title="${escapeHtml(day)}"></div>`;
+                    const zoneClass = status === 'inactive'
+                        ? 'kd2-timeline-track-zone kd2-timeline-track-zone-inactive'
+                        : 'kd2-timeline-track-zone';
+                    const zoneTitle = status === 'inactive'
+                        ? `${day} · Inactive no-work day`
+                        : `${day} · No-work day`;
+                    return `<div class="${zoneClass}" style="left:${(startOffset / totalDays) * 100}%;width:${(1 / totalDays) * 100}%;" title="${escapeHtml(zoneTitle)}"></div>`;
                 }).join('');
-                const laneSelected = laneRows.length > 0 && laneRows.every(row => state.timelineSelectedIds.has(row.id));
-                const bars = group.rows.map(row => {
-                    const clippedStart = row.start_date < viewStart ? viewStart : row.start_date;
-                    const clippedEnd = row.end_date > viewEnd ? viewEnd : row.end_date;
+                const laneSelected = canUseLaneTimelineOperations() && laneRows.length > 0 && laneRows.every(row => state.timelineSelectedIds.has(row.id));
+                const packedBars = buildTimelinePackedBars(group.rows, viewStart, viewEnd, viewMode);
+                const stackCount = packedBars.length ? Math.max(...packedBars.map(item => item.stackLane)) + 1 : 1;
+                const rowHeight = Math.max(52, 18 + stackCount * 38);
+                const metaText = processView
+                    ? `${group.meta} · ${group.rows.length} visible block${group.rows.length === 1 ? '' : 's'}`
+                    : group.meta;
+                const bars = packedBars.map(({ row, clippedStart, clippedEnd, stackLane }) => {
                     const startOffset = Math.max(dayDiff(viewStart, clippedStart), 0);
                     const span = Math.max(dayDiff(clippedStart, clippedEnd) + 1, 1);
                     const left = `${(startOffset / totalDays) * 100}%`;
                     const width = `${(span / totalDays) * 100}%`;
+                    const barTitle = processView
+                        ? [row.battalion_code || '—', row.vehicle_no || row.unit_label || '—'].join(' · ')
+                        : [row.work_center, row.process_station || row.station_name || row.category || 'Block'].filter(Boolean).join(' · ');
+                    const tooltip = processView
+                        ? `${group.label} | ${row.work_center || row.station_code || 'No work center'} | ${row.battalion_code || '—'} / ${row.vehicle_no || row.unit_label || '—'} | ${row.start_date} -> ${row.end_date}`
+                        : `${group.label} | ${row.work_center || row.station_code || 'No work center'} | ${row.process_station} | ${row.start_date} -> ${row.end_date}`;
                     return `
                         <button
                             type="button"
                             class="kd2-timeline-bar ${categoryClassName(row.category)}${state.timelineSelectedIds.has(row.id) ? ' kd2-timeline-bar-selected' : ''}"
                             data-kd2-plan-id="${row.id}"
                             data-kd2-lane-key="${escapeHtml(group.key)}"
-                            style="left:${left};width:${width};"
-                            title="${escapeHtml(`${group.label} | ${row.work_center || row.station_code || 'No work center'} | ${row.process_station} | ${row.start_date} -> ${row.end_date}`)}">
+                            style="left:${left};width:${width};top:${9 + (stackLane * 38)}px;"
+                            title="${escapeHtml(tooltip)}">
                             ${state.timelineEditMode ? `<span class="kd2-timeline-select${state.timelineSelectedIds.has(row.id) ? ' kd2-timeline-select-active' : ''}" data-kd2-select-id="${row.id}" aria-pressed="${state.timelineSelectedIds.has(row.id) ? 'true' : 'false'}"></span>` : ''}
                             ${state.timelineEditMode ? '<span class="kd2-timeline-resize kd2-timeline-resize-left" data-kd2-resize="left"></span>' : ''}
-                            <span class="kd2-timeline-bar-title">${escapeHtml([row.work_center, row.process_station || row.station_name || row.category || 'Block'].filter(Boolean).join(' · '))}</span>
+                            <span class="kd2-timeline-bar-title">${escapeHtml(barTitle)}</span>
                             ${state.timelineEditMode ? '<span class="kd2-timeline-resize kd2-timeline-resize-right" data-kd2-resize="right"></span>' : ''}
                         </button>
                     `;
@@ -2092,27 +2824,30 @@ window.PPMSModuleRuntime = (() => {
                 const emptyLane = !bars ? '<div class="kd2-timeline-empty-lane">No blocks in view for this lane.</div>' : '';
 
                 return `
-                    <div class="kd2-timeline-row" style="grid-template-columns: 240px repeat(${totalDays}, minmax(44px, 1fr));">
+                    <div class="kd2-timeline-row${processView ? ' kd2-timeline-row-process' : ''}" style="grid-template-columns: 240px repeat(${totalDays}, minmax(44px, 1fr));min-height:${rowHeight}px;">
                         <div class="kd2-timeline-label">
                             <div class="kd2-timeline-label-copy">
                                 <strong>${escapeHtml(group.label)}</strong>
-                                <span>${escapeHtml(group.meta)}</span>
+                                <span>${escapeHtml(metaText)}</span>
                             </div>
-                            ${state.timelineEditMode && state.timelineSelectLaneMode ? `<button type="button" class="kd2-timeline-lane-action" data-kd2-lane-select="${escapeHtml(group.key)}">${laneSelected ? 'Clear lane' : 'Select lane'}</button>` : ''}
+                            ${state.timelineEditMode && state.timelineSelectLaneMode && canUseLaneTimelineOperations() ? `<button type="button" class="kd2-timeline-lane-action" data-kd2-lane-select="${escapeHtml(group.key)}">${laneSelected ? 'Clear lane' : 'Select lane'}</button>` : ''}
                         </div>
                         <div
-                            class="kd2-timeline-track${state.timelineEditMode ? ' kd2-timeline-edit-active' : ''}${state.timelinePlacementActive ? ' kd2-timeline-track-placement' : ''}"
-                            style="grid-column: 2 / span ${totalDays};"
+                            class="kd2-timeline-track${state.timelineEditMode ? ' kd2-timeline-edit-active' : ''}${state.timelinePlacementActive && !processView ? ' kd2-timeline-track-placement' : ''}"
+                            style="grid-column: 2 / span ${totalDays};min-height:${rowHeight}px;"
                             data-total-days="${totalDays}"
                             data-view-start="${escapeHtml(viewStart)}"
                             data-view-end="${escapeHtml(viewEnd)}"
                             data-kd2-track="true"
                             data-kd2-lane-key="${escapeHtml(group.key)}"
+                            data-kd2-view-mode="${escapeHtml(viewMode)}"
                             data-battalion-id="${escapeHtml(group.lane?.battalion_id ?? '')}"
                             data-battalion-code="${escapeHtml(group.lane?.battalion_code || '')}"
                             data-vehicle-type="${escapeHtml(group.lane?.vehicle_type || '')}"
                             data-unit-serial="${escapeHtml(group.lane?.unit_serial ?? '')}"
-                            data-unit-label="${escapeHtml(group.lane?.unit_label || '')}">
+                            data-unit-label="${escapeHtml(group.lane?.unit_label || '')}"
+                            data-station-code="${escapeHtml(group.lane?.station_code || '')}"
+                            data-station-name="${escapeHtml(group.lane?.station_name || '')}">
                             ${zoneHtml}
                             ${bars}
                             ${emptyLane}
@@ -2135,7 +2870,7 @@ window.PPMSModuleRuntime = (() => {
             btn.addEventListener('click', () => {
                 const group = groups.find(item => item.key === btn.dataset.kd2LaneSelect);
                 if (!group) return;
-                const laneRows = state.timelineRows.filter(row => timelineLaneKey(row) === group.key);
+                const laneRows = state.timelineRows.filter(row => timelineLaneKey(row, viewMode, processVehicle) === group.key);
                 const laneSelected = laneRows.length > 0 && laneRows.every(row => state.timelineSelectedIds.has(row.id));
                 laneRows.forEach(row => {
                     if (laneSelected) state.timelineSelectedIds.delete(row.id);
@@ -2170,6 +2905,7 @@ window.PPMSModuleRuntime = (() => {
         }
 
         closeOpenBarMenus();
+        movePlanEditOverlayToActiveHost();
         document.getElementById('kd2PlanEditId').value = String(row.id);
         document.getElementById('kd2PlanEditInfo').textContent = `${row.battalion_code || '—'} · ${row.vehicle || '—'} · ${row.vehicle_no || '—'} · ${row.process_station || row.station_name || 'Plan block'}`;
         document.getElementById('kd2PlanEditStart').value = row.start_date || '';
@@ -2191,12 +2927,14 @@ window.PPMSModuleRuntime = (() => {
         const startInput = document.getElementById('kd2NoWorkStart');
         const endInput = document.getElementById('kd2NoWorkEnd');
         const labelInput = document.getElementById('kd2NoWorkLabel');
+        const activeInput = document.getElementById('kd2NoWorkActive');
         const saveBtn = document.getElementById('btnKd2NoWorkAdd');
         const cancelBtn = document.getElementById('btnKd2NoWorkCancelEdit');
         if (idsInput) idsInput.value = '';
         if (startInput) startInput.value = '';
         if (endInput) endInput.value = '';
         if (labelInput) labelInput.value = '';
+        if (activeInput) activeInput.checked = true;
         if (saveBtn) saveBtn.textContent = 'Add Range';
         if (cancelBtn) cancelBtn.style.display = 'none';
     }
@@ -2208,12 +2946,14 @@ window.PPMSModuleRuntime = (() => {
         const startInput = document.getElementById('kd2NoWorkStart');
         const endInput = document.getElementById('kd2NoWorkEnd');
         const labelInput = document.getElementById('kd2NoWorkLabel');
+        const activeInput = document.getElementById('kd2NoWorkActive');
         const saveBtn = document.getElementById('btnKd2NoWorkAdd');
         const cancelBtn = document.getElementById('btnKd2NoWorkCancelEdit');
         if (idsInput) idsInput.value = group.rows.map(row => row.id).join(',');
         if (startInput) startInput.value = group.start || '';
         if (endInput) endInput.value = group.end || group.start || '';
         if (labelInput) labelInput.value = group.label || '';
+        if (activeInput) activeInput.checked = group.is_active !== false;
         if (saveBtn) saveBtn.textContent = 'Save Changes';
         if (cancelBtn) cancelBtn.style.display = '';
     }
@@ -2227,19 +2967,27 @@ window.PPMSModuleRuntime = (() => {
             return;
         }
         list.innerHTML = groups.map(group => `
-            <div class="kd2-no-work-item">
+            <div class="kd2-no-work-item${group.is_active === false ? ' is-inactive' : ''}">
                 <div class="kd2-no-work-copy">
                     <strong>${escapeHtml(formatNoWorkRange(group.start, group.end))}</strong>
+                    <span class="status-pill ${group.is_active === false ? 'inactive' : 'active'}">${escapeHtml(noWorkStatusLabel(group.is_active !== false))}</span>
                     <span>${escapeHtml(group.label || 'No label')}</span>
                 </div>
                 <div class="kd2-no-work-actions">
                     <button type="button" class="btn btn-ghost btn-sm" data-kd2-no-work-edit="${group.start}">Edit</button>
+                    <button type="button" class="btn btn-ghost btn-sm" data-kd2-no-work-toggle="${group.start}" data-kd2-no-work-next-active="${group.is_active === false ? 'true' : 'false'}">${group.is_active === false ? 'Activate' : 'Deactivate'}</button>
                     <button type="button" class="btn btn-ghost btn-kd2-danger btn-sm" data-kd2-no-work-delete="${group.start}">Delete</button>
                 </div>
             </div>
         `).join('');
         list.querySelectorAll('[data-kd2-no-work-edit]').forEach(btn => {
             btn.addEventListener('click', () => startNoWorkEdit(btn.dataset.kd2NoWorkEdit));
+        });
+        list.querySelectorAll('[data-kd2-no-work-toggle]').forEach(btn => {
+            btn.addEventListener('click', () => toggleNoWorkDayActive(
+                btn.dataset.kd2NoWorkToggle,
+                btn.dataset.kd2NoWorkNextActive === 'true'
+            ));
         });
         list.querySelectorAll('[data-kd2-no-work-delete]').forEach(btn => {
             btn.addEventListener('click', () => deleteNoWorkDay(btn.dataset.kd2NoWorkDelete));
@@ -2270,6 +3018,7 @@ window.PPMSModuleRuntime = (() => {
         const startDate = document.getElementById('kd2NoWorkStart')?.value;
         const endDate = document.getElementById('kd2NoWorkEnd')?.value || startDate;
         const label = normalizeNoWorkLabel(document.getElementById('kd2NoWorkLabel')?.value);
+        const isActive = document.getElementById('kd2NoWorkActive')?.checked !== false;
         if (!startDate) {
             setNoWorkError('Choose a start date to save.');
             return;
@@ -2299,12 +3048,13 @@ window.PPMSModuleRuntime = (() => {
             }
             const previousOffDates = new Set(state.nonWorkDaySet);
             const nextOffDates = new Set(previousOffDates);
-            existingRows.forEach(row => nextOffDates.delete(row.off_date));
-            requestedDates.forEach(date => nextOffDates.add(date));
+            existingRows.filter(isNoWorkRowActive).forEach(row => nextOffDates.delete(row.off_date));
+            if (isActive) requestedDates.forEach(date => nextOffDates.add(date));
             const payload = requestedDates.map(offDate => ({
                 module_id: NON_WORK_MODULE_ID,
                 off_date: offDate,
                 label,
+                is_active: isActive,
             }));
             const query = dbRef.from('planning_non_work_days');
             const { data, error } = editingIds.length
@@ -2363,7 +3113,7 @@ window.PPMSModuleRuntime = (() => {
             if (error) throw error;
             await writeAudit('DELETE', 'planning_non_work_days', makeNoWorkAuditRecordId(before.map(row => row.off_date)), before, null);
             const nextOffDates = new Set(previousOffDates);
-            before.forEach(row => nextOffDates.delete(row.off_date));
+            before.filter(isNoWorkRowActive).forEach(row => nextOffDates.delete(row.off_date));
             const rescheduledCount = !noWorkDateSetsEqual(previousOffDates, nextOffDates)
                 ? await recalculatePlanWindowsForNonWorkDayChange(previousOffDates, nextOffDates, `kd2-non-work-delete:${group.start}`)
                 : 0;
@@ -2372,6 +3122,44 @@ window.PPMSModuleRuntime = (() => {
             renderNoWorkDays();
             updatePlanCreateEndFromDuration();
             toast(rescheduledCount ? `KD2 no-work range deleted. ${rescheduledCount} plan block(s) recalculated.` : 'KD2 no-work range deleted.', 'success');
+            await helpers.reloadAll?.();
+        } catch (error) {
+            setNoWorkError(error.message);
+        }
+    }
+
+    async function toggleNoWorkDayActive(startDateStr, nextActive) {
+        if (!dbRef || !startDateStr) return;
+        const group = getNonWorkDayGroupByStart(startDateStr);
+        if (!group?.rows?.length) return;
+        const ids = group.rows.map(row => row.id).filter(Number.isFinite);
+        const before = group.rows.slice();
+        try {
+            const previousOffDates = new Set(state.nonWorkDaySet);
+            const { data, error } = await dbRef
+                .from('planning_non_work_days')
+                .update({ is_active: !!nextActive })
+                .in('id', ids)
+                .eq('module_id', NON_WORK_MODULE_ID)
+                .select('*');
+            if (error) throw error;
+            await writeAudit('UPDATE', 'planning_non_work_days', makeNoWorkAuditRecordId(before.map(row => row.off_date)), before, data);
+            const nextOffDates = new Set(previousOffDates);
+            before.filter(isNoWorkRowActive).forEach(row => nextOffDates.delete(row.off_date));
+            if (nextActive) before.forEach(row => nextOffDates.add(row.off_date));
+            const rescheduledCount = !noWorkDateSetsEqual(previousOffDates, nextOffDates)
+                ? await recalculatePlanWindowsForNonWorkDayChange(previousOffDates, nextOffDates, `kd2-non-work-toggle:${group.start}`)
+                : 0;
+            await refreshWorkspace();
+            renderNoWorkDays();
+            if (parseNoWorkEditingIds().some(id => ids.includes(id))) startNoWorkEdit(startDateStr);
+            updatePlanCreateEndFromDuration();
+            toast(
+                rescheduledCount
+                    ? `KD2 no-work range ${nextActive ? 'activated' : 'deactivated'}. ${rescheduledCount} plan block(s) recalculated.`
+                    : `KD2 no-work range ${nextActive ? 'activated' : 'deactivated'}.`,
+                'success'
+            );
             await helpers.reloadAll?.();
         } catch (error) {
             setNoWorkError(error.message);
@@ -2669,10 +3457,54 @@ window.PPMSModuleRuntime = (() => {
         if (overlay.parentNode !== host) host.appendChild(overlay);
     }
 
+    function movePlanEditOverlayToActiveHost() {
+        const overlay = document.getElementById('kd2PlanEditOverlay');
+        if (!overlay) return;
+        if (!planEditOverlayHome && overlay.parentNode) {
+            planEditOverlayHome = {
+                parent: overlay.parentNode,
+                nextSibling: overlay.nextSibling,
+            };
+        }
+        const host = document.fullscreenElement || planEditOverlayHome?.parent || document.body;
+        if (overlay.parentNode !== host) host.appendChild(overlay);
+    }
+
+    function moveProcessOverlayToActiveHost() {
+        const overlay = document.getElementById('kd2ProcessOverlay');
+        if (!overlay) return;
+        if (!processOverlayHome && overlay.parentNode) {
+            processOverlayHome = {
+                parent: overlay.parentNode,
+                nextSibling: overlay.nextSibling,
+            };
+        }
+        const host = document.fullscreenElement || processOverlayHome?.parent || document.body;
+        if (overlay.parentNode !== host) host.appendChild(overlay);
+    }
+
     function restorePlanCreateOverlayHost() {
         const overlay = document.getElementById('kd2PlanCreateOverlay');
         if (!overlay || !planCreateOverlayHome?.parent) return;
         const { parent, nextSibling } = planCreateOverlayHome;
+        if (overlay.parentNode === parent) return;
+        if (nextSibling && nextSibling.parentNode === parent) parent.insertBefore(overlay, nextSibling);
+        else parent.appendChild(overlay);
+    }
+
+    function restorePlanEditOverlayHost() {
+        const overlay = document.getElementById('kd2PlanEditOverlay');
+        if (!overlay || !planEditOverlayHome?.parent) return;
+        const { parent, nextSibling } = planEditOverlayHome;
+        if (overlay.parentNode === parent) return;
+        if (nextSibling && nextSibling.parentNode === parent) parent.insertBefore(overlay, nextSibling);
+        else parent.appendChild(overlay);
+    }
+
+    function restoreProcessOverlayHost() {
+        const overlay = document.getElementById('kd2ProcessOverlay');
+        if (!overlay || !processOverlayHome?.parent) return;
+        const { parent, nextSibling } = processOverlayHome;
         if (overlay.parentNode === parent) return;
         if (nextSibling && nextSibling.parentNode === parent) parent.insertBefore(overlay, nextSibling);
         else parent.appendChild(overlay);
@@ -2928,6 +3760,11 @@ window.PPMSModuleRuntime = (() => {
     async function toggleTimelineVisualMenu(forceOpen = null) {
         const shouldOpen = forceOpen === null ? !state.timelinePlacementMenuOpen : !!forceOpen;
         if (!shouldOpen) {
+            setTimelinePlacementMenuOpen(false);
+            return;
+        }
+        if (isTimelineProcessView()) {
+            toast('Visual placement is only available in unit view.', 'error');
             setTimelinePlacementMenuOpen(false);
             return;
         }
@@ -3669,7 +4506,9 @@ window.PPMSModuleRuntime = (() => {
         const viewStart = minDateStr(rows.map(row => row.start_date));
         const viewEnd = maxDateStr(rows.map(row => row.end_date));
         const days = buildDateRange(viewStart, viewEnd);
-        const visibleOffDays = [...state.nonWorkDaySet].filter(day => day >= viewStart && day <= viewEnd);
+        const visibleOffDays = state.nonWorkDays
+            .filter(row => row.off_date >= viewStart && row.off_date <= viewEnd)
+            .map(row => ({ date: row.off_date, is_active: isNoWorkRowActive(row) }));
         return {
             battalion_id: battalionId,
             battalion_code: battalion?.battalion_code || '—',
@@ -3726,17 +4565,18 @@ window.PPMSModuleRuntime = (() => {
         const dayIndex = Object.fromEntries(days.map((day, index) => [day, index]));
         const specialZones = getGanttSpecialZones(preview.viewStart, preview.viewEnd);
 
-        const holidayDays = new Set();
+        const holidayStatusesByDay = new Map();
         const holidayLabelsByDay = new Map();
         specialZones
-            .filter(zone => zone?.type === 'holiday' && zone.start && zone.end)
+            .filter(zone => (zone?.type === 'holiday' || zone?.type === 'holiday-inactive') && zone.start && zone.end)
             .forEach(zone => {
                 const label = String(zone.label || 'No-work Day').trim() || 'No-work Day';
+                const isInactive = zone.type === 'holiday-inactive';
                 let cursor = zone.start;
                 let guard = 0;
                 while (cursor <= zone.end && guard < 400) {
                     if (dayIndex[cursor] !== undefined) {
-                        holidayDays.add(cursor);
+                        holidayStatusesByDay.set(cursor, isInactive ? 'inactive' : 'active');
                         if (!holidayLabelsByDay.has(cursor)) holidayLabelsByDay.set(cursor, new Set());
                         holidayLabelsByDay.get(cursor).add(label);
                     }
@@ -3772,7 +4612,13 @@ window.PPMSModuleRuntime = (() => {
 
             const holidayLabels = holidayLabelsByDay.get(meta.date);
             const dayTitle = holidayLabels?.size ? ` title="${escapeHtml([...holidayLabels].join(', '))}"` : '';
-            dayHtml += `<div class="gh-day${meta.isSat ? ' gh-day-sat' : ''}${holidayDays.has(meta.date) ? ' gh-day-holiday' : ''}${meta.isToday ? ' gh-day-today' : ''}" data-gantt-date="${meta.date}" style="width:${PREVIEW_DAY_W}px;height:28px"${dayTitle}>${meta.dayNum}</div>`;
+            const holidayStatus = holidayStatusesByDay.get(meta.date) || '';
+            const holidayClass = holidayStatus === 'inactive'
+                ? ' gh-day-holiday-inactive'
+                : holidayStatus === 'active'
+                    ? ' gh-day-holiday'
+                    : '';
+            dayHtml += `<div class="gh-day${meta.isSat ? ' gh-day-sat' : ''}${holidayClass}${meta.isToday ? ' gh-day-today' : ''}" data-gantt-date="${meta.date}" style="width:${PREVIEW_DAY_W}px;height:28px"${dayTitle}>${meta.dayNum}</div>`;
         });
 
         if (runMonth) monthHtml += `<div class="gh-month" style="width:${runMonthSpan * PREVIEW_DAY_W}px">${escapeHtml(runMonth)}</div>`;
@@ -3791,8 +4637,9 @@ window.PPMSModuleRuntime = (() => {
             if (startIndex === null || endIndex === null || startIndex > endIndex) return;
             const left = PREVIEW_LABEL_W + startIndex * PREVIEW_DAY_W;
             const width = (endIndex - startIndex + 1) * PREVIEW_DAY_W;
-            const zoneTitle = zone.type === 'holiday' ? '' : ` title="${escapeHtml(zone.label || zone.type)}"`;
-            const zoneLabel = zone.type === 'holiday' ? '' : `<span class="gc-zone-label">${escapeHtml(zone.label || zone.type)}</span>`;
+            const isHolidayZone = zone.type === 'holiday' || zone.type === 'holiday-inactive';
+            const zoneTitle = isHolidayZone ? '' : ` title="${escapeHtml(zone.label || zone.type)}"`;
+            const zoneLabel = isHolidayZone ? '' : `<span class="gc-zone-label">${escapeHtml(zone.label || zone.type)}</span>`;
             zonesHtml += `
                 <div class="gc-zone gc-zone-${escapeHtml(zone.type)}" style="left:${left}px;width:${width}px"${zoneTitle}>
                     ${zoneLabel}
@@ -4127,7 +4974,15 @@ window.PPMSModuleRuntime = (() => {
             row.station_sequence_in_category = currentMax + 1;
             categorySequenceCounters.set(key, row.station_sequence_in_category);
         }
-        const leadRows = processRows.map(({ isNew, kind, parallel_with_previous, gap_days, source_process, route_sequence, station_name, work_center, station_sequence_in_category, ...row }) => row);
+        const leadRows = processRows.map(row => ({
+            vehicle_type: row.vehicle_type,
+            category_code: row.category_code,
+            station_code: row.station_code,
+            planning_level: row.planning_level,
+            lead_time_days: row.lead_time_days,
+            lead_time_source: row.lead_time_source,
+            notes: row.notes,
+        }));
 
         for (const row of processRows) {
             const stationPayload = row.isNew
@@ -4184,12 +5039,6 @@ window.PPMSModuleRuntime = (() => {
             if (routeError) throw routeError;
         }
 
-        const { error: deleteLayoutError } = await dbRef
-            .from('kd2_template_layout_items')
-            .delete()
-            .eq('vehicle_type', vehicle);
-        if (deleteLayoutError) throw deleteLayoutError;
-
         const layoutRows = rows.map((row, index) => ({
             vehicle_type: vehicle,
             sort_order: index + 1,
@@ -4198,11 +5047,50 @@ window.PPMSModuleRuntime = (() => {
             parallel_with_previous: isTemplateProcessBlock(row) ? Boolean(row.parallel_with_previous) : false,
             gap_days: isTemplateSpaceBlock(row) ? parseGapDaysValue(row.gap_days) : null,
         }));
-        if (layoutRows.length) {
-            const { error: insertLayoutError } = await dbRef
+        const layoutRequiresStorage = layoutRows.some(row => row.kind === 'space');
+        let layoutSaved = false;
+        if (!state.templateLayoutTableAvailable) {
+            if (layoutRequiresStorage) {
+                setPlanCreateError(templateLayoutMigrationMessage());
+                return false;
+            }
+        } else {
+            const { error: deleteLayoutError } = await dbRef
                 .from('kd2_template_layout_items')
-                .insert(layoutRows);
-            if (insertLayoutError) throw insertLayoutError;
+                .delete()
+                .eq('vehicle_type', vehicle);
+            if (deleteLayoutError) {
+                if (isMissingSchemaTableError(deleteLayoutError, 'kd2_template_layout_items')) {
+                    state.templateLayoutTableAvailable = false;
+                    if (layoutRequiresStorage) {
+                        setPlanCreateError(templateLayoutMigrationMessage());
+                        return false;
+                    }
+                } else {
+                    throw deleteLayoutError;
+                }
+            } else {
+                if (layoutRows.length) {
+                    const { error: insertLayoutError } = await dbRef
+                        .from('kd2_template_layout_items')
+                        .insert(layoutRows);
+                    if (insertLayoutError) {
+                        if (isMissingSchemaTableError(insertLayoutError, 'kd2_template_layout_items')) {
+                            state.templateLayoutTableAvailable = false;
+                            if (layoutRequiresStorage) {
+                                setPlanCreateError(templateLayoutMigrationMessage());
+                                return false;
+                            }
+                        } else {
+                            throw insertLayoutError;
+                        }
+                    } else {
+                        layoutSaved = true;
+                    }
+                } else {
+                    layoutSaved = true;
+                }
+            }
         }
 
         await writeAudit('UPSERT', 'kd2_process_lead_times', vehicle || 'template', before, leadRows);
@@ -4210,7 +5098,9 @@ window.PPMSModuleRuntime = (() => {
             station_code: row.station_code || null,
             route_sequence: row.route_sequence || null,
         })));
-        await writeAudit('REPLACE', 'kd2_template_layout_items', vehicle || 'template', layoutBefore, layoutRows);
+        if (layoutSaved) {
+            await writeAudit('REPLACE', 'kd2_template_layout_items', vehicle || 'template', layoutBefore, layoutRows);
+        }
         state.templateRemovedStations.clear();
         state.templateInsertIndex = null;
         await loadWorkspaceData();
@@ -4508,8 +5398,10 @@ window.PPMSModuleRuntime = (() => {
             .map(group => ({
                 start: group.start,
                 end: group.end,
-                type: 'holiday',
-                label: group.label || 'No-work Day',
+                type: group.is_active === false ? 'holiday-inactive' : 'holiday',
+                label: group.is_active === false
+                    ? (group.label ? `${group.label} (inactive)` : 'Inactive no-work day')
+                    : (group.label || 'No-work Day'),
             }));
     }
 
@@ -4535,6 +5427,39 @@ window.PPMSModuleRuntime = (() => {
 
     function sortPlanRowsForRecalc(rows = []) {
         return rows.slice().sort(comparePlanRowsByLaneOrder);
+    }
+
+    function buildPlanGroupsForRecalc(rows = [], rulesOffDates) {
+        const groups = [];
+        sortPlanRowsForRecalc(rows).forEach(row => {
+            const routeSequence = parseInt(row.route_sequence, 10) || 9999;
+            let group = groups.find(item => item.routeSequence === routeSequence);
+            if (!group) {
+                group = {
+                    routeSequence,
+                    rows: [],
+                    start: '',
+                    end: '',
+                    offsetFromPreviousGroup: 0,
+                };
+                groups.push(group);
+            }
+            group.rows.push(row);
+            group.start = group.start && group.start < row.planned_start_date ? group.start : row.planned_start_date;
+            group.end = group.end && group.end > row.planned_end_date ? group.end : row.planned_end_date;
+        });
+        groups.forEach((group, index) => {
+            group.rows = sortPlanRowsForRecalc(group.rows);
+            if (index === 0) {
+                group.offsetFromPreviousGroup = 0;
+                return;
+            }
+            const previousGroup = groups[index - 1];
+            const rules = planningRulesForOffDates(group.rows[0].battalion_id, group.rows[0].vehicle_type, rulesOffDates);
+            const baselineStart = nextWorkingDate(previousGroup.end, rules);
+            group.offsetFromPreviousGroup = workingDayOffsetBetween(baselineStart, group.start, rules);
+        });
+        return groups;
     }
 
     function getPlanMoveRowsFromAnchor(anchorRow, rows = []) {
@@ -4569,21 +5494,19 @@ window.PPMSModuleRuntime = (() => {
 
         const changes = [];
         lanes.forEach(laneRows => {
-            const orderedRows = sortPlanRowsForRecalc(laneRows);
-            const groups = [];
-            orderedRows.forEach(row => {
-                const routeSequence = parseInt(row.route_sequence, 10) || 9999;
-                let group = groups.find(item => item.routeSequence === routeSequence);
-                if (!group) {
-                    group = { routeSequence, rows: [] };
-                    groups.push(group);
-                }
-                group.rows.push(row);
-            });
+            const groups = buildPlanGroupsForRecalc(laneRows, previousOffDates);
             if (!groups.length) return;
 
-            let currentStart = minDateStr(groups[0].rows.map(row => row.planned_start_date));
-            groups.forEach(group => {
+            let impacted = false;
+            let previousNewGroupEnd = '';
+            groups.forEach((group, index) => {
+                let currentStart = group.start;
+                if (index > 0) {
+                    const boundaryRules = planningRulesForOffDates(group.rows[0].battalion_id, group.rows[0].vehicle_type, nextOffDates);
+                    const baselineStart = nextWorkingDate(previousNewGroupEnd || groups[index - 1].end, boundaryRules);
+                    currentStart = shiftWorkingDateByOffset(baselineStart, group.offsetFromPreviousGroup, boundaryRules);
+                }
+                const groupChanges = [];
                 const groupEnds = [];
                 group.rows.forEach(row => {
                     const oldRules = planningRulesForOffDates(row.battalion_id, row.vehicle_type, previousOffDates);
@@ -4591,7 +5514,7 @@ window.PPMSModuleRuntime = (() => {
                     const duration = Math.max(durationFromPlannedWindow(row.planned_start_date, row.planned_end_date, oldRules), 1);
                     const window = buildForwardWindow(currentStart, duration, newRules);
                     if (window.start !== row.planned_start_date || window.end !== row.planned_end_date) {
-                        changes.push({
+                        groupChanges.push({
                             id: row.id,
                             stationCode: row.station_code,
                             oldBattalionId: row.battalion_id,
@@ -4610,9 +5533,12 @@ window.PPMSModuleRuntime = (() => {
                     }
                     groupEnds.push(window.end);
                 });
-                if (groupEnds.length) {
-                    const nextStartRules = planningRulesForOffDates(group.rows[0].battalion_id, group.rows[0].vehicle_type, nextOffDates);
-                    currentStart = nextWorkingDate(maxDateStr(groupEnds), nextStartRules);
+                const recalculatedGroupEnd = groupEnds.length ? maxDateStr(groupEnds) : group.end;
+                if (!impacted && (currentStart !== group.start || groupChanges.length)) impacted = true;
+                if (impacted && groupChanges.length) changes.push(...groupChanges);
+                previousNewGroupEnd = impacted ? recalculatedGroupEnd : group.end;
+                if (!previousNewGroupEnd) {
+                    previousNewGroupEnd = group.end;
                 }
             });
         });
@@ -4922,6 +5848,12 @@ window.PPMSModuleRuntime = (() => {
         }
 
         try {
+            const draftRows = readTemplateRows({ normalize: true });
+            if (!draftRows.some(isTemplateProcessBlock)) {
+                setPlanCreateError('The selected vehicle has no route template.');
+                return;
+            }
+
             const saved = await saveTemplateDefaults({ silent: true });
             if (!saved) return;
 
@@ -5104,10 +6036,14 @@ window.PPMSModuleRuntime = (() => {
             renderPlanningInputs();
             renderRouteFlow();
             if (document.getElementById('kd2LeadTimeOverlay')?.style.display === 'flex') renderLeadTimeEditor();
+            if (document.getElementById('kd2ProcessOverlay')?.style.display === 'flex') renderProcessEditor();
             if (document.getElementById('kd2NoWorkOverlay')?.style.display === 'flex') renderNoWorkDays();
             if (document.getElementById('kd2PlanCreateOverlay')?.style.display === 'flex') {
-                updatePlanCreateEndFromDuration();
+                const preserveStation = document.getElementById('kd2PlanCreateStation')?.value || '';
+                populatePlanCreateStations(preserveStation);
                 if (currentPlanCreateMode() === 'template') renderTemplateEditor();
+                else updatePlanCreateDurationFromStation(true);
+                updatePlanCreateEndFromDuration();
             }
             updateGenerationTarget();
             syncTimelinePlacementUi();
@@ -5131,6 +6067,7 @@ window.PPMSModuleRuntime = (() => {
         document.getElementById('btnKd2Bootstrap')?.addEventListener('click', bootstrapBattalions);
         document.getElementById('btnKd2NewBattalion')?.addEventListener('click', () => openPlanningModal(null));
         document.getElementById('btnKd2GeneratePlan')?.addEventListener('click', generatePlan);
+        document.getElementById('btnKd2ManageProcesses')?.addEventListener('click', () => openProcessModal(state.routeVehicle || 'K9'));
         document.getElementById('btnKd2ManageLeadTimes')?.addEventListener('click', openLeadTimeModal);
         document.getElementById('btnKd2AddBlock')?.addEventListener('click', () => openPlanCreateModal());
         document.getElementById('btnKd2VisualAdd')?.addEventListener('click', event => {
@@ -5146,10 +6083,25 @@ window.PPMSModuleRuntime = (() => {
             if (state.timelinePlacementActive && placementGhostEl) positionPlacementGhost();
         }, { passive: true });
         document.addEventListener('fullscreenchange', () => {
+            const planEditOverlay = document.getElementById('kd2PlanEditOverlay');
+            if (planEditOverlay?.style.display === 'flex') movePlanEditOverlayToActiveHost();
+            else restorePlanEditOverlayHost();
+            const planCreateOverlay = document.getElementById('kd2PlanCreateOverlay');
+            if (planCreateOverlay?.style.display === 'flex') movePlanCreateOverlayToActiveHost();
+            else restorePlanCreateOverlayHost();
+            const processOverlay = document.getElementById('kd2ProcessOverlay');
+            if (processOverlay?.style.display === 'flex') moveProcessOverlayToActiveHost();
+            else restoreProcessOverlayHost();
             if (state.timelinePlacementActive) syncTimelinePlacementGhost();
             else removePlacementGhost();
         });
         document.getElementById('btnKd2TimelineRefresh')?.addEventListener('click', () => renderSchedule());
+        document.getElementById('btnKd2TimelineViewUnit')?.addEventListener('click', () => {
+            setTimelineViewMode('unit');
+        });
+        document.getElementById('btnKd2TimelineViewProcess')?.addEventListener('click', () => {
+            setTimelineViewMode('process');
+        });
         document.getElementById('btnKd2TimelineEdit')?.addEventListener('click', () => setTimelineEditMode(true));
         document.getElementById('btnKd2TimelineEditDone')?.addEventListener('click', () => setTimelineEditMode(false));
         document.getElementById('btnKd2TimelineModeBlock')?.addEventListener('click', () => {
@@ -5219,6 +6171,9 @@ window.PPMSModuleRuntime = (() => {
         document.getElementById('kd2PlanCreateClose')?.addEventListener('click', closePlanCreateModal);
         document.getElementById('btnKd2PlanCreateCancel')?.addEventListener('click', closePlanCreateModal);
         document.getElementById('btnKd2PlanCreateSave')?.addEventListener('click', savePlanCreate);
+        document.getElementById('btnKd2ManageProcessesInline')?.addEventListener('click', () => {
+            openProcessModal(document.getElementById('kd2PlanCreateVehicle')?.value || state.routeVehicle || 'K9');
+        });
         document.getElementById('kd2PlanCreateOverlay')?.addEventListener('click', function (e) {
             if (e.target === this) closePlanCreateModal();
         });
@@ -5401,6 +6356,37 @@ window.PPMSModuleRuntime = (() => {
         document.getElementById('btnKd2LeadTimeSave')?.addEventListener('click', saveLeadTimes);
         document.getElementById('kd2LeadTimeOverlay')?.addEventListener('click', function (e) {
             if (e.target === this) closeLeadTimeModal();
+        });
+        document.getElementById('kd2ProcessClose')?.addEventListener('click', closeProcessModal);
+        document.getElementById('btnKd2ProcessCancel')?.addEventListener('click', closeProcessModal);
+        document.getElementById('btnKd2ProcessSave')?.addEventListener('click', saveProcessStation);
+        document.getElementById('btnKd2ProcessReset')?.addEventListener('click', () => {
+            resetProcessForm({ vehicle: processEditorVehicle(), categoryCode: document.getElementById('kd2ProcessCategory')?.value || '' });
+        });
+        document.getElementById('kd2ProcessVehicle')?.addEventListener('change', event => {
+            resetProcessForm({ vehicle: event.target.value });
+            renderProcessEditor();
+        });
+        document.getElementById('kd2ProcessCategory')?.addEventListener('change', event => {
+            const originalStationCode = document.getElementById('kd2ProcessStationCodeOriginal')?.value || '';
+            const sequenceInput = document.getElementById('kd2ProcessSequence');
+            if (sequenceInput) {
+                sequenceInput.value = nextProcessCategorySequence(processEditorVehicle(), event.target.value, originalStationCode);
+            }
+        });
+        document.getElementById('kd2ProcessBody')?.addEventListener('click', event => {
+            const editBtn = event.target.closest('[data-kd2-process-edit]');
+            if (editBtn) {
+                loadProcessIntoForm(processEditorVehicle(), editBtn.dataset.kd2ProcessEdit || '');
+                return;
+            }
+            const deleteBtn = event.target.closest('[data-kd2-process-delete]');
+            if (deleteBtn) {
+                deleteProcessStation(processEditorVehicle(), deleteBtn.dataset.kd2ProcessDelete || '');
+            }
+        });
+        document.getElementById('kd2ProcessOverlay')?.addEventListener('click', function (e) {
+            if (e.target === this) closeProcessModal();
         });
 
         document.querySelectorAll('.kd2-route-tab').forEach(btn => {

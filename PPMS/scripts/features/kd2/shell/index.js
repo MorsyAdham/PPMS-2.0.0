@@ -76,6 +76,7 @@ export function initFeature() {
                             <button class="btn btn-ghost btn-sm kd2-route-tab" data-vehicle="K10">K10</button>
                             <button class="btn btn-ghost btn-sm kd2-route-tab" data-vehicle="K11">K11</button>
                         </div>
+                        <button class="btn btn-outline btn-sm" id="btnKd2ManageProcesses">Manage Processes</button>
                         <button class="btn btn-outline btn-sm" id="btnKd2ManageLeadTimes">Manage Lead Times</button>
                     </div>
                 </div>
@@ -88,7 +89,7 @@ export function initFeature() {
                 <div class="kd2-card-header">
                     <div>
                         <h3 class="kd2-card-title">KD2 Schedule Timeline</h3>
-                        <span class="kd2-card-subtitle">Manual and generated \`kd2_plan\` rows grouped by battalion and unit. Click a bar to manage one plan block.</span>
+                        <span class="kd2-card-subtitle" id="kd2TimelineSubtitle">Manual and generated KD2 plan rows grouped by battalion and unit. Click a bar to manage one plan block.</span>
                     </div>
                     <div class="kd2-card-actions">
                         <div class="filter-item kd2-timeline-filter">
@@ -98,6 +99,10 @@ export function initFeature() {
                         <div class="filter-item kd2-timeline-filter">
                             <label class="filter-label" for="kd2TimelineEnd">To</label>
                             <input type="date" id="kd2TimelineEnd" class="filter-control" />
+                        </div>
+                        <div class="kd2-timeline-view-toggle" id="kd2TimelineViewToggle" aria-label="Timeline view mode">
+                            <button class="btn btn-outline btn-sm kd2-timeline-view-btn kd2-timeline-view-btn-active" id="btnKd2TimelineViewUnit" type="button" data-view="unit">Unit View</button>
+                            <button class="btn btn-outline btn-sm kd2-timeline-view-btn" id="btnKd2TimelineViewProcess" type="button" data-view="process">Process View</button>
                         </div>
                         <button class="btn btn-primary btn-sm" id="btnKd2AddBlock">Add Plan Block</button>
                         <div class="kd2-visual-add-shell" id="kd2VisualAddShell">
@@ -144,6 +149,7 @@ export function initFeature() {
                     </div>
                 </div>
                 <div class="kd2-timeline-shell">
+                    <div class="kd2-inline-meta" id="kd2TimelineViewMeta">Unit view shows battalion / vehicle / unit lanes.</div>
                     <div class="kd2-timeline-placement-bar" id="kd2TimelinePlacementBar" style="display:none">
                         <div class="kd2-timeline-placement-head">
                             <div class="kd2-timeline-placement-copy">

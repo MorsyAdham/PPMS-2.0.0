@@ -800,7 +800,10 @@ export function renderSharedDialogs() {
                             </div>
                         </div>
                         <div class="form-group" style="grid-column:1/-1" data-kd2-plan-create-form>
-                            <label class="form-label" for="kd2PlanCreateStation">Process / Station</label>
+                            <div class="kd2-form-label-row">
+                                <label class="form-label" for="kd2PlanCreateStation">Process / Station</label>
+                                <button class="btn btn-ghost btn-sm" type="button" id="btnKd2ManageProcessesInline">Manage Processes</button>
+                            </div>
                             <select id="kd2PlanCreateStation" class="filter-control"></select>
                         </div>
                         <div class="form-group" style="grid-column:1/-1" data-kd2-plan-create-form>
@@ -867,13 +870,17 @@ export function renderSharedDialogs() {
                             <label class="form-label" for="kd2NoWorkLabel">Label <span class="form-label-optional">(optional)</span></label>
                             <input type="text" id="kd2NoWorkLabel" class="filter-control" placeholder="Optional reason" />
                         </div>
+                        <div class="form-group">
+                            <label class="form-label" for="kd2NoWorkActive">Status</label>
+                            <label class="kd2-check"><input type="checkbox" id="kd2NoWorkActive" checked /> Active</label>
+                        </div>
                     </div>
                     <div class="import-footer" style="margin-bottom:14px">
                         <button class="btn btn-primary" id="btnKd2NoWorkAdd">Add Range</button>
                         <button class="btn btn-ghost" id="btnKd2NoWorkCancelEdit" style="display:none">Cancel Edit</button>
                     </div>
                     <div class="ab-error" id="kd2NoWorkError" style="display:none"></div>
-                    <div class="kd2-import-summary" id="kd2NoWorkSummary">KD2 holidays are saved directly to Supabase.</div>
+                    <div class="kd2-import-summary" id="kd2NoWorkSummary">Active KD2 no-work ranges affect scheduling. Inactive ranges stay visible but do not move the plan.</div>
                     <div class="kd2-no-work-list" id="kd2NoWorkList"></div>
                 </div>
                 <div class="modal-footer">
@@ -900,6 +907,76 @@ export function renderSharedDialogs() {
                 </div>
             </div>
         </div>
-`.trim();
+
+        <div class="modal-overlay" id="kd2ProcessOverlay" style="display:none;" role="dialog" aria-modal="true"
+            aria-labelledby="kd2ProcessTitle">
+            <div class="modal modal-wide" style="max-width:1080px">
+                <div class="modal-header">
+                    <h4 class="modal-title" id="kd2ProcessTitle">KD2 Process Maintenance</h4>
+                    <button class="modal-close" id="kd2ProcessClose">&#x2715;</button>
+                </div>
+                <div class="modal-body">
+                    <div class="modal-info" id="kd2ProcessSummary">Load a KD2 vehicle route to create, edit, or retire process stations.</div>
+                    <div class="kd2-process-toolbar">
+                        <div class="form-group">
+                            <label class="form-label" for="kd2ProcessVehicle">Vehicle</label>
+                            <select id="kd2ProcessVehicle" class="filter-control">
+                                <option value="K9">K9</option>
+                                <option value="K10">K10</option>
+                                <option value="K11">K11</option>
+                            </select>
+                        </div>
+                        <button class="btn btn-ghost btn-sm" type="button" id="btnKd2ProcessReset">New Process</button>
+                    </div>
+                    <input type="hidden" id="kd2ProcessStationCodeOriginal" />
+                    <div class="modal-info" id="kd2ProcessFormStatus">Creating a new process station.</div>
+                    <div class="kd2-modal-grid kd2-process-form">
+                        <div class="form-group">
+                            <label class="form-label" for="kd2ProcessCategory">Category</label>
+                            <select id="kd2ProcessCategory" class="filter-control"></select>
+                        </div>
+                        <div class="form-group">
+                            <label class="form-label" for="kd2ProcessName">Station Name</label>
+                            <input type="text" id="kd2ProcessName" class="filter-control" placeholder="Hull fitting, final touch-up..." />
+                        </div>
+                        <div class="form-group">
+                            <label class="form-label" for="kd2ProcessWorkCenter">Work Center <span class="form-label-optional">(optional)</span></label>
+                            <input type="text" id="kd2ProcessWorkCenter" class="filter-control" placeholder="A03, Paint line..." />
+                        </div>
+                        <div class="form-group">
+                            <label class="form-label" for="kd2ProcessSequence">Station Order</label>
+                            <input type="number" id="kd2ProcessSequence" class="filter-control" min="1" step="1" />
+                        </div>
+                        <div class="form-group">
+                            <label class="form-label" for="kd2ProcessRouteSequence">Route</label>
+                            <input type="number" id="kd2ProcessRouteSequence" class="filter-control" min="1" step="1" />
+                        </div>
+                        <div class="form-group">
+                            <label class="form-label" for="kd2ProcessLeadTime">Lead Time (Days) <span class="form-label-optional">(optional)</span></label>
+                            <input type="number" id="kd2ProcessLeadTime" class="filter-control" min="0.25" step="0.25" placeholder="Blank = pending" />
+                        </div>
+                        <div class="form-group">
+                            <label class="form-label" for="kd2ProcessLeadSource">Lead Time Source <span class="form-label-optional">(optional)</span></label>
+                            <input type="text" id="kd2ProcessLeadSource" class="filter-control" placeholder="Optional source" />
+                        </div>
+                        <div class="form-group">
+                            <label class="form-label" for="kd2ProcessStationNotes">Station Notes <span class="form-label-optional">(optional)</span></label>
+                            <input type="text" id="kd2ProcessStationNotes" class="filter-control" placeholder="Optional station note" />
+                        </div>
+                        <div class="form-group" style="grid-column:1/-1">
+                            <label class="form-label" for="kd2ProcessLeadNotes">Lead Time Notes <span class="form-label-optional">(optional)</span></label>
+                            <input type="text" id="kd2ProcessLeadNotes" class="filter-control" placeholder="Pending confirmation, supplier estimate..." />
+                        </div>
+                    </div>
+                    <div class="kd2-process-shell" id="kd2ProcessBody"></div>
+                    <div class="ab-error" id="kd2ProcessError" style="display:none"></div>
+                </div>
+                <div class="modal-footer">
+                    <button class="btn btn-primary" id="btnKd2ProcessSave">Save Process</button>
+                    <button class="btn btn-ghost" id="btnKd2ProcessCancel">Done</button>
+                </div>
+            </div>
+        </div>
+    `.trim();
 }
 

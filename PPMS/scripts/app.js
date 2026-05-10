@@ -2924,17 +2924,18 @@ function renderGantt(plans, startDate, endDate) {
     // Fast lookup: date string → column index (Fridays have no entry)
     const dayIndex = Object.fromEntries(days.map((d, i) => [d, i]));
     const specialZones = getModuleGanttZones(startDate, endDate);
-    const holidayDays = new Set();
+    const holidayStatusByDay = new Map();
     const holidayLabelsByDay = new Map();
     specialZones
-        .filter(zone => zone?.type === 'holiday' && zone.start && zone.end)
+        .filter(zone => (zone?.type === 'holiday' || zone?.type === 'holiday-inactive') && zone.start && zone.end)
         .forEach(zone => {
             const label = String(zone.label || 'No-work Day').trim() || 'No-work Day';
+            const isInactive = zone.type === 'holiday-inactive';
             let cursor = zone.start;
             let guard = 0;
             while (cursor <= zone.end && guard++ < 400) {
                 if (dayIndex[cursor] !== undefined) {
-                    holidayDays.add(cursor);
+                    holidayStatusByDay.set(cursor, isInactive ? 'inactive' : 'active');
                     if (!holidayLabelsByDay.has(cursor)) holidayLabelsByDay.set(cursor, new Set());
                     holidayLabelsByDay.get(cursor).add(label);
                 }
@@ -3063,7 +3064,13 @@ function renderGantt(plans, startDate, endDate) {
         // Day cell
         const holidayLabels = holidayLabelsByDay.get(dm.date);
         const dayTitle = holidayLabels?.size ? ` title="${esc([...holidayLabels].join(', '))}"` : '';
-        dHtml += `<div class="gh-day${dm.isSat ? ' gh-day-sat' : ''}${holidayDays.has(dm.date) ? ' gh-day-holiday' : ''}${dm.isToday ? ' gh-day-today' : ''}"
+        const holidayStatus = holidayStatusByDay.get(dm.date) || '';
+        const holidayClass = holidayStatus === 'inactive'
+            ? ' gh-day-holiday-inactive'
+            : holidayStatus === 'active'
+                ? ' gh-day-holiday'
+                : '';
+        dHtml += `<div class="gh-day${dm.isSat ? ' gh-day-sat' : ''}${holidayClass}${dm.isToday ? ' gh-day-today' : ''}"
       data-gantt-date="${dm.date}" style="width:${GANTT_DAY_W}px;height:28px"${dayTitle}>${dm.dayNum}</div>`;
     });
 
@@ -3088,8 +3095,9 @@ function renderGantt(plans, startDate, endDate) {
 
         const left = GANTT_LABEL_W + si * GANTT_DAY_W;
         const width = (ei - si + 1) * GANTT_DAY_W;
-        const zoneTitle = z.type === 'holiday' ? '' : ` title="${esc(z.label || z.type)}"`;
-        const zoneLabel = z.type === 'holiday' ? '' : `<span class="gc-zone-label">${esc(z.label || z.type)}</span>`;
+        const isHolidayZone = z.type === 'holiday' || z.type === 'holiday-inactive';
+        const zoneTitle = isHolidayZone ? '' : ` title="${esc(z.label || z.type)}"`;
+        const zoneLabel = isHolidayZone ? '' : `<span class="gc-zone-label">${esc(z.label || z.type)}</span>`;
         zonesHtml += `
       <div class="gc-zone gc-zone-${esc(z.type)}"
            style="left:${left}px;width:${width}px"${zoneTitle}>

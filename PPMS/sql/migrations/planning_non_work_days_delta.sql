@@ -13,6 +13,7 @@ create table if not exists public.planning_non_work_days (
     module_id text not null,
     off_date date not null,
     label text,
+    is_active boolean not null default true,
     created_at timestamptz not null default timezone('utc', now()),
     updated_at timestamptz not null default timezone('utc', now()),
     constraint planning_non_work_days_module_date_key unique (module_id, off_date)
@@ -22,6 +23,7 @@ alter table public.planning_non_work_days
     add column if not exists module_id text,
     add column if not exists off_date date,
     add column if not exists label text,
+    add column if not exists is_active boolean not null default true,
     add column if not exists created_at timestamptz not null default timezone('utc', now()),
     add column if not exists updated_at timestamptz not null default timezone('utc', now());
 

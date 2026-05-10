@@ -160,6 +160,7 @@ create table if not exists public.planning_non_work_days (
     module_id text not null,
     off_date date not null,
     label text,
+    is_active boolean not null default true,
     created_at timestamptz not null default timezone('utc', now()),
     updated_at timestamptz not null default timezone('utc', now()),
     unique (module_id, off_date)
