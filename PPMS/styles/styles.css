@@ -1898,7 +1898,9 @@ body {
     flex-direction: column;
     gap: 16px;
     margin-top: 18px;
-    max-height: 44vh;
+    /* Allow the shell to expand within wide modal while leaving room
+       for the modal header/footer; improves usability on small viewports */
+    max-height: calc(100vh - 220px);
     overflow: auto;
     padding-right: 4px;
 }

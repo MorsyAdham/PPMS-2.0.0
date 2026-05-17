@@ -225,7 +225,14 @@ window.PPMSModuleRuntime = (() => {
     }
 
     function getCategory(processStation, row) {
-        return row?.category || {
+        // If the row already carries a category, use it.
+        if (row?.category) return row.category;
+        // Only supply KD2-specific category mapping when the active module is KD2.
+        // For other modules (KD1), return undefined so the host app can fall back
+        // to its own category logic (getCategory in app.js).
+        if (getActiveModule() !== 'kd2') return undefined;
+
+        return {
             'Welding': 'Welding',
             'Machining': 'Machining',
             'Shot Blasting and Painting': 'Shot Blasting and Painting',
@@ -870,7 +877,10 @@ window.PPMSModuleRuntime = (() => {
 
     function closeProcessModal() {
         const overlay = document.getElementById('kd2ProcessOverlay');
-        if (overlay) overlay.style.display = 'none';
+        if (overlay) {
+            overlay.style.display = 'none';
+            overlay.classList.remove('modal-overlay-wide');
+        }
         restoreProcessOverlayHost();
         setProcessError('');
     }
@@ -1085,8 +1095,12 @@ window.PPMSModuleRuntime = (() => {
         resetProcessForm({ vehicle });
         renderProcessEditor();
         setProcessError('');
+        const overlay = document.getElementById('kd2ProcessOverlay');
+        // Use the wide overlay layout so the modal aligns to top and can
+        // provide more vertical space for the process editor.
+        if (overlay) overlay.classList.add('modal-overlay-wide');
         moveProcessOverlayToActiveHost();
-        document.getElementById('kd2ProcessOverlay').style.display = 'flex';
+        if (overlay) overlay.style.display = 'flex';
     }
 
     function renderLeadTimeEditor() {
