@@ -221,7 +221,27 @@ const STATION_DEFAULTS = {
 };
 
 function getCategory(processStation) {
-    return CATEGORY_MAP[processStation] || 'Other';
+    const key = String(processStation ?? '').trim();
+    if (!key) return 'Other';
+
+    // Exact match first
+    if (CATEGORY_MAP[key]) return CATEGORY_MAP[key];
+
+    // Case-insensitive exact match
+    const lower = key.toLowerCase();
+    for (const k of Object.keys(CATEGORY_MAP)) {
+        if (k.toLowerCase() === lower) return CATEGORY_MAP[k];
+    }
+
+    // Loose match: prefix/contains checks to handle minor variants
+    for (const k of Object.keys(CATEGORY_MAP)) {
+        const kl = k.toLowerCase();
+        if (lower.startsWith(kl) || kl.startsWith(lower) || lower.includes(kl) || kl.includes(lower)) {
+            return CATEGORY_MAP[k];
+        }
+    }
+
+    return 'Other';
 }
 
 function getModuleRuntime() {
@@ -359,17 +379,21 @@ function buildPositionedGanttLaneTasks(tasks, startDate, endDate) {
         .sort(compareGanttLanePriority);
 
     const laneEndAt = [];
+    // Assign packed lanes ensuring no two overlapping tasks occupy the same lane.
     positioned.forEach(item => {
-        let lane = 0;
+        // Prefer preserving an existing visual lane if it does not cause overlap.
+        const existing = Number.isFinite(_ganttVisualLane[item.task.id]) ? _ganttVisualLane[item.task.id] : null;
+        let lane = existing !== null ? existing : 0;
+        // If chosen lane conflicts (overlaps), find the next available lane.
         while (laneEndAt[lane] !== undefined && laneEndAt[lane] >= item.si) lane++;
         item.packedLane = lane;
         laneEndAt[lane] = item.ei;
+        // Record the chosen lane so future renders keep the same non-overlapping layout.
+        _ganttVisualLane[item.task.id] = lane;
     });
 
+    // Finalize lane for each item from the visual mapping (now guaranteed non-overlapping).
     positioned.forEach(item => {
-        if (!Number.isFinite(_ganttVisualLane[item.task.id])) {
-            _ganttVisualLane[item.task.id] = item.packedLane;
-        }
         item.lane = _ganttVisualLane[item.task.id];
     });
 
@@ -830,7 +854,8 @@ function refreshAllViews() {
     renderCharts(displayData);
     renderVPX(displayData);
     if (isKD2Module()) {
-        getModuleRuntime()?.renderSchedule?.(currentData);
+        // Ensure KD2 schedule uses the same filtered view as other components
+        getModuleRuntime()?.renderSchedule?.(displayData);
     }
 
     const gsEl = document.getElementById('ganttStart');
@@ -993,6 +1018,22 @@ async function loadData() {
             if (wA !== wB) return wA - wB;
             return (a.start_date || '').localeCompare(b.start_date || '');
         });
+
+        // DEBUG: log category distribution to aid troubleshooting when filters return no rows
+        try {
+            const catCounts = {};
+            currentData.forEach(r => {
+                const c = getModuleCategory(r.process_station, r);
+                catCounts[c] = (catCounts[c] || 0) + 1;
+            });
+            console.info('PPMS: categoryCounts', catCounts);
+            const otherSamples = currentData.filter(r => getModuleCategory(r.process_station, r) === 'Other')
+                .slice(0, 8)
+                .map(r => ({ station: r.process_station, vehicle: r.vehicle, week: r.week }));
+            if (otherSamples.length) console.warn('PPMS: sample process_station mapping to Other', otherSamples);
+        } catch (e) {
+            console.warn('PPMS: category debug failed', e.message || e);
+        }
 
         // Category filter (client-side — maps process_station → category)
         const category = getVal('filterCategory');
