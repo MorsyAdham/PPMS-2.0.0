@@ -294,16 +294,12 @@ window.PPMSModuleRuntime = (() => {
         return row?.is_active !== false;
     }
 
-    function noWorkStatusLabel(isActive) {
-        return isActive ? 'Active' : 'Inactive';
-    }
-
     function getNonWorkDateStatusMap(rows = state.nonWorkDays) {
         const statusByDate = new Map();
         rows
             .filter(row => row?.module_id === NON_WORK_MODULE_ID && row.off_date)
             .forEach(row => {
-                statusByDate.set(row.off_date, isNoWorkRowActive(row) ? 'active' : 'inactive');
+                statusByDate.set(row.off_date, 'active');
             });
         return statusByDate;
     }
@@ -335,16 +331,10 @@ window.PPMSModuleRuntime = (() => {
         const groups = [];
         sortedRows.forEach(row => {
             const label = normalizeNoWorkLabel(row.label);
-            const isActive = isNoWorkRowActive(row);
+            const isActive = row.is_active !== false;
             const current = groups[groups.length - 1];
             if (!current || current.label !== label || current.is_active !== isActive || addDays(current.end, 1) !== row.off_date) {
-                groups.push({
-                    start: row.off_date,
-                    end: row.off_date,
-                    label,
-                    is_active: isActive,
-                    rows: [row],
-                });
+                groups.push({ start: row.off_date, end: row.off_date, label, is_active: isActive, rows: [row] });
                 return;
             }
             current.end = row.off_date;
@@ -395,13 +385,11 @@ window.PPMSModuleRuntime = (() => {
     function syncNonWorkDays(rows = []) {
         state.nonWorkDays = rows
             .filter(row => row?.module_id === NON_WORK_MODULE_ID && row.off_date)
-            .map(row => ({
-                ...row,
-                label: normalizeNoWorkLabel(row.label),
-                is_active: isNoWorkRowActive(row),
-            }))
+            .map(row => ({ ...row, label: normalizeNoWorkLabel(row.label) }))
             .sort((a, b) => String(a.off_date).localeCompare(String(b.off_date)));
-        state.nonWorkDaySet = new Set(state.nonWorkDays.filter(isNoWorkRowActive).map(row => row.off_date));
+        state.nonWorkDaySet = new Set(
+            state.nonWorkDays.filter(row => row.is_active === true).map(row => row.off_date)
+        );
     }
 
     function withWorkingRules(rules = {}) {
@@ -673,8 +661,13 @@ window.PPMSModuleRuntime = (() => {
         if (filters.vehicle === 'K9' && filters.k9Component) {
             const componentLower = filters.k9Component.toLowerCase();
             rows = rows.filter(row => {
-                const stationCode = (row.station_code || '').toLowerCase();
-                return stationCode.includes(componentLower);
+                const haystack = [
+                    row.station_code,
+                    row.station_name,
+                    row.process_station,
+                    row.category_code,
+                ].map(v => (v || '').toLowerCase()).join(' ');
+                return haystack.includes(componentLower);
             });
         }
         
@@ -1427,9 +1420,13 @@ window.PPMSModuleRuntime = (() => {
 
             toast(`KD2 process "${stationName}" ${originalStationCode ? 'updated' : 'created'}.`, 'success');
             await refreshWorkspace();
+            // Force template editor to rebuild from the refreshed station/route state so newly
+            // added or updated processes appear immediately without a page reload.
+            ensureTemplateEditorState(vehicle, { force: true });
             await helpers.reloadAll?.();
             resetProcessForm({ vehicle, categoryCode });
             renderProcessEditor();
+            renderTemplateEditor();
         } catch (error) {
             setProcessError(error.message);
         }
@@ -2170,6 +2167,9 @@ window.PPMSModuleRuntime = (() => {
         const processVehicle = resolveTimelineProcessVehicle(rows);
         const unitBtn = document.getElementById('btnKd2TimelineViewUnit');
         const processBtn = document.getElementById('btnKd2TimelineViewProcess');
+        // Also sync the duplicate toggle in the main Gantt bar
+        const ganttUnitBtn = document.getElementById('btnGanttViewUnit');
+        const ganttProcessBtn = document.getElementById('btnGanttViewProcess');
         const subtitle = document.getElementById('kd2TimelineSubtitle');
         const meta = document.getElementById('kd2TimelineViewMeta');
         const laneBtn = document.getElementById('btnKd2TimelineModeLane');
@@ -2182,6 +2182,12 @@ window.PPMSModuleRuntime = (() => {
             if (!btn) return;
             const active = btn.dataset.view === currentTimelineViewMode();
             btn.classList.toggle('kd2-timeline-view-btn-active', active);
+            btn.setAttribute('aria-pressed', active ? 'true' : 'false');
+        });
+        [ganttUnitBtn, ganttProcessBtn].forEach(btn => {
+            if (!btn) return;
+            const active = btn.dataset.view === currentTimelineViewMode();
+            btn.classList.toggle('gantt-view-seg-active', active);
             btn.setAttribute('aria-pressed', active ? 'true' : 'false');
         });
 
@@ -3001,9 +3007,9 @@ window.PPMSModuleRuntime = (() => {
         const startInput = document.getElementById('kd2NoWorkStart');
         const endInput = document.getElementById('kd2NoWorkEnd');
         const labelInput = document.getElementById('kd2NoWorkLabel');
-        const activeInput = document.getElementById('kd2NoWorkActive');
         const saveBtn = document.getElementById('btnKd2NoWorkAdd');
         const cancelBtn = document.getElementById('btnKd2NoWorkCancelEdit');
+        const activeInput = document.getElementById('kd2NoWorkActive');
         if (idsInput) idsInput.value = '';
         if (startInput) startInput.value = '';
         if (endInput) endInput.value = '';
@@ -3040,28 +3046,28 @@ window.PPMSModuleRuntime = (() => {
             list.innerHTML = '<div class="empty-state"><p>No KD2 no-work days are stored yet.</p></div>';
             return;
         }
-        list.innerHTML = groups.map(group => `
-            <div class="kd2-no-work-item${group.is_active === false ? ' is-inactive' : ''}">
+        list.innerHTML = groups.map(group => {
+            const active = group.is_active !== false;
+            return `
+            <div class="kd2-no-work-item${active ? '' : ' is-inactive'}">
                 <div class="kd2-no-work-copy">
                     <strong>${escapeHtml(formatNoWorkRange(group.start, group.end))}</strong>
-                    <span class="status-pill ${group.is_active === false ? 'inactive' : 'active'}">${escapeHtml(noWorkStatusLabel(group.is_active !== false))}</span>
                     <span>${escapeHtml(group.label || 'No label')}</span>
+                    <span class="status-pill ${active ? 'active' : 'inactive'}">${active ? 'Active' : 'Inactive'}</span>
                 </div>
                 <div class="kd2-no-work-actions">
+                    <button type="button" class="btn btn-ghost btn-sm" data-kd2-no-work-toggle="${group.start}" data-next-active="${active ? 'false' : 'true'}">${active ? 'Deactivate' : 'Activate'}</button>
                     <button type="button" class="btn btn-ghost btn-sm" data-kd2-no-work-edit="${group.start}">Edit</button>
-                    <button type="button" class="btn btn-ghost btn-sm" data-kd2-no-work-toggle="${group.start}" data-kd2-no-work-next-active="${group.is_active === false ? 'true' : 'false'}">${group.is_active === false ? 'Activate' : 'Deactivate'}</button>
                     <button type="button" class="btn btn-ghost btn-kd2-danger btn-sm" data-kd2-no-work-delete="${group.start}">Delete</button>
                 </div>
             </div>
-        `).join('');
+        `;
+        }).join('');
+        list.querySelectorAll('[data-kd2-no-work-toggle]').forEach(btn => {
+            btn.addEventListener('click', () => toggleNoWorkDayActive(btn.dataset.kd2NoWorkToggle, btn.dataset.nextActive === 'true'));
+        });
         list.querySelectorAll('[data-kd2-no-work-edit]').forEach(btn => {
             btn.addEventListener('click', () => startNoWorkEdit(btn.dataset.kd2NoWorkEdit));
-        });
-        list.querySelectorAll('[data-kd2-no-work-toggle]').forEach(btn => {
-            btn.addEventListener('click', () => toggleNoWorkDayActive(
-                btn.dataset.kd2NoWorkToggle,
-                btn.dataset.kd2NoWorkNextActive === 'true'
-            ));
         });
         list.querySelectorAll('[data-kd2-no-work-delete]').forEach(btn => {
             btn.addEventListener('click', () => deleteNoWorkDay(btn.dataset.kd2NoWorkDelete));
@@ -3092,7 +3098,6 @@ window.PPMSModuleRuntime = (() => {
         const startDate = document.getElementById('kd2NoWorkStart')?.value;
         const endDate = document.getElementById('kd2NoWorkEnd')?.value || startDate;
         const label = normalizeNoWorkLabel(document.getElementById('kd2NoWorkLabel')?.value);
-        const isActive = document.getElementById('kd2NoWorkActive')?.checked !== false;
         if (!startDate) {
             setNoWorkError('Choose a start date to save.');
             return;
@@ -3106,6 +3111,10 @@ window.PPMSModuleRuntime = (() => {
             return;
         }
         const requestedDates = buildDateRange(startDate, endDate);
+        if (!requestedDates.length) {
+            setNoWorkError('The selected date range produced no valid dates. Check your start and end dates.');
+            return;
+        }
         try {
             const existingRows = editingIds.length
                 ? state.nonWorkDays.filter(row => editingIdSet.has(row.id))
@@ -3117,13 +3126,14 @@ window.PPMSModuleRuntime = (() => {
             const requestedDateSet = new Set(requestedDates);
             const duplicate = state.nonWorkDays.find(row => requestedDateSet.has(row.off_date) && !editingIdSet.has(row.id)) || null;
             if (duplicate) {
-                setNoWorkError(`A KD2 no-work day already exists on ${formatDate(duplicate.off_date)}. Edit the existing range instead.`);
+                setNoWorkError(`${formatDate(duplicate.off_date)} is already a no-work day. Edit the existing range or choose different dates.`);
                 return;
             }
             const previousOffDates = new Set(state.nonWorkDaySet);
             const nextOffDates = new Set(previousOffDates);
-            existingRows.filter(isNoWorkRowActive).forEach(row => nextOffDates.delete(row.off_date));
-            if (isActive) requestedDates.forEach(date => nextOffDates.add(date));
+            existingRows.forEach(row => nextOffDates.delete(row.off_date));
+            requestedDates.forEach(date => nextOffDates.add(date));
+        const isActive = document.getElementById('kd2NoWorkActive')?.checked !== false;
             const payload = requestedDates.map(offDate => ({
                 module_id: NON_WORK_MODULE_ID,
                 off_date: offDate,
@@ -3156,18 +3166,47 @@ window.PPMSModuleRuntime = (() => {
                 existingRows,
                 data
             );
-            const rescheduledCount = !noWorkDateSetsEqual(previousOffDates, nextOffDates)
-                ? await recalculatePlanWindowsForNonWorkDayChange(previousOffDates, nextOffDates, `kd2-non-work:${requestedDates[0]}`)
-                : 0;
             resetNoWorkForm();
             await refreshWorkspace();
             renderNoWorkDays();
             updatePlanCreateEndFromDuration();
-            const baseMessage = editingIds.length ? 'KD2 no-work range updated.' : 'KD2 no-work range saved.';
-            toast(rescheduledCount ? `${baseMessage} ${rescheduledCount} plan block(s) recalculated.` : baseMessage, 'success');
+            let rescheduledCount = 0;
+            let scheduleError = null;
+            if (isActive) {
+                try {
+                    const addedOffDates = new Set(requestedDates);
+                    const remainingOld = new Set([...previousOffDates]);
+                    existingRows.forEach(r => remainingOld.delete(r.off_date));
+                    rescheduledCount = await applyTargetedNoWorkReschedule(addedOffDates, remainingOld);
+                } catch (err) {
+                    scheduleError = err;
+                    console.warn('KD2 no-work day targeted reschedule failed:', err.message);
+                }
+            } else if (editingIds.length) {
+                // Editing existing active range → now inactive: revert any shifts from those dates
+                const removedDates = new Set(existingRows.map(r => r.off_date).filter(d => previousOffDates.has(d)));
+                if (removedDates.size) {
+                    try {
+                        const remainingActive = new Set(state.nonWorkDaySet);
+                        rescheduledCount = await revertTargetedNoWorkReschedule(removedDates, remainingActive);
+                    } catch (err) {
+                        scheduleError = err;
+                        console.warn('KD2 no-work day revert failed:', err.message);
+                    }
+                }
+            }
             await helpers.reloadAll?.();
+            const baseMessage = editingIds.length ? 'KD2 no-work range updated.' : 'KD2 no-work range saved.';
+            if (scheduleError) {
+                toast(`${baseMessage} Rescheduling failed: ${scheduleError.message}`, 'warn');
+            } else {
+                toast(rescheduledCount ? `${baseMessage} ${rescheduledCount} plan block(s) rescheduled.` : baseMessage, 'success');
+            }
         } catch (error) {
             setNoWorkError(error.message);
+            await refreshWorkspace();
+            renderNoWorkDays();
+            await helpers.reloadAll?.();
         }
     }
 
@@ -3187,7 +3226,7 @@ window.PPMSModuleRuntime = (() => {
             if (error) throw error;
             await writeAudit('DELETE', 'planning_non_work_days', makeNoWorkAuditRecordId(before.map(row => row.off_date)), before, null);
             const nextOffDates = new Set(previousOffDates);
-            before.filter(isNoWorkRowActive).forEach(row => nextOffDates.delete(row.off_date));
+            before.forEach(row => nextOffDates.delete(row.off_date));
             const rescheduledCount = !noWorkDateSetsEqual(previousOffDates, nextOffDates)
                 ? await recalculatePlanWindowsForNonWorkDayChange(previousOffDates, nextOffDates, `kd2-non-work-delete:${group.start}`)
                 : 0;
@@ -3207,34 +3246,36 @@ window.PPMSModuleRuntime = (() => {
         const group = getNonWorkDayGroupByStart(startDateStr);
         if (!group?.rows?.length) return;
         const ids = group.rows.map(row => row.id).filter(Number.isFinite);
-        const before = group.rows.slice();
+        const groupOffDates = new Set(group.rows.map(row => row.off_date));
         try {
-            const previousOffDates = new Set(state.nonWorkDaySet);
-            const { data, error } = await dbRef
+            const { error } = await dbRef
                 .from('planning_non_work_days')
                 .update({ is_active: !!nextActive })
                 .in('id', ids)
-                .eq('module_id', NON_WORK_MODULE_ID)
-                .select('*');
+                .eq('module_id', NON_WORK_MODULE_ID);
             if (error) throw error;
-            await writeAudit('UPDATE', 'planning_non_work_days', makeNoWorkAuditRecordId(before.map(row => row.off_date)), before, data);
-            const nextOffDates = new Set(previousOffDates);
-            before.filter(isNoWorkRowActive).forEach(row => nextOffDates.delete(row.off_date));
-            if (nextActive) before.forEach(row => nextOffDates.add(row.off_date));
-            const rescheduledCount = !noWorkDateSetsEqual(previousOffDates, nextOffDates)
-                ? await recalculatePlanWindowsForNonWorkDayChange(previousOffDates, nextOffDates, `kd2-non-work-toggle:${group.start}`)
-                : 0;
+            const previousActiveOffDates = new Set(
+                state.nonWorkDays.filter(row => row.is_active === true).map(row => row.off_date)
+            );
             await refreshWorkspace();
             renderNoWorkDays();
-            if (parseNoWorkEditingIds().some(id => ids.includes(id))) startNoWorkEdit(startDateStr);
-            updatePlanCreateEndFromDuration();
-            toast(
-                rescheduledCount
-                    ? `KD2 no-work range ${nextActive ? 'activated' : 'deactivated'}. ${rescheduledCount} plan block(s) recalculated.`
-                    : `KD2 no-work range ${nextActive ? 'activated' : 'deactivated'}.`,
+            const currentActiveOffDates = new Set(
+                state.nonWorkDays.filter(row => row.is_active === true).map(row => row.off_date)
+            );
+            let rescheduled = 0;
+            if (nextActive) {
+                const addedDates = new Set([...groupOffDates].filter(d => !previousActiveOffDates.has(d)));
+                if (addedDates.size) rescheduled = await applyTargetedNoWorkReschedule(addedDates, previousActiveOffDates);
+            } else {
+                const removedDates = new Set([...groupOffDates].filter(d => previousActiveOffDates.has(d)));
+                if (removedDates.size) rescheduled = await revertTargetedNoWorkReschedule(removedDates, currentActiveOffDates);
+            }
+            await helpers.reloadAll?.();
+            toast(rescheduled
+                ? `No-work day ${nextActive ? 'activated' : 'deactivated'}. ${rescheduled} plan block(s) updated.`
+                : `No-work day ${nextActive ? 'activated' : 'deactivated'}.`,
                 'success'
             );
-            await helpers.reloadAll?.();
         } catch (error) {
             setNoWorkError(error.message);
         }
@@ -4135,7 +4176,14 @@ window.PPMSModuleRuntime = (() => {
         if (!container) return;
         const cards = [...container.querySelectorAll('[data-kd2-template-block]')];
         if (!cards.length) {
-            state.templateEditorBlocks = [];
+            // Only clear blocks when the editor has been actively rendered (indicated by the
+            // data-rendered attribute set by renderTemplateEditor). Without this guard,
+            // calling syncTemplateEditorStateFromDom before the editor renders wipes the
+            // in-memory state loaded by ensureTemplateEditorState, causing the intermittent
+            // "No template rows are available to save" error.
+            if (container.dataset.rendered === 'true') {
+                state.templateEditorBlocks = [];
+            }
             return;
         }
         const previousBlocks = new Map(state.templateEditorBlocks.map(block => [block.editor_id, block]));
@@ -4837,6 +4885,7 @@ window.PPMSModuleRuntime = (() => {
             : state.templateEditorView === 'preview'
                 ? renderTemplateEditorPreview(state.templateEditorBlocks)
                 : renderTemplateEditorForm(state.templateEditorBlocks);
+        container.dataset.rendered = 'true';
     }
 
     function createNewTemplateItem(kind, vehicle) {
@@ -5575,6 +5624,84 @@ window.PPMSModuleRuntime = (() => {
         if (!anchor) return [];
         const anchorRouteSequence = routeSequenceValue(anchor);
         return laneRows.filter(row => routeSequenceValue(row) >= anchorRouteSequence);
+    }
+
+    async function applyTargetedNoWorkReschedule(addedOffDatesSet, previousOffDatesSet) {
+        if (!dbRef || !addedOffDatesSet.size) return 0;
+        const sortedOff = [...addedOffDatesSet].sort();
+        const firstOff = sortedOff[0];
+        const lastOff = sortedOff[sortedOff.length - 1];
+        const nextOffDatesSet = new Set([...previousOffDatesSet, ...addedOffDatesSet]);
+        const { data: planRows, error } = await dbRef
+            .from('kd2_plan')
+            .select('id, battalion_id, vehicle_type, unit_serial, unit_label, route_sequence, station_sequence_in_category, station_code, planned_start_date, planned_end_date, schedule_week')
+            .lte('planned_start_date', lastOff)
+            .gte('planned_end_date', firstOff);
+        if (error) throw error;
+        if (!planRows?.length) return 0;
+        const changes = [];
+        planRows.forEach(row => {
+            const start = row.planned_start_date;
+            const end = row.planned_end_date;
+            if (!start || !end || start > lastOff || end < firstOff) return;
+            const oldRules = planningRulesForOffDates(row.battalion_id, row.vehicle_type, previousOffDatesSet);
+            const newRules = planningRulesForOffDates(row.battalion_id, row.vehicle_type, nextOffDatesSet);
+            const duration = Math.max(durationFromPlannedWindow(start, end, oldRules), 1);
+            const newWindow = buildForwardWindow(start, duration, newRules);
+            if (newWindow.start !== start || newWindow.end !== end) {
+                changes.push({
+                    id: row.id, stationCode: row.station_code,
+                    oldBattalionId: row.battalion_id, oldVehicleType: row.vehicle_type,
+                    oldUnitSerial: row.unit_serial, oldUnitLabel: row.unit_label || null,
+                    oldStart: start, oldEnd: end,
+                    newBattalionId: row.battalion_id, newVehicleType: row.vehicle_type,
+                    newUnitSerial: row.unit_serial, newUnitLabel: row.unit_label || null,
+                    newStart: newWindow.start, newEnd: newWindow.end,
+                });
+            }
+        });
+        if (!changes.length) return 0;
+        await persistTimelineChanges(changes, 'kd2-non-work-targeted-apply');
+        return changes.length;
+    }
+
+    async function revertTargetedNoWorkReschedule(removedOffDatesSet, remainingOffDatesSet) {
+        if (!dbRef || !removedOffDatesSet.size) return 0;
+        const sortedOff = [...removedOffDatesSet].sort();
+        const firstOff = sortedOff[0];
+        const lastOff = sortedOff[sortedOff.length - 1];
+        const previousOffDatesSet = new Set([...remainingOffDatesSet, ...removedOffDatesSet]);
+        const { data: planRows, error } = await dbRef
+            .from('kd2_plan')
+            .select('id, battalion_id, vehicle_type, unit_serial, unit_label, route_sequence, station_sequence_in_category, station_code, planned_start_date, planned_end_date, schedule_week')
+            .lte('planned_start_date', lastOff)
+            .gte('planned_end_date', firstOff);
+        if (error) throw error;
+        if (!planRows?.length) return 0;
+        const changes = [];
+        planRows.forEach(row => {
+            const start = row.planned_start_date;
+            const end = row.planned_end_date;
+            if (!start || !end || start > lastOff || end < firstOff) return;
+            const oldRules = planningRulesForOffDates(row.battalion_id, row.vehicle_type, previousOffDatesSet);
+            const newRules = planningRulesForOffDates(row.battalion_id, row.vehicle_type, remainingOffDatesSet);
+            const duration = Math.max(durationFromPlannedWindow(start, end, oldRules), 1);
+            const newWindow = buildForwardWindow(start, duration, newRules);
+            if (newWindow.start !== start || newWindow.end !== end) {
+                changes.push({
+                    id: row.id, stationCode: row.station_code,
+                    oldBattalionId: row.battalion_id, oldVehicleType: row.vehicle_type,
+                    oldUnitSerial: row.unit_serial, oldUnitLabel: row.unit_label || null,
+                    oldStart: start, oldEnd: end,
+                    newBattalionId: row.battalion_id, newVehicleType: row.vehicle_type,
+                    newUnitSerial: row.unit_serial, newUnitLabel: row.unit_label || null,
+                    newStart: newWindow.start, newEnd: newWindow.end,
+                });
+            }
+        });
+        if (!changes.length) return 0;
+        await persistTimelineChanges(changes, 'kd2-non-work-targeted-revert');
+        return changes.length;
     }
 
     async function recalculatePlanWindowsForNonWorkDayChange(previousOffDates, nextOffDates, auditLabel) {
@@ -6538,6 +6665,8 @@ window.PPMSModuleRuntime = (() => {
         loadPlanningSnapshot,
         refreshWorkspace,
         renderSchedule,
+        setTimelineViewMode,
+        currentTimelineViewMode,
         openPlanEdit,
         openPlanCreateModal,
         openNoWorkModal,
@@ -6545,6 +6674,23 @@ window.PPMSModuleRuntime = (() => {
         toggleTimelineVisualMenu,
         shiftPlanRowToStart,
         getGanttSpecialZones,
+            getStationRouteOrder(vehicle) {
+                const order = new Map();
+                (state.routes || [])
+                    .filter(r => !vehicle || r.vehicle_type === vehicle)
+                    .forEach(r => {
+                        const seq = parseInt(r.route_sequence, 10) || 9999;
+                        // routes table has station_code not station_name — look up from stations
+                        const stationRow = (state.stations || []).find(
+                            s => s.station_code === r.station_code && s.vehicle_type === r.vehicle_type
+                        );
+                        const name = stationRow?.station_name || r.station_name || r.station_code;
+                        if (name && !order.has(name)) {
+                            order.set(name, seq);
+                        }
+                    });
+                return order;
+            },
         comparePlanRowsByLaneOrder,
         getPlanMoveRowsFromAnchor,
     };
