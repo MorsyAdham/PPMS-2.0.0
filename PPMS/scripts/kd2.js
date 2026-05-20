@@ -8,19 +8,19 @@ window.PPMSModuleRuntime = (() => {
     const MODULES = {
         kd1: {
             id: 'kd1',
-            badge: 'KD1',
+            badge: 'F200 – KD1',
             title: 'Production Planning & Monitoring Control',
-            subtitle: 'Plan vs Actual Tracking System',
-            tableTitle: 'Assembly Plan Details',
+            subtitle: 'F200 Plan vs Actual Tracking System',
+            tableTitle: 'F200 Assembly Plan Details',
             unitLabel: 'Unit',
             categories: ['Assembly', 'Final Test', 'Processing'],
         },
         kd2: {
             id: 'kd2',
-            badge: 'KD2',
+            badge: 'F200 – KD2',
             title: 'Production Planning & Monitoring Control',
-            subtitle: 'Battalion Planning and Progress Control',
-            tableTitle: 'KD2 Battalion Plan Details',
+            subtitle: 'F200 Battalion Planning and Progress Control',
+            tableTitle: 'F200 – KD2 Battalion Plan Details',
             unitLabel: 'Battalion / Unit',
             categories: [
                 'Welding',
@@ -30,6 +30,15 @@ window.PPMSModuleRuntime = (() => {
                 'Processing',
                 'Final Test',
             ],
+        },
+        f100kd2: {
+            id: 'f100kd2',
+            badge: 'F100 – KD2',
+            title: 'F100 Production Planning & Monitoring Control',
+            subtitle: 'F100 Part Manufacturing Progress Control',
+            tableTitle: 'F100 – KD2 Part Plan Details',
+            unitLabel: 'Battalion / Part',
+            categories: [],   // F100 uses part-level grouping, not station categories
         },
     };
     const KD2_CATEGORY_CODES = new Set(['welding', 'machining', 'shot_blasting_painting', 'assembly', 'processing', 'final_test']);
@@ -103,6 +112,15 @@ window.PPMSModuleRuntime = (() => {
 
     function isKD2() {
         return getActiveModule() === 'kd2';
+    }
+
+    function isF100KD2() {
+        return getActiveModule() === 'f100kd2';
+    }
+
+    function isF200Module() {
+        const m = getActiveModule();
+        return m === 'kd1' || m === 'kd2';
     }
 
     function setActiveModule(moduleId) {
@@ -199,6 +217,9 @@ window.PPMSModuleRuntime = (() => {
 
     function applyModuleShell() {
         const config = getActiveConfig();
+        const f100 = isF100KD2();
+        const kd2 = isKD2();
+
         document.body.dataset.module = config.id;
         setText('moduleBadge', config.badge);
         setText('brandTitle', config.title);
@@ -210,30 +231,53 @@ window.PPMSModuleRuntime = (() => {
         const selector = document.getElementById('moduleSelector');
         if (selector) selector.value = config.id;
 
-        setDisplay('filterBattalionGroup', isKD2());
-        setDisplay('kd2PhaseSection', isKD2());
-        setDisplay('kd2WorkspaceSection', isKD2());
-        setDisplay('ganttSection', true);
-        setDisplay('vpxSection', true);
-        setDisplay('chartsSection', true);
-        setDisplay('btnImport', !isKD2());
-        setDisplay('btnKd2DownloadTemplate', isKD2());
-        setDisplay('btnKd2UploadPlan', isKD2());
-        setDisplay('btnGanttEdit', true);
-        setDisplay('btnReports', true);
-        if (isKD2()) {
+        // F200-KD2-specific workspace sections — hidden for F100
+        setDisplay('filterBattalionGroup', kd2);
+        setDisplay('kd2PhaseSection', kd2);
+        setDisplay('kd2WorkspaceSection', kd2);
+
+        // Import buttons
+        setDisplay('btnImport', !kd2 && !f100);
+        setDisplay('btnKd2DownloadTemplate', kd2);
+        setDisplay('btnKd2UploadPlan', kd2);
+
+        // Hide F200 import panels when not relevant
+        if (kd2 || f100) {
             const legacyImportPanel = document.getElementById('importPanel');
             if (legacyImportPanel) legacyImportPanel.style.display = 'none';
         }
-        if (!isKD2()) {
+        if (!kd2) {
             const kd2ImportPanel = document.getElementById('kd2ImportPanel');
             if (kd2ImportPanel) kd2ImportPanel.style.display = 'none';
         }
-        setText('ganttTitle', isKD2() ? 'KD2 Planning Gantt' : 'Production Master Schedule');
-        setText('ganttSubtitle', isKD2() ? 'Battalion Plan · Daily Gantt View' : 'Assembly Plan · Daily Gantt View');
-        setText('btnGanttEditLabel', isKD2() ? 'Edit Gantt' : 'Edit Plan');
-        setText('vpxTitle', isKD2() ? 'KD2 VPX Matrix' : 'Vehicle Production Progress');
-        setText('vpxSubtitle', isKD2() ? 'Battalion-by-station planned vs actual · hover for details' : 'Station-by-station planned vs actual · hover for details');
+
+        // Sections visible in all modules (F100 will populate them with its own data)
+        setDisplay('ganttSection', true);
+        setDisplay('vpxSection', true);
+        setDisplay('chartsSection', !f100);   // Charts not yet implemented for F100
+        setDisplay('btnGanttEdit', true);
+        setDisplay('btnReports', !f100);       // Reports not yet implemented for F100
+
+        // Dynamic text labels
+        if (f100) {
+            setText('ganttTitle', 'F100 – KD2 Production Gantt');
+            setText('ganttSubtitle', 'Part Manufacturing Progress · Daily View');
+            setText('btnGanttEditLabel', 'Edit Gantt');
+            setText('vpxTitle', 'F100 – KD2 Part Progress Matrix');
+            setText('vpxSubtitle', 'Part-by-process completion · hover for details');
+        } else if (kd2) {
+            setText('ganttTitle', 'F200 – KD2 Planning Gantt');
+            setText('ganttSubtitle', 'Battalion Plan · Daily Gantt View');
+            setText('btnGanttEditLabel', 'Edit Gantt');
+            setText('vpxTitle', 'F200 – KD2 VPX Matrix');
+            setText('vpxSubtitle', 'Battalion-by-station planned vs actual · hover for details');
+        } else {
+            setText('ganttTitle', 'F200 – KD1 Production Master Schedule');
+            setText('ganttSubtitle', 'Assembly Plan · Daily Gantt View');
+            setText('btnGanttEditLabel', 'Edit Plan');
+            setText('vpxTitle', 'F200 – KD1 Vehicle Production Progress');
+            setText('vpxSubtitle', 'Station-by-station planned vs actual · hover for details');
+        }
     }
 
     function getCategory(processStation, row) {
@@ -6655,6 +6699,8 @@ window.PPMSModuleRuntime = (() => {
         getActiveModule,
         getActiveConfig,
         isKD2,
+        isF100KD2,
+        isF200Module,
         isPlacementActive: () => state.timelinePlacementActive,
         setActiveModule,
         getCategory,

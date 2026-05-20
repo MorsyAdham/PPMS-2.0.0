@@ -256,19 +256,30 @@ function isKD2Module() {
     return getActiveModuleId() === 'kd2';
 }
 
+function isF100KD2Module() {
+    return getActiveModuleId() === 'f100kd2';
+}
+
+function isF200Module() {
+    const id = getActiveModuleId();
+    return id === 'kd1' || id === 'kd2';
+}
+
 function getActiveModuleConfig() {
     return getModuleRuntime()?.getActiveConfig?.() || null;
 }
 
 function getModuleBadge() {
-    return getActiveModuleConfig()?.badge || (isKD2Module() ? 'KD2' : 'KD1');
+    return getActiveModuleConfig()?.badge || (isKD2Module() ? 'F200 – KD2' : 'F200 – KD1');
 }
 
 function getModuleReportTitle() {
-    return isKD2Module() ? 'Battalion Planning and Progress Control' : 'Assembly Control System';
+    if (isF100KD2Module()) return 'F100 Part Manufacturing Progress Control';
+    return isKD2Module() ? 'F200 Battalion Planning and Progress Control' : 'F200 Assembly Control System';
 }
 
 function getModuleReportSubtitle() {
+    if (isF100KD2Module()) return 'Gun and Vehicle Part Plan vs Actual';
     return isKD2Module() ? 'Manual and generated plan export' : 'Plan vs Actual Tracking System';
 }
 
@@ -896,6 +907,16 @@ function refreshAllViews() {
 async function loadData() {
     try {
         setTableLoading(true);
+
+        // F100-KD2 has its own data loader — stub until Phase 3 is built
+        if (isF100KD2Module()) {
+            currentData = [];
+            renderTable([]);
+            updateSummary([]);
+            renderCharts([]);
+            renderVPX([]);
+            return;
+        }
 
         if (isKD2Module() && getModuleRuntime()?.loadData) {
             const week = getVal('filterWeek');
