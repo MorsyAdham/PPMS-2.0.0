@@ -1841,6 +1841,17 @@ const VPX_COLUMNS = [
 ];
 
 function getVpxDisplayMeta() {
+    if (isF100KD2Module()) return {
+        headerLabel: 'Battalion · Part / Process',
+        exportTitle: 'F100 Part Manufacturing Progress',
+        exportSubtitle: 'Part-by-process completion',
+        footerApp: 'F100 KD2 Part Manufacturing Progress Control',
+        workbookCreator: 'F100 KD2',
+        keyTitle: 'F100 VPX — Key & Legend',
+        filenamePrefix: 'F100_KD2_Progress',
+        emptyMessage: 'Load F100 data to view the progress matrix.',
+        noColumnsMessage: 'No F100 process steps found for the current filters.',
+    };
     return isKD2Module()
         ? {
             headerLabel: 'Battalion · Vehicle · Unit',
@@ -1992,7 +2003,220 @@ function getVpxExportLabel(row) {
     return [row.battalion_code || '—', `${row.vehicle} · ${unitLabel(row.vehicle, row.vehicle_no)}`].join('\n');
 }
 
+/* ──────────────────────────────────────────────────────────────────
+   F100 VPX — Part × Process progress matrix
+   ────────────────────────────────────────────────────────────────── */
+
+// 8-color palette for F100 part group stripes (cycles if > 8 parts)
+const F100_VPX_PART_COLORS = [
+    'rgba(59,130,246,.7)',   // blue
+    'rgba(168,85,247,.7)',   // purple
+    'rgba(236,72,153,.7)',   // pink
+    'rgba(245,158,11,.7)',   // amber
+    'rgba(16,185,129,.7)',   // emerald
+    'rgba(6,182,212,.7)',    // cyan
+    'rgba(249,115,22,.7)',   // orange
+    'rgba(132,204,22,.7)',   // lime
+];
+
+function buildF100VpxColumns(data) {
+    const colMap = new Map();
+    data.forEach(task => {
+        const key = `${task.part_sort}||${task.part_id}||${task.process_sort}`;
+        if (!colMap.has(key)) {
+            colMap.set(key, {
+                key,
+                code:         `#${task.step_number}`,
+                name:         task.process_name,
+                group:        task.part_name,
+                part_id:      task.part_id,
+                part_sort:    task.part_sort,
+                process_sort: task.process_sort,
+            });
+        }
+    });
+    return [...colMap.values()].sort((a, b) => {
+        if (a.part_sort !== b.part_sort) return a.part_sort - b.part_sort;
+        return a.process_sort - b.process_sort;
+    });
+}
+
+function buildF100VpxRows(data) {
+    const f100mode = document.getElementById('f100Mode')?.value || 'gun';
+    const rowMap = {};
+    data.forEach(task => {
+        const rowKey = f100mode === 'gun'
+            ? (task.battalion_code || '—')
+            : [task.battalion_code || '—', task.vehicle_type || '—', task.serial_number ?? '—'].join('||');
+        if (!rowMap[rowKey]) {
+            rowMap[rowKey] = {
+                battalion_code: task.battalion_code || '—',
+                vehicle_type:   task.vehicle_type   || null,
+                serial_number:  task.serial_number  ?? null,
+                plans: {},  // `${part_id}||${process_sort}` → task
+            };
+        }
+        const planKey = `${task.part_id}||${task.process_sort}`;
+        if (!rowMap[rowKey].plans[planKey]) rowMap[rowKey].plans[planKey] = task;
+    });
+
+    return Object.values(rowMap).sort((a, b) => {
+        const bc = (a.battalion_code || '').localeCompare(b.battalion_code || '', undefined, { numeric: true });
+        if (bc !== 0) return bc;
+        if (f100mode === 'vehicle') {
+            const vc = vehicleSort(a.vehicle_type, b.vehicle_type);
+            if (vc !== 0) return vc;
+            return (a.serial_number ?? 0) - (b.serial_number ?? 0);
+        }
+        return 0;
+    });
+}
+
+function renderF100VPX(data) {
+    const container = document.getElementById('vpxMatrix');
+    if (!container) return;
+
+    if (!data?.length) {
+        container.innerHTML = '<div class="vpx-empty">Load F100 data to view the progress matrix.</div>';
+        return;
+    }
+
+    const f100mode = document.getElementById('f100Mode')?.value || 'gun';
+    const cols = buildF100VpxColumns(data);
+    const rows = buildF100VpxRows(data);
+
+    if (!cols.length) {
+        container.innerHTML = '<div class="vpx-empty">No process steps found for the current filters.</div>';
+        return;
+    }
+
+    // Column groups (by part name) + assign colors
+    const groups = [];
+    const partColorMap = {};
+    let partColorIdx = 0;
+    cols.forEach(col => {
+        if (!groups.length || groups[groups.length - 1].label !== col.group) {
+            groups.push({ label: col.group, span: 1 });
+            if (!(col.part_id in partColorMap)) {
+                partColorMap[col.part_id] = F100_VPX_PART_COLORS[partColorIdx % F100_VPX_PART_COLORS.length];
+                partColorIdx++;
+            }
+        } else {
+            groups[groups.length - 1].span++;
+        }
+    });
+
+    function grpSlug(g) { return 'f100-part-' + g.toLowerCase().replace(/[^a-z0-9]+/g, '-'); }
+
+    let html = '<table class="vpx-table" role="grid"><thead>';
+
+    // Header row 1: part group names
+    const rowHeaderLabel = f100mode === 'gun' ? 'Battalion' : 'Battalion · Vehicle · Serial';
+    html += `<tr class="vpx-group-row"><th class="vpx-th-vehicle" rowspan="2">${rowHeaderLabel}</th>`;
+    let gPartIdx = 0;
+    groups.forEach(g => {
+        const partId = cols.find(c => c.group === g.label)?.part_id;
+        const color = partColorMap[partId] || F100_VPX_PART_COLORS[gPartIdx % F100_VPX_PART_COLORS.length];
+        gPartIdx++;
+        html += `<th class="vpx-th-group" colspan="${g.span}" style="box-shadow:inset 0 2px 0 ${color}">${esc(g.label)}</th>`;
+    });
+    html += '</tr><tr class="vpx-col-row">';
+
+    // Header row 2: step codes
+    cols.forEach((col, ci) => {
+        const color = partColorMap[col.part_id] || F100_VPX_PART_COLORS[0];
+        html += `<th class="vpx-th-col" data-col="${ci}" title="${esc(col.group + ' · #' + col.code.replace('#','') + ' ' + col.name)}" style="box-shadow:inset 0 -2px 0 ${color.replace('.7', '.55')}">${esc(col.code)}</th>`;
+    });
+    html += '</tr></thead><tbody>';
+
+    let prevBattalion = null;
+    let prevVehicle   = null;
+
+    rows.forEach((row, ri) => {
+        // Battalion group header
+        if (row.battalion_code !== prevBattalion) {
+            html += '<tr class="vpx-row vpx-row-group vpx-row-battalion">';
+            html += '<td class="vpx-td-vehicle vpx-td-group vpx-td-battalion" colspan="1">'
+                + '<div class="vpx-grp-inner">'
+                + '<svg class="vpx-bat-icon" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.8"><rect x="2" y="3" width="12" height="10" rx="1.5"/><path d="M6 9h4M4 6h8M4 12h8"/></svg>'
+                + `<span class="vpx-battalion-name">${esc(row.battalion_code)}</span>`
+                + '</div></td>';
+            cols.forEach(() => { html += '<td class="vpx-group-fill vpx-group-battalion"></td>'; });
+            html += '</tr>';
+            prevBattalion = row.battalion_code;
+            prevVehicle   = null;
+        }
+
+        // Vehicle subgroup header (vehicle mode only)
+        if (f100mode === 'vehicle' && row.vehicle_type !== prevVehicle) {
+            html += '<tr class="vpx-row vpx-row-group vpx-row-vehicle">';
+            html += '<td class="vpx-td-vehicle vpx-td-group vpx-td-vehicle" colspan="1">'
+                + '<div class="vpx-grp-inner">'
+                + `<span class="vpx-veh-badge">${esc(row.vehicle_type || '—')}</span>`
+                + '</div></td>';
+            cols.forEach(() => { html += '<td class="vpx-group-fill vpx-group-vehicle"></td>'; });
+            html += '</tr>';
+            prevVehicle = row.vehicle_type;
+        }
+
+        // Data row
+        const rowLabel = f100mode === 'gun'
+            ? esc(row.battalion_code)
+            : `#${row.serial_number ?? '?'}`;
+        html += `<tr class="vpx-row" data-ri="${ri}">`;
+        html += '<td class="vpx-td-vehicle vpx-td-unit">'
+            + '<div class="vpx-unit-inner"><span class="vpx-unit-dot"></span>'
+            + '<div class="vpx-unit-text">'
+            + `<span class="vpx-unit-name">${rowLabel}</span>`
+            + '</div></div></td>';
+
+        cols.forEach((col, ci) => {
+            const planKey = `${col.part_id}||${col.process_sort}`;
+            const task = row.plans[planKey];
+
+            if (!task) {
+                html += `<td class="vpx-cell vpx-cell-empty" data-ri="${ri}" data-ci="${ci}" title="${esc(col.group + ' · ' + col.name)} — not planned">—</td>`;
+                return;
+            }
+
+            const status = task.status || 'Planned';
+            const dotClass = status === 'Completed'      ? 'vpx-dot-ok'
+                           : status === 'In Progress'    ? 'vpx-dot-prog'
+                           : status === 'Late Completion' ? 'vpx-dot-late'
+                           : status === 'Overdue'        ? 'vpx-dot-over'
+                           :                              'vpx-dot-plan';
+            const statusSlug = status.toLowerCase().replace(/\s+/g, '-').replace('late-completion', 'late');
+
+            const planRange = formatDateShort(task.planned_start_date) + ' → ' + formatDateShort(task.planned_end_date);
+            const actRange  = task.actual_start_date
+                ? formatDateShort(task.actual_start_date) + ' → ' + (task.actual_end_date ? formatDateShort(task.actual_end_date) : '?')
+                : null;
+
+            const tip = [
+                `${task.part_name} · #${task.step_number} ${task.process_name}`,
+                `Planned : ${formatDate(task.planned_start_date)} → ${formatDate(task.planned_end_date)}`,
+                task.actual_start_date ? `Actual  : ${formatDate(task.actual_start_date)} → ${task.actual_end_date ? formatDate(task.actual_end_date) : '?'}` : null,
+                `Status  : ${status}`,
+            ].filter(Boolean).join('\n');
+
+            html += `<td class="vpx-cell vpx-status-${statusSlug}" data-ri="${ri}" data-ci="${ci}" title="${tip.replace(/"/g, "'")}">`
+                + `<span class="vpx-dot ${dotClass}"></span>`
+                + '<div class="vpx-dates">'
+                + `<span class="vpx-date-plan">${planRange}</span>`
+                + `<span class="vpx-date-act${actRange ? '' : ' vpx-date-none'}">${actRange || '—'}</span>`
+                + '</div></td>';
+        });
+
+        html += '</tr>';
+    });
+
+    html += '</tbody></table>';
+    container.innerHTML = html;
+}
+
 function renderVPX(data) {
+    if (isF100KD2Module()) { renderF100VPX(data); return; }
+
     const container = document.getElementById('vpxMatrix');
     if (!container) return;
     const meta = getVpxDisplayMeta();
