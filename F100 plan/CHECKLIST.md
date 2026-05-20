@@ -18,8 +18,6 @@ Rename display labels only. Internal IDs (`kd1`, `kd2`) and localStorage keys st
 - ✅ Guard `loadData()` — F100-KD2 returns empty set (stub) until Phase 3 data loader is built
 - ✅ Update report title/subtitle helpers for F100-KD2
 
----
-
 ## Phase 2 — Database Setup ✅
 
 - ✅ Create `f100_parts` table in Supabase (`db/01_create_tables.sql`)
@@ -49,11 +47,10 @@ Rename display labels only. Internal IDs (`kd1`, `kd2`) and localStorage keys st
 
 ## Phase 4 — Table View
 
-- ⬜ Build `renderF100Table(data)` with columns:
-  - Battalion, Part, Part No., Manufacturer, Vehicle, Serial, Step, Process,
-    Planned Start, Planned End, Actual Start, Actual End, Status, % Done
-- ⬜ Compute % Done client-side (completed units ÷ total units)
-- ⬜ Sort / search support
+- ✅ Build `renderF100Table(data)` with columns: Battalion, Part, Part No., Manufacturer, Vehicle, Serial, Step, Process, Planned Start, Planned End, Actual Start, Actual End, Status, % Done
+- ✅ Compute % Done client-side (completed ÷ total per battalion+part+process group; rendered as mini progress bar)
+- ✅ `renderTable()` dispatches to F100 renderer; F200 header auto-restored when switching back
+- ✅ Sort / search: rows sorted by battalion → part → process; search box uses existing client-side logic
 
 ---
 
