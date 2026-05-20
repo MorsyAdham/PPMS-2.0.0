@@ -14,8 +14,9 @@ export function renderPageChrome() {
                 <div class="module-switch">
                     <select id="moduleSelector" class="filter-control module-switch-control" aria-label="Module"
                         title="Module">
-                        <option value="kd1">KD1</option>
-                        <option value="kd2">KD2</option>
+                        <option value="kd1">F200 – KD1</option>
+                        <option value="kd2">F200 – KD2</option>
+                        <option value="f100kd2">F100 – KD2</option>
                     </select>
                 </div>
                 <!-- Theme toggle -->
