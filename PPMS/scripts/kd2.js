@@ -246,6 +246,7 @@ window.PPMSModuleRuntime = (() => {
         setDisplay('customDateEnd', !f100);
 
         // F100 filter items — shown only when F100 is active
+        setDisplay('f100BattalionGroup', f100);
         setDisplay('f100ModeGroup', f100);
         // Secondary F100 filters: default state matches the 'gun' default option
         if (f100) {
