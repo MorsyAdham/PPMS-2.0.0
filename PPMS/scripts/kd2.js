@@ -126,6 +126,18 @@ window.PPMSModuleRuntime = (() => {
         return String(stationCode || '').toLowerCase().startsWith(`${String(vehicleType || '').toLowerCase()}_`);
     }
 
+    function normalizeWorkCenter(workCenter) {
+        return String(workCenter || '')
+            .toUpperCase()
+            .split(/[,;]/)
+            .map(token => {
+                const match = token.trim().match(/^A(\d)$/);
+                return match ? `A0${match[1]}` : token.trim();
+            })
+            .filter(token => token)
+            .join(', ');
+    }
+
     function workCenterTokens(workCenter) {
         return String(workCenter || '')
             .toUpperCase()
@@ -655,7 +667,17 @@ window.PPMSModuleRuntime = (() => {
         if (filters.unit) query = query.eq('vehicle_no', filters.unit);
         if (filters.week) query = query.lte('start_date', filters.weekEndForFilter).gte('end_date', filters.weekStartForFilter);
         query = applyTimeFrame(query, filters);
-        const rows = await queryAll(query);
+        let rows = await queryAll(query);
+        
+        // Apply K9 component filter if K9 is selected
+        if (filters.vehicle === 'K9' && filters.k9Component) {
+            const componentLower = filters.k9Component.toLowerCase();
+            rows = rows.filter(row => {
+                const stationCode = (row.station_code || '').toLowerCase();
+                return stationCode.includes(componentLower);
+            });
+        }
+        
         const detailMap = new Map();
         if (rows.length) {
             const ids = rows.map(row => row.id).filter(Boolean);
@@ -1022,7 +1044,7 @@ window.PPMSModuleRuntime = (() => {
         container.innerHTML = categories.map(category => {
             const categoryStations = stations.filter(station => station.category_code === category.category_code);
             return `
-                <section class="kd2-process-category">
+                <section class="kd2-process-category" data-category-code="${escapeHtml(category.category_code)}">
                     <div class="kd2-process-category-head">
                         <div>
                             <strong>${escapeHtml(category.category_name)}</strong>
@@ -1101,6 +1123,44 @@ window.PPMSModuleRuntime = (() => {
         if (overlay) overlay.classList.add('modal-overlay-wide');
         moveProcessOverlayToActiveHost();
         if (overlay) overlay.style.display = 'flex';
+        // Setup category filter behaviour after rendering
+        setupProcessFilter();
+    }
+
+    function setupProcessFilter() {
+        const filter = document.getElementById('kd2ProcessCategoryFilter');
+        const clearBtn = document.getElementById('btnKd2ProcessFilterClear');
+        const shell = document.getElementById('kd2ProcessBody');
+        if (!filter || !shell) return;
+        const vehicle = processEditorVehicle();
+        const categories = processCategoriesForVehicle(vehicle);
+        filter.innerHTML = '<option value="">All Categories</option>' + categories.map(cat => ` <option value="${escapeHtml(cat.category_code)}">${escapeHtml(cat.category_name)}</option>`).join('');
+        // keep current selection if set in the form
+        filter.value = document.getElementById('kd2ProcessCategory')?.value || '';
+        function applyFilter() {
+            const sel = filter.value;
+            document.querySelectorAll('.kd2-process-category').forEach(sec => {
+                const code = sec.getAttribute('data-category-code') || '';
+                if (!sel) {
+                    sec.classList.remove('is-hidden','is-focused');
+                } else if (code === sel) {
+                    sec.classList.remove('is-hidden');
+                    sec.classList.add('is-focused');
+                    // scroll so header aligns under filter bar
+                    const head = sec.querySelector('.kd2-process-category-head');
+                    const shellRect = shell.getBoundingClientRect();
+                    const headRect = head ? head.getBoundingClientRect() : sec.getBoundingClientRect();
+                    const filterRect = document.getElementById('kd2ProcessCategoryFilter').getBoundingClientRect();
+                    const offset = headRect.top - shellRect.top - filterRect.height - 8; // small gap
+                    shell.scrollBy({ top: offset, behavior: 'smooth' });
+                } else {
+                    sec.classList.add('is-hidden');
+                    sec.classList.remove('is-focused');
+                }
+            });
+        }
+        filter.addEventListener('change', applyFilter);
+        if (clearBtn) clearBtn.addEventListener('click', () => { filter.value = ''; applyFilter(); });
     }
 
     function renderLeadTimeEditor() {
@@ -4982,9 +5042,18 @@ window.PPMSModuleRuntime = (() => {
             row.station_code = stationCode;
             existingCodes.add(`${row.vehicle_type}||${stationCode}`);
             const key = `${row.vehicle_type}||${row.category_code}`;
-            const currentMax = categorySequenceCounters.get(key) ?? Math.max(0, ...state.stations
-                .filter(item => item.vehicle_type === row.vehicle_type && item.category_code === row.category_code)
-                .map(item => parseInt(item.station_sequence_in_category, 10) || 0));
+            
+            let currentMax = categorySequenceCounters.get(key);
+            if (currentMax === undefined) {
+                const { data: maxSeqData } = await dbRef
+                    .from('kd2_process_stations')
+                    .select('station_sequence_in_category')
+                    .eq('vehicle_type', row.vehicle_type)
+                    .eq('category_code', row.category_code)
+                    .order('station_sequence_in_category', { ascending: false })
+                    .limit(1);
+                currentMax = (maxSeqData && maxSeqData.length > 0) ? maxSeqData[0].station_sequence_in_category : 0;
+            }
             row.station_sequence_in_category = currentMax + 1;
             categorySequenceCounters.set(key, row.station_sequence_in_category);
         }
@@ -4999,24 +5068,45 @@ window.PPMSModuleRuntime = (() => {
         }));
 
         for (const row of processRows) {
-            const stationPayload = row.isNew
-                ? {
+            if (row.isNew) {
+                const stationPayload = {
                     vehicle_type: row.vehicle_type,
                     category_code: row.category_code,
                     station_code: row.station_code,
                     station_name: row.station_name,
-                    work_center: row.work_center || null,
+                    work_center: normalizeWorkCenter(row.work_center) || null,
                     station_sequence_in_category: row.station_sequence_in_category,
                     route_sequence: row.route_sequence,
                     is_active: true,
                     notes: 'Added from KD2 template editor',
+                };
+                const { data: existing, error: checkError } = await dbRef
+                    .from('kd2_process_stations')
+                    .select('*')
+                    .eq('vehicle_type', row.vehicle_type)
+                    .eq('station_code', row.station_code);
+                
+                if (checkError && checkError.code !== 'PGRST116') throw checkError;
+                
+                if (existing && existing.length > 0) {
+                    const { error: stationError } = await dbRef
+                        .from('kd2_process_stations')
+                        .update({ route_sequence: row.route_sequence, is_active: true })
+                        .eq('vehicle_type', row.vehicle_type)
+                        .eq('station_code', row.station_code);
+                    if (stationError) throw stationError;
+                } else {
+                    const { error: stationError } = await dbRef.from('kd2_process_stations').insert(stationPayload);
+                    if (stationError) throw stationError;
                 }
-                : { route_sequence: row.route_sequence, is_active: true };
-            const stationQuery = row.isNew
-                ? dbRef.from('kd2_process_stations').upsert(stationPayload, { onConflict: 'vehicle_type,station_code' })
-                : dbRef.from('kd2_process_stations').update(stationPayload).eq('vehicle_type', row.vehicle_type).eq('station_code', row.station_code);
-            const { error: stationError } = await stationQuery;
-            if (stationError) throw stationError;
+            } else {
+                const { error: stationError } = await dbRef
+                    .from('kd2_process_stations')
+                    .update({ route_sequence: row.route_sequence, is_active: true })
+                    .eq('vehicle_type', row.vehicle_type)
+                    .eq('station_code', row.station_code);
+                if (stationError) throw stationError;
+            }
 
             const { error: routeError } = await dbRef
                 .from('kd2_process_routes')
@@ -5118,6 +5208,7 @@ window.PPMSModuleRuntime = (() => {
         state.templateRemovedStations.clear();
         state.templateInsertIndex = null;
         await loadWorkspaceData();
+        await helpers.reloadAll?.();
         ensureTemplateEditorState(vehicle, { force: true });
         renderTemplateEditor();
         updatePlanCreateDurationFromStation(true);
