@@ -236,6 +236,29 @@ window.PPMSModuleRuntime = (() => {
         setDisplay('kd2PhaseSection', kd2);
         setDisplay('kd2WorkspaceSection', kd2);
 
+        // Standard F200 filter items — hidden when F100 is active
+        setDisplay('filterVehicleGroup', !f100);
+        setDisplay('filterUnitGroup', !f100);
+        setDisplay('filterCategoryGroup', !f100);
+        setDisplay('filterWeekGroup', !f100);
+        setDisplay('filterTimeFrameGroup', !f100);
+        setDisplay('customDateStart', !f100);
+        setDisplay('customDateEnd', !f100);
+
+        // F100 filter items — shown only when F100 is active
+        setDisplay('f100ModeGroup', f100);
+        // Secondary F100 filters: default state matches the 'gun' default option
+        if (f100) {
+            const currentMode = document.getElementById('f100Mode')?.value || 'gun';
+            setDisplay('f100GunPartGroup', currentMode === 'gun');
+            setDisplay('f100ManufacturerGroup', currentMode === 'vehicle');
+            setDisplay('f100VehicleTypeGroup', currentMode === 'vehicle');
+        } else {
+            setDisplay('f100GunPartGroup', false);
+            setDisplay('f100ManufacturerGroup', false);
+            setDisplay('f100VehicleTypeGroup', false);
+        }
+
         // Import buttons
         setDisplay('btnImport', !kd2 && !f100);
         setDisplay('btnKd2DownloadTemplate', kd2);
