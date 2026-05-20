@@ -9,6 +9,14 @@ export function initFeature() {
                         <option value="">All Vehicles</option>
                     </select>
                 </div>
+                <div class="filter-item" id="filterK9ComponentGroup" style="display:none;">
+                    <label class="filter-label" for="filterK9Component">K9 Component</label>
+                    <select id="filterK9Component" class="filter-control">
+                        <option value="">All Components</option>
+                        <option value="Hull">Hull</option>
+                        <option value="Turret">Turret</option>
+                    </select>
+                </div>
                 <div class="filter-item" id="filterBattalionGroup" style="display:none;">
                     <label class="filter-label" for="filterBattalion">Battalion</label>
                     <select id="filterBattalion" class="filter-control">

@@ -1896,20 +1896,38 @@ body {
 .kd2-process-shell {
     display: flex;
     flex-direction: column;
-    gap: 16px;
+    gap: 18px;
     margin-top: 18px;
-    /* Allow the shell to expand within wide modal while leaving room
-       for the modal header/footer; improves usability on small viewports */
-    max-height: calc(100vh - 220px);
-    overflow: auto;
-    padding-right: 4px;
+    /* Allow the shell to expand to fit its contents and make it readable */
+    min-height: 420px;
+    max-height: none;
+    overflow-y: auto;
+    padding-right: 10px;
 }
 
 .kd2-process-category {
     border: 1px solid var(--clr-border-soft);
     border-radius: var(--radius);
     background: var(--clr-surface-2);
-    overflow: hidden;
+    overflow: hidden; /* contain child overflow so table content stays inside category */
+    min-height: 200px; /* minimum height requested */
+    padding: 12px; /* breathing room inside category */
+    transition: box-shadow .12s ease, transform .12s ease;
+    position: relative;
+}
+
+.kd2-process-category:hover {
+    box-shadow: 0 8px 24px rgba(2,6,23,0.08);
+    transform: translateY(-2px);
+}
+
+.kd2-process-filter-bar {
+    position: sticky;
+    top: 0;
+    z-index: 60;
+    padding: 10px 0 12px;
+    background: var(--clr-surface);
+    border-bottom: 1px solid var(--clr-border-soft);
 }
 
 .kd2-process-category-head {
@@ -1917,12 +1935,39 @@ body {
     align-items: center;
     justify-content: space-between;
     gap: 12px;
-    padding: 14px 16px;
+    padding: 12px 12px;
     border-bottom: 1px solid var(--clr-border-soft);
+    position: static; /* not sticky — keep normal flow */
+    background: transparent;
+    z-index: auto;
+}
+
+.kd2-process-category.is-hidden {
+    display: none;
+}
+
+.kd2-process-category.is-focused {
+    box-shadow: 0 10px 30px rgba(2,6,23,0.06);
+    border-color: rgba(15,23,42,0.06);
 }
 
 .kd2-process-table-wrap {
-    overflow: auto;
+    overflow: auto; /* table-level scrolling to contain table height and keep headers inside table */
+    max-height: calc(50vh); /* reasonable max so tables don't overflow modal; responsive */
+    position: relative;
+}
+
+.kd2-process-table thead th {
+    position: sticky;
+    top: 0; /* stick to top of the table scroll container */
+    z-index: 5;
+    background: var(--clr-surface-2);
+}
+
+.kd2-process-table th,
+.kd2-process-table td {
+    overflow-wrap: anywhere;
+    word-break: break-word;
 }
 
 .kd2-process-table {
@@ -1931,8 +1976,10 @@ body {
 
 .kd2-process-table th,
 .kd2-process-table td {
-    padding: 10px 12px;
-    vertical-align: top;
+    padding: 12px 16px;
+    vertical-align: middle;
+    font-size: .92rem;
+    white-space: normal; /* allow text wrapping for readability */
 }
 
 .kd2-process-actions {
@@ -3204,6 +3251,14 @@ body {
     width: 100%;
     max-width: 480px;
     animation: modal-in .25s cubic-bezier(.34, 1.56, .64, 1);
+    display: flex;
+    flex-direction: column;
+    overflow: hidden; /* confine internal scrolling to .modal-body */
+    max-height: calc(100vh - 32px);
+}
+
+.modal.modal-wide {
+    max-width: 1080px;
 }
 
 @keyframes modal-in {
@@ -3254,7 +3309,9 @@ body {
     flex-direction: column;
     gap: 16px;
     min-height: 0;
-    overflow: auto;
+    overflow-y: auto;
+    /* allow the modal body to scroll when content exceeds viewport */
+    max-height: calc(100vh - 140px);
 }
 
 .modal-info {
@@ -6490,12 +6547,59 @@ body {
     height: 32px;
 }
 
-/* Vehicle group cell — matches Gantt .gr-group-label */
-.vpx-td-group {
-    background: var(--clr-surface-2) !important;
-    vertical-align: middle;
+/* Battalion group row (for KD2) — higher level grouping */
+.vpx-row-battalion td {
+    height: 40px;
+}
+
+.vpx-row-battalion .vpx-td-battalion {
+    background: var(--clr-surface-3) !important;
+    border-bottom: 2px solid var(--clr-border);
     padding: 0 14px;
-    height: 32px;
+    height: 40px;
+    font-weight: 600;
+}
+
+.vpx-group-battalion {
+    background: var(--clr-surface-3) !important;
+    border-bottom: 2px solid var(--clr-border);
+}
+
+.vpx-bat-icon {
+    width: 15px;
+    height: 15px;
+    color: var(--clr-accent-alt, #f59e0b);
+    margin-right: 10px;
+    flex-shrink: 0;
+    vertical-align: middle;
+}
+
+.vpx-battalion-name {
+    font-family: var(--ff-display);
+    font-size: 0.9rem;
+    font-weight: 700;
+    letter-spacing: .08em;
+    color: var(--clr-text);
+    vertical-align: middle;
+    text-transform: uppercase;
+}
+
+/* Vehicle group row within battalion (for KD2) */
+.vpx-row-vehicle td {
+    height: 36px;
+}
+
+.vpx-row-vehicle .vpx-td-vehicle {
+    background: var(--clr-surface-2) !important;
+    padding: 0 14px;
+    padding-left: 28px;
+    height: 36px;
+    border-bottom: 1px solid var(--clr-border-soft);
+}
+
+.vpx-group-vehicle {
+    background: var(--clr-surface-2) !important;
+    border-bottom: 1px solid var(--clr-border-soft);
 }
 
 .vpx-td-group>.vpx-veh-icon,

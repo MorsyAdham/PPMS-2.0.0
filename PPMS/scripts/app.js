@@ -815,6 +815,15 @@ function populateUnitFilter(units, vehicle) {
 function onVehicleFilterChange() {
     const vehicle = getVal('filterVehicle');
     populateUnitFilter(getRegisteredUnitNames(vehicle || null), vehicle || null);
+    
+    // Show K9 component filter only when K9 is selected
+    const k9ComponentGroup = document.getElementById('filterK9ComponentGroup');
+    if (k9ComponentGroup) {
+        k9ComponentGroup.style.display = vehicle === 'K9' ? 'flex' : 'none';
+        if (vehicle !== 'K9') {
+            setVal('filterK9Component', '');
+        }
+    }
 }
 
 /* ──────────────────────────────────────────────────────────────────
@@ -885,6 +894,7 @@ async function loadData() {
                 ...currentMonthRange(),
                 startDate: getVal('filterStartDate'),
                 endDate: getVal('filterEndDate'),
+                k9Component: getVal('filterK9Component'),
             });
 
             currentData.sort((a, b) => {
@@ -1733,14 +1743,39 @@ function renderVPX(data) {
     html += '</tr></thead><tbody>';
 
     rows.forEach((row, ri) => {
-        const prevVehicle = ri > 0 ? rows[ri - 1].vehicle : null;
-        if (!isKD2Module() && row.vehicle !== prevVehicle) {
+        const prevRow = ri > 0 ? rows[ri - 1] : null;
+        const prevBattalion = prevRow?.battalion_code || null;
+        const prevVehicle = prevRow?.vehicle || null;
+
+        if (isKD2Module()) {
+            // For KD2, add group header when battalion changes
+            if (row.battalion_code !== prevBattalion) {
+                html += '<tr class="vpx-row vpx-row-group vpx-row-battalion">';
+                html += '<td class="vpx-td-vehicle vpx-td-group vpx-td-battalion" colspan="1">'
+                    + '<svg class="vpx-bat-icon" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.8"><rect x="2" y="3" width="12" height="10" rx="1.5"/><path d="M6 9h4M4 6h8M4 12h8"/></svg>'
+                    + '<span class="vpx-battalion-name">' + esc(row.battalion_code || '—') + '</span>'
+                    + '</td>';
+                activeCols.forEach(() => { html += '<td class="vpx-group-fill vpx-group-battalion"></td>'; });
+                html += '</tr>';
+            }
+
+            // Add group header when vehicle changes within same battalion
+            if (row.vehicle !== prevVehicle) {
+                html += '<tr class="vpx-row vpx-row-group vpx-row-vehicle">';
+                html += '<td class="vpx-td-vehicle vpx-td-group vpx-td-vehicle" colspan="1">'
+                    + '<svg class="vpx-veh-icon" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.8"><rect x="2" y="3" width="12" height="10" rx="1.5"/><path d="M5 8h6M5 11h4"/></svg>'
+                    + '<span class="vpx-veh-name">' + esc(row.vehicle) + '</span>'
+                    + '</td>';
+                activeCols.forEach(() => { html += '<td class="vpx-group-fill vpx-group-vehicle"></td>'; });
+                html += '</tr>';
+            }
+        } else if (row.vehicle !== prevVehicle) {
+            // For KD1, add group header only for vehicle changes
             html += '<tr class="vpx-row vpx-row-group">';
             html += '<td class="vpx-td-vehicle vpx-td-group" colspan="1">'
                 + '<svg class="vpx-veh-icon" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.8"><rect x="2" y="3" width="12" height="10" rx="1.5"/><path d="M5 8h6M5 11h4"/></svg>'
                 + '<span class="vpx-veh-name">' + esc(row.vehicle) + '</span>'
                 + '</td>';
-            // Fill rest of columns with empty group cells (same bg)
             activeCols.forEach(() => { html += '<td class="vpx-group-fill"></td>'; });
             html += '</tr>';
         }
@@ -2399,8 +2434,9 @@ function wireEvents() {
 
     // Cascade: when vehicle changes, update unit dropdown to match
     document.getElementById('filterVehicle')?.addEventListener('change', onVehicleFilterChange);
-
-    // Show/hide custom date fields
+    
+    // Reload data when K9 component filter changes
+    document.getElementById('filterK9Component')?.addEventListener('change', loadData);
     document.getElementById('filterTimeFrame').addEventListener('change', function () {
         const isCustom = this.value === 'custom';
         document.getElementById('customDateStart').style.display = isCustom ? '' : 'none';

@@ -916,7 +916,7 @@ export function renderSharedDialogs() {
                     <button class="modal-close" id="kd2ProcessClose">&#x2715;</button>
                 </div>
                 <div class="modal-body">
-                    <div class="modal-info" id="kd2ProcessSummary">Load a KD2 vehicle route to create, edit, or retire process stations.</div>
+<div class="modal-info" id="kd2ProcessSummary">Load a KD2 vehicle route to create, edit, or retire process stations.</div>
                     <div class="kd2-process-toolbar">
                         <div class="form-group">
                             <label class="form-label" for="kd2ProcessVehicle">Vehicle</label>
@@ -966,6 +966,15 @@ export function renderSharedDialogs() {
                         <div class="form-group" style="grid-column:1/-1">
                             <label class="form-label" for="kd2ProcessLeadNotes">Lead Time Notes <span class="form-label-optional">(optional)</span></label>
                             <input type="text" id="kd2ProcessLeadNotes" class="filter-control" placeholder="Pending confirmation, supplier estimate..." />
+                        </div>
+                    </div>
+                    <div class="kd2-process-filter-bar">
+                        <div style="display:flex;align-items:center;gap:12px;">
+                            <label class="form-label" for="kd2ProcessCategoryFilter" style="margin:0">Category</label>
+                            <select id="kd2ProcessCategoryFilter" class="filter-control">
+                                <option value="">All Categories</option>
+                            </select>
+                            <button class="btn btn-ghost btn-sm" id="btnKd2ProcessFilterClear" type="button">Show all</button>
                         </div>
                     </div>
                     <div class="kd2-process-shell" id="kd2ProcessBody"></div>

@@ -1,0 +1,9 @@
+- K9 component filter doesn't work well, doesn't show all things in the Hull or turret, only views some of it, for example it didn't show anything in the hull assembly
+- items in the filters should be ordered as M1 -> M2, etc.. not M1 -> M10, etc..
+- in unit filter when I filtered for K9 · M1 · EGY N25039, it returened M1 for K9, K10 and K11, not just for K9
+
+- VPX UI needed improvement as it only shows the half of the unit code and it should be clear and visisble 
+
+- when I try to add a template to a vehicle and I built the template some times it shows this error and I'm not sure why it sometimes work and sometimes it happens: "No template rows are available to save." 
+- no working day shows an error and refuses to be created
+- adding and managing blocks is still malfunctioning and not adding to the system, when saving the template or adding new process from manage processes
