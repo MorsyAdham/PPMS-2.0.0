@@ -20,17 +20,17 @@ Rename display labels only. Internal IDs (`kd1`, `kd2`) and localStorage keys st
 
 ---
 
-## Phase 2 — Database Setup
+## Phase 2 — Database Setup ✅
 
-- ⬜ Create `f100_parts` table in Supabase
-- ⬜ Create `f100_processes` table in Supabase
-- ⬜ Create `f100_plans` table in Supabase
-- ⬜ Create `f100_gun_assembly` table in Supabase
-- ⬜ Set RLS policies (mirror F200 KD2 tables)
-- ⬜ Seed gun parts (Breech Block, Breech Ring, Muzzle Brake, Evacuator, Cylinder Recuperator, Cradle Assy)
-- ⬜ Seed all gun part processes from main plan.txt
-- ⬜ Seed HAS vehicle parts (16 parts) with processes
-- ⬜ Leave DOOWON rows empty (admin panel will populate)
+- ✅ Create `f100_parts` table in Supabase (`db/01_create_tables.sql`)
+- ✅ Create `f100_processes` table in Supabase (`db/01_create_tables.sql`)
+- ✅ Create `f100_plans` table in Supabase (`db/01_create_tables.sql`)
+- ✅ Create `f100_gun_assembly` table in Supabase (`db/01_create_tables.sql`)
+- ✅ Set RLS policies (mirror F200 KD2 tables) (`db/02_rls_policies.sql`)
+- ✅ Seed gun parts (Breech Block, Breech Ring, Muzzle Brake, Evacuator, Cylinder Recuperator, Cradle Assy) (`db/03_seed_gun_parts.sql`)
+- ✅ Seed all gun part processes from main plan.txt (`db/03_seed_gun_parts.sql`)
+- ✅ Seed HAS vehicle parts (16 parts) with processes (`db/04_seed_vehicle_parts_has.sql`)
+- ✅ Leave DOOWON rows empty (admin panel will populate)
 
 ---
 
