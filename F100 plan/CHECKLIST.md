@@ -54,17 +54,18 @@ Rename display labels only. Internal IDs (`kd1`, `kd2`) and localStorage keys st
 
 ---
 
-## Phase 5 — F100 VPX
+## Phase 5 — F100 VPX ✅
 
-- ⬜ Build `buildF100VpxRows()` — rows = parts (gun) or part × vehicle (vehicle mode)
-- ⬜ Build `buildF100VpxColumns()` — columns = process steps per part
-- ⬜ Render cell: status dot + planned dates + actual dates + % completion bar
-- ⬜ Compute cell % = completed units ÷ total applicable units
-- ⬜ Hover tooltip: process name + dates + progress bar + unit count + delay note
-- ⬜ Battalion sticky group row (same stacking as F200 VPX)
-- ⬜ Part sticky sub-group row
-- ⬜ Column group colour stripes per part (matching F200 pattern)
-- ⬜ Light / dark theme support
+- ✅ Build `buildF100VpxColumns()` — columns = (part_sort, part_name, process_sort, step_number) per plan entry
+- ✅ Build `buildF100VpxRows()` — gun mode: rows = battalion; vehicle mode: rows = battalion × vehicle_type × serial
+- ✅ Render cell: status dot + planned date range + actual date range
+- ✅ Column groups = part names with rotating 8-color stripe palette (inline box-shadow)
+- ✅ Hover tooltip: part · #step process, planned/actual dates, status
+- ✅ Battalion sticky group row (reuses `.vpx-row-battalion` / `.vpx-td-battalion` CSS from F200)
+- ✅ Vehicle subgroup row for vehicle mode (reuses `.vpx-row-vehicle`)
+- ✅ `renderVPX()` dispatches to `renderF100VPX()` when F100-KD2 active
+- ✅ `getVpxDisplayMeta()` extended for F100
+- ✅ Light/dark theme support inherited from existing VPX CSS variables
 
 ---
 
