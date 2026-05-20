@@ -1303,7 +1303,103 @@ function delayDays(row) {
 /* ──────────────────────────────────────────────────────────────────
    7. TABLE RENDERING
    ────────────────────────────────────────────────────────────────── */
+
+function renderF100Table(data) {
+    const thead = document.querySelector('#mainTable thead');
+    if (thead) {
+        thead.innerHTML = `
+        <tr>
+            <th>#</th>
+            <th>Battalion</th>
+            <th>Part</th>
+            <th>Part No.</th>
+            <th>Manufacturer</th>
+            <th>Vehicle</th>
+            <th>Serial</th>
+            <th>Step</th>
+            <th>Process</th>
+            <th>Planned Start</th>
+            <th>Planned End</th>
+            <th>Actual Start</th>
+            <th>Actual End</th>
+            <th>Status</th>
+            <th>% Done</th>
+        </tr>`;
+    }
+
+    const tbody = document.getElementById('tableBody');
+    document.getElementById('rowCount').textContent = `${data.length} record${data.length !== 1 ? 's' : ''}`;
+
+    if (!data.length) {
+        tbody.innerHTML = `
+        <tr>
+            <td colspan="15" class="table-empty">
+                <div class="empty-state">
+                    <svg viewBox="0 0 48 48" fill="none" stroke="currentColor" stroke-width="1.5"><rect x="6" y="6" width="36" height="36" rx="4"/><path d="M16 24h16M24 16v16"/></svg>
+                    <p>No F100 plan records found. Enter plan data via the admin panel or apply different filters.</p>
+                </div>
+            </td>
+        </tr>`;
+        return;
+    }
+
+    // Compute % Done per (battalion, part_id, process_id) group
+    const groupTotals = {};
+    const groupDone   = {};
+    for (const r of data) {
+        const key = `${r.battalion_code}||${r.part_id}||${r.process_id}`;
+        groupTotals[key] = (groupTotals[key] || 0) + 1;
+        if (r.status === 'Completed' || r.status === 'Late Completion') {
+            groupDone[key] = (groupDone[key] || 0) + 1;
+        }
+    }
+
+    tbody.innerHTML = data.map((row, idx) => {
+        const badgeCls = `badge badge-${(row.status || 'planned').toLowerCase().replace(/\s+/g, '-').replace('late-completion', 'late')}`;
+        const key = `${row.battalion_code}||${row.part_id}||${row.process_id}`;
+        const pct = groupTotals[key]
+            ? Math.round(((groupDone[key] || 0) / groupTotals[key]) * 100)
+            : 0;
+        const pctHtml = `<div class="f100-pct-wrap">
+            <span class="f100-pct-num">${pct}%</span>
+            <div class="f100-pct-bar"><div class="f100-pct-fill" style="width:${pct}%"></div></div>
+        </div>`;
+
+        return `
+        <tr>
+            <td class="mono">${idx + 1}</td>
+            <td><strong>${esc(row.battalion_code || '—')}</strong></td>
+            <td>${esc(row.part_name || '—')}</td>
+            <td class="mono">${esc(row.part_number || '—')}</td>
+            <td>${esc(row.manufacturer || '—')}</td>
+            <td>${esc(row.vehicle_type || '—')}</td>
+            <td class="mono">${row.serial_number != null ? row.serial_number : '—'}</td>
+            <td class="mono">#${row.step_number || '?'}</td>
+            <td>${esc(row.process_name || '—')}</td>
+            <td class="mono">${formatDate(row.planned_start_date)}</td>
+            <td class="mono">${formatDate(row.planned_end_date)}</td>
+            <td class="mono">${formatDate(row.actual_start_date)}</td>
+            <td class="mono">${formatDate(row.actual_end_date)}</td>
+            <td><span class="${badgeCls}">${row.status || 'Planned'}</span></td>
+            <td>${pctHtml}</td>
+        </tr>`;
+    }).join('');
+}
+
 function renderTable(data) {
+    if (isF100KD2Module()) { renderF100Table(data); return; }
+
+    // Restore F200 table header if it was replaced by F100 headers
+    const thead = document.querySelector('#mainTable thead');
+    if (thead && !thead.querySelector('th[data-f200]')) {
+        const cols = ['#', 'Vehicle', 'Unit', 'Station / Process', 'Code / Work Center',
+            'Week', 'Planned Start', 'Planned End', 'Actual Start', 'Completed On',
+            'Status', 'Delay (days)', 'Action'];
+        if (thead.querySelectorAll('th').length !== cols.length) {
+            thead.innerHTML = `<tr>${cols.map(c => `<th>${c}</th>`).join('')}</tr>`;
+        }
+    }
+
     const tbody = document.getElementById('tableBody');
     document.getElementById('rowCount').textContent = `${data.length} record${data.length !== 1 ? 's' : ''}`;
 
