@@ -65,6 +65,12 @@ export function initFeature() {
                 </div>
 
                 <!-- ── F100-KD2 filters (shown only when F100-KD2 active) ────────── -->
+                <div class="filter-item" id="f100BattalionGroup" style="display:none;">
+                    <label class="filter-label" for="f100Battalion">Battalion</label>
+                    <select id="f100Battalion" class="filter-control">
+                        <option value="">All Battalions</option>
+                    </select>
+                </div>
                 <div class="filter-item" id="f100ModeGroup" style="display:none;">
                     <label class="filter-label" for="f100Mode">Mode</label>
                     <select id="f100Mode" class="filter-control">
