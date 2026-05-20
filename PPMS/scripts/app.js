@@ -319,10 +319,14 @@ function getModuleProgressTable() {
 }
 
 function getModulePlanTable() {
+    if (isF100KD2Module()) return 'f100_plans';
     return isKD2Module() ? 'kd2_plan' : 'assembly_plan';
 }
 
 function getModulePlanDatePayload(startDate, endDate, remark = undefined) {
+    if (isF100KD2Module()) {
+        return { planned_start_date: startDate, planned_end_date: endDate };
+    }
     const payload = isKD2Module()
         ? {
             planned_start_date: startDate,
@@ -342,7 +346,7 @@ function getModulePlanDatePayload(startDate, endDate, remark = undefined) {
 
 function samePlanLane(a, b) {
     if (!a || !b) return false;
-    if (isKD2Module() && (a.battalion_code || '') !== (b.battalion_code || '')) return false;
+    if ((isKD2Module() || isF100KD2Module()) && (a.battalion_code || '') !== (b.battalion_code || '')) return false;
     return a.vehicle === b.vehicle && a.vehicle_no === b.vehicle_no;
 }
 
@@ -2689,6 +2693,29 @@ async function saveActualStart(planId, dateValue) {
 
     const valueToSave = dateValue || null;
 
+    // F100: actual dates live directly in f100_plans, no separate progress table
+    if (isF100KD2Module()) {
+        try {
+            const { error } = await db
+                .from('f100_plans')
+                .update({ actual_start_date: valueToSave, updated_at: new Date().toISOString() })
+                .eq('id', planId);
+            if (error) throw error;
+            await auditLog('UPDATE', 'f100_plans', planId, null, { actual_start_date: valueToSave });
+            showToast(valueToSave ? 'Start date saved.' : 'Start date cleared.', 'success');
+            const row = currentData.find(t => t.id === planId);
+            if (row) {
+                row.actual_start_date = valueToSave;
+                row.start_date = valueToSave || row.planned_start_date;
+                refreshAllViews();
+            } else { await loadData(); }
+        } catch (err) {
+            showToast('Error saving start date: ' + err.message, 'error');
+            console.error(err);
+        }
+        return;
+    }
+
     try {
         // Fetch ALL rows for this plan_id — guard against duplicate rows
         const progressTable = getModuleProgressTable();
@@ -2749,6 +2776,31 @@ async function saveCompletionDate(planId, dateValue, silent = false) {
 
     const valueToSave = dateValue || null;
 
+    // F100: actual dates live directly in f100_plans
+    if (isF100KD2Module()) {
+        try {
+            const row = currentData.find(t => t.id === planId);
+            const newStatus = valueToSave ? 'Completed' : (row?.actual_start_date ? 'In Progress' : 'Planned');
+            const { error } = await db
+                .from('f100_plans')
+                .update({ actual_end_date: valueToSave, status: newStatus, updated_at: new Date().toISOString() })
+                .eq('id', planId);
+            if (error) throw error;
+            await auditLog('UPDATE', 'f100_plans', planId, null, { actual_end_date: valueToSave, status: newStatus });
+            showToast(valueToSave ? 'Completion date saved.' : 'Completion date cleared.', 'success');
+            if (row) {
+                row.actual_end_date = valueToSave;
+                row.status = newStatus;
+                row.end_date = valueToSave || row.planned_end_date;
+                refreshAllViews();
+            } else { await loadData(); }
+        } catch (err) {
+            showToast('Error saving completion date: ' + err.message, 'error');
+            console.error(err);
+        }
+        return;
+    }
+
     try {
         const progressTable = getModuleProgressTable();
         const { data: allRowsC } = await db
@@ -2804,6 +2856,8 @@ async function saveCompletionDate(planId, dateValue, silent = false) {
  * Does NOT touch completed / completion_date.
  */
 async function saveNoteOnly(planId, noteText) {
+    // F100 plans have no separate notes field — skip silently
+    if (isF100KD2Module()) { showToast('Notes are not supported for F100 plan entries.', 'info'); return; }
     const valueToSave = noteText.trim() || null;
     try {
         const progressTable = getModuleProgressTable();
@@ -2866,6 +2920,30 @@ async function markComplete() {
     if (!compDate) { showToast('Please select a completion date.', 'error'); return; }
 
     closeModal();
+
+    // F100: update actual_end_date and status directly in f100_plans
+    if (isF100KD2Module()) {
+        try {
+            const { error } = await db
+                .from('f100_plans')
+                .update({ actual_end_date: compDate, status: 'Completed', updated_at: new Date().toISOString() })
+                .eq('id', planId);
+            if (error) throw error;
+            await auditLog('UPDATE', 'f100_plans', planId, null, { actual_end_date: compDate, status: 'Completed' });
+            showToast('Progress saved successfully.', 'success');
+            const mRow = currentData.find(t => t.id === planId);
+            if (mRow) {
+                mRow.actual_end_date = compDate;
+                mRow.status = 'Completed';
+                mRow.end_date = compDate;
+                refreshAllViews();
+            } else { await loadData(); }
+        } catch (err) {
+            showToast('Error saving progress: ' + err.message, 'error');
+            console.error(err);
+        }
+        return;
+    }
 
     try {
         const progressTable = getModuleProgressTable();
@@ -3996,10 +4074,10 @@ function renderGantt(plans, startDate, endDate) {
           <div class="gr-label gr-unit-label" style="width:${GANTT_LABEL_W}px">
             <span class="gr-unit-dot"></span>
             <span class="gr-unit-name">${esc(isF100KD2Module() ? laneUnit : isKd2ProcessView ? laneUnit : isKD2Module() ? `${laneVehicle} · ${unitLabel(laneVehicle, laneUnit)}` : unitLabel(laneVehicle, laneUnit))}</span>
-            ${isKD2Module() && _ganttEditMode && _ganttSelectLaneMode && anchorTask ? `<button type="button" class="gantt-lane-select-btn" data-gantt-lane-select="${anchorTask.id}" aria-pressed="${laneSelected ? 'true' : 'false'}">${laneSelected ? 'Clear lane' : 'Select lane'}</button>` : ''}
+            ${(isKD2Module() || isF100KD2Module()) && _ganttEditMode && _ganttSelectLaneMode && anchorTask ? `<button type="button" class="gantt-lane-select-btn" data-gantt-lane-select="${anchorTask.id}" aria-pressed="${laneSelected ? 'true' : 'false'}">${laneSelected ? 'Clear lane' : 'Select lane'}</button>` : ''}
           </div>
           <div class="gr-track" style="width:${totalW}px;height:${rowH}px"
-            data-kd2-track="${isKD2Module() ? 'true' : ''}"
+            data-kd2-track="${(isKD2Module() || isF100KD2Module()) ? 'true' : ''}"
             data-kd2-lane-key="${esc(unit)}"
             data-battalion-id="${esc(laneMeta.battalion_id ?? '')}"
             data-battalion-code="${esc(laneMeta.battalion_code || groupKey || '')}"
@@ -6320,7 +6398,7 @@ function setGanttLaneSelectMode(on) {
 }
 
 function syncGanttModuleEditControls() {
-    const isKd2 = isKD2Module();
+    const isKd2 = isKD2Module() || isF100KD2Module();
     const kd2Tools = document.getElementById('ganttKd2EditTools');
     const planBtn = document.getElementById('gmtPlan');
     const fromBlockBtn = document.getElementById('gmtFromBlock');
@@ -6962,6 +7040,13 @@ function cloneGanttTaskSnapshot(task) {
 }
 
 function planRestorePayload(task) {
+    if (isF100KD2Module()) {
+        return {
+            id: task.id,
+            planned_start_date: task.planned_start_date || task.start_date,
+            planned_end_date: task.planned_end_date || task.end_date,
+        };
+    }
     if (isKD2Module()) {
         return {
             id: task.id,
@@ -7004,10 +7089,13 @@ function progressRestorePayload(task) {
 
 async function removeGanttTaskSnapshots(tasks, auditLabel = 'delete') {
     if (!tasks.length) return;
-    const progressIds = tasks.map(task => task.progress?.id).filter(Boolean);
-    if (progressIds.length) {
-        const { error: progressError } = await db.from(getModuleProgressTable()).delete().in('id', progressIds);
-        if (progressError) throw progressError;
+    // F100 has no separate progress table — skip progress row deletion
+    if (!isF100KD2Module()) {
+        const progressIds = tasks.map(task => task.progress?.id).filter(Boolean);
+        if (progressIds.length) {
+            const { error: progressError } = await db.from(getModuleProgressTable()).delete().in('id', progressIds);
+            if (progressError) throw progressError;
+        }
     }
 
     const planIds = tasks.map(task => task.id);
@@ -7038,10 +7126,13 @@ async function restoreGanttTaskSnapshots(tasks, auditLabel = 'restore') {
     const { error: planError } = await db.from(getModulePlanTable()).upsert(planPayload, { onConflict: 'id' });
     if (planError) throw planError;
 
-    const progressPayload = tasks.map(progressRestorePayload).filter(Boolean);
-    if (progressPayload.length) {
-        const { error: progressError } = await db.from(getModuleProgressTable()).upsert(progressPayload, { onConflict: 'id' });
-        if (progressError) throw progressError;
+    // F100 has no separate progress table — skip progress restore
+    if (!isF100KD2Module()) {
+        const progressPayload = tasks.map(progressRestorePayload).filter(Boolean);
+        if (progressPayload.length) {
+            const { error: progressError } = await db.from(getModuleProgressTable()).upsert(progressPayload, { onConflict: 'id' });
+            if (progressError) throw progressError;
+        }
     }
 
     await auditLog('INSERT', getModulePlanTable(), auditLabel, null, {
