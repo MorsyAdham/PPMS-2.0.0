@@ -904,17 +904,144 @@ function refreshAllViews() {
     renderGantt(displayData, gsEl?.value, geEl?.value);
 }
 
+/* ──────────────────────────────────────────────────────────────────
+   F100-KD2 DATA LOADING
+   ────────────────────────────────────────────────────────────────── */
+
+async function populateF100GunPartFilter() {
+    const sel = document.getElementById('f100GunPart');
+    if (!sel) return;
+    try {
+        const { data, error } = await db
+            .from('f100_parts')
+            .select('id, part_name, part_number')
+            .eq('module', 'gun')
+            .order('sort_order');
+        if (error) return;
+        const current = sel.value;
+        sel.innerHTML = '<option value="">All Parts</option>';
+        (data || []).forEach(p => {
+            const opt = document.createElement('option');
+            opt.value = p.id;
+            opt.textContent = `${p.part_name} (${p.part_number})`;
+            sel.appendChild(opt);
+        });
+        if ([...sel.options].some(o => o.value === current)) sel.value = current;
+    } catch (e) {
+        console.warn('F100 gun part filter load failed:', e.message);
+    }
+}
+
+async function loadF100Data() {
+    const mode = document.getElementById('f100Mode')?.value || 'gun';
+
+    // Sync secondary filter visibility
+    const gunPartGroup = document.getElementById('f100GunPartGroup');
+    const mfgGroup     = document.getElementById('f100ManufacturerGroup');
+    const vtGroup      = document.getElementById('f100VehicleTypeGroup');
+    if (gunPartGroup) gunPartGroup.style.display = mode === 'gun'     ? '' : 'none';
+    if (mfgGroup)     mfgGroup.style.display     = mode === 'vehicle' ? '' : 'none';
+    if (vtGroup)      vtGroup.style.display      = mode === 'vehicle' ? '' : 'none';
+
+    if (mode === 'gun') await populateF100GunPartFilter();
+
+    const gunPart      = mode === 'gun'     ? (getVal('f100GunPart')      || null) : null;
+    const manufacturer = mode === 'vehicle' ? (getVal('f100Manufacturer') || null) : null;
+    const vehicleType  = mode === 'vehicle' ? (getVal('f100VehicleType')  || null) : null;
+
+    // 1. Load matching parts
+    let partsQ = db.from('f100_parts').select('*').eq('module', mode).order('sort_order');
+    if (manufacturer) partsQ = partsQ.eq('manufacturer', manufacturer);
+    const { data: parts, error: partsErr } = await partsQ;
+    if (partsErr) throw partsErr;
+
+    const partMap = {};
+    (parts || []).forEach(p => { partMap[p.id] = p; });
+
+    let partIds = Object.keys(partMap);
+    if (mode === 'gun' && gunPart) partIds = [gunPart];
+
+    if (!partIds.length) {
+        currentData = [];
+        renderTable([]);
+        updateSummary([]);
+        renderCharts([]);
+        renderVPX([]);
+        renderGantt([], '', '');
+        return;
+    }
+
+    // 2. Load processes for these parts
+    const { data: processes, error: procErr } = await db
+        .from('f100_processes')
+        .select('*')
+        .in('part_id', partIds)
+        .order('sort_order');
+    if (procErr) throw procErr;
+
+    const processMap = {};
+    (processes || []).forEach(p => { processMap[p.id] = p; });
+
+    // 3. Load plans
+    let plansQ = db.from('f100_plans').select('*').in('part_id', partIds);
+    if (vehicleType) plansQ = plansQ.eq('vehicle_type', vehicleType);
+    const { data: plans, error: plansErr } = await plansQ;
+    if (plansErr) throw plansErr;
+
+    // 4. Flatten and normalize into display rows
+    const rows = (plans || []).map(plan => {
+        const part = partMap[plan.part_id] || {};
+        const proc = processMap[plan.process_id] || {};
+        return {
+            id:                  plan.id,
+            battalion_code:      plan.battalion_code,
+            vehicle_type:        plan.vehicle_type,
+            serial_number:       plan.serial_number,
+            part_id:             part.id,
+            part_number:         part.part_number  || '',
+            part_name:           part.part_name    || '',
+            module:              part.module        || mode,
+            manufacturer:        part.manufacturer  || '',
+            vehicles:            part.vehicles      || [],
+            qty_per_vehicle:     part.qty_per_vehicle || 1,
+            part_sort:           part.sort_order    || 0,
+            process_id:          proc.id,
+            step_number:         proc.step_number   || 0,
+            process_name:        proc.process_name  || '',
+            process_sort:        proc.sort_order    || 0,
+            planned_start_date:  plan.planned_start_date,
+            planned_end_date:    plan.planned_end_date,
+            actual_start_date:   plan.actual_start_date,
+            actual_end_date:     plan.actual_end_date,
+            status:              plan.status        || 'Planned',
+            start_date:          plan.actual_start_date || plan.planned_start_date,
+            end_date:            plan.actual_end_date   || plan.planned_end_date,
+        };
+    }).sort((a, b) => {
+        const bc = (a.battalion_code || '').localeCompare(b.battalion_code || '');
+        if (bc !== 0) return bc;
+        const ps = a.part_sort - b.part_sort;
+        if (ps !== 0) return ps;
+        return a.process_sort - b.process_sort;
+    });
+
+    currentData = rows;
+    renderTable(rows);
+    updateSummary(rows);
+    renderCharts(rows);
+    renderVPX(rows);
+    const gsEl = document.getElementById('ganttStart');
+    const geEl = document.getElementById('ganttEnd');
+    if (!gsEl?.value || !geEl?.value) setGanttRangeFromData(rows);
+    renderGantt(rows, gsEl?.value, geEl?.value);
+}
+
 async function loadData() {
     try {
         setTableLoading(true);
 
-        // F100-KD2 has its own data loader — stub until Phase 3 is built
         if (isF100KD2Module()) {
-            currentData = [];
-            renderTable([]);
-            updateSummary([]);
-            renderCharts([]);
-            renderVPX([]);
+            await loadF100Data();
             return;
         }
 
@@ -2503,6 +2630,12 @@ function wireEvents() {
     
     // Reload data when K9 component filter changes
     document.getElementById('filterK9Component')?.addEventListener('change', loadData);
+
+    // F100-KD2 filter changes
+    document.getElementById('f100Mode')?.addEventListener('change', loadData);
+    document.getElementById('f100GunPart')?.addEventListener('change', loadData);
+    document.getElementById('f100Manufacturer')?.addEventListener('change', loadData);
+    document.getElementById('f100VehicleType')?.addEventListener('change', loadData);
     document.getElementById('filterTimeFrame').addEventListener('change', function () {
         const isCustom = this.value === 'custom';
         document.getElementById('customDateStart').style.display = isCustom ? '' : 'none';
@@ -2596,6 +2729,13 @@ function wireEvents() {
 
 function resetFilters() {
     ['filterBattalion', 'filterVehicle', 'filterUnit', 'filterWeek', 'filterCategory'].forEach(id => {
+        const el = document.getElementById(id);
+        if (el) el.value = '';
+    });
+    // F100 filters
+    const f100Mode = document.getElementById('f100Mode');
+    if (f100Mode) f100Mode.value = 'gun';
+    ['f100GunPart', 'f100Manufacturer', 'f100VehicleType'].forEach(id => {
         const el = document.getElementById(id);
         if (el) el.value = '';
     });

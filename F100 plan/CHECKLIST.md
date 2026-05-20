@@ -34,16 +34,16 @@ Rename display labels only. Internal IDs (`kd1`, `kd2`) and localStorage keys st
 
 ---
 
-## Phase 3 — Module Shell & Filters
+## Phase 3 — Module Shell & Filters ✅
 
-- ⬜ Create `PPMS/scripts/features/f100/kd2/shell/index.js`
-- ⬜ Register F100-KD2 in module bootstrap / `applyModuleShell()`
-- ⬜ Implement Gun / Vehicle Parts toggle (mutually exclusive top-level filter)
-- ⬜ Gun secondary filter: filter by specific gun part (or show all)
-- ⬜ Vehicle secondary filter: Manufacturer (HAS | DOOWON)
-- ⬜ Vehicle secondary filter: Vehicle type (K9 | K10 | K11 | All)
-- ⬜ Wire filter changes → `loadF100Data()`
-- ⬜ Load F100 data from Supabase on filter change
+- ✅ Create `PPMS/scripts/features/f100/kd2/shell/index.js` (placeholder for Phase 7 admin panel)
+- ✅ Register F100-KD2 in module bootstrap / `applyModuleShell()` (already done in Phase 1; extended in Phase 3 to manage filter visibility)
+- ✅ Implement Gun / Vehicle Parts toggle (`f100Mode` select; mutually exclusive primary filter)
+- ✅ Gun secondary filter: `f100GunPart` — specific gun part or all (populated from Supabase on demand)
+- ✅ Vehicle secondary filter: `f100Manufacturer` — HAS | DOOWON | All
+- ✅ Vehicle secondary filter: `f100VehicleType` — K9 | K10 | K11 | All
+- ✅ Wire filter changes → `loadF100Data()` (all four F100 selects trigger `loadData`)
+- ✅ Load F100 data from Supabase on filter change (`loadF100Data()` in app.js joins f100_parts + f100_processes + f100_plans)
 
 ---
 
