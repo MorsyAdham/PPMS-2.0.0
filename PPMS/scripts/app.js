@@ -1244,6 +1244,9 @@ async function loadData() {
    6. STATUS CALCULATION
    ────────────────────────────────────────────────────────────────── */
 function calculateStatus(row) {
+    // F100 rows carry status directly from the database
+    if (row.module === 'gun' || row.module === 'vehicle') return row.status || 'Planned';
+
     const today = todayStr();
     const completed = row.progress?.completed || false;
     const compDate = row.progress?.completion_date || null;
@@ -1263,6 +1266,16 @@ function calculateStatus(row) {
 }
 
 function ganttHighlightState(row) {
+    // F100 uses status string directly
+    if (row.module === 'gun' || row.module === 'vehicle') {
+        const s = row.status || 'Planned';
+        if (s === 'Completed') return 'complete';
+        if (s === 'Late Completion') return 'late';
+        if (s === 'Overdue') return 'late';
+        if (s === 'In Progress') return 'progress';
+        return 'planned';
+    }
+
     const completed = row.progress?.completed || false;
     const compDate = row.progress?.completion_date || null;
     const actualStart = row.progress?.actual_start_date || null;
@@ -3351,8 +3364,20 @@ function renderGantt(plans, startDate, endDate) {
     }
 
     // ── 2. Group plans ─────────────────────────────────────────────
+    // Pre-process F100 data to use Gantt-compatible vehicle/vehicle_no/process_station fields
+    if (isF100KD2Module()) {
+        const f100mode = document.getElementById('f100Mode')?.value || 'gun';
+        plans = plans.map(r => ({
+            ...r,
+            vehicle:         f100mode === 'gun' ? (r.part_name || '—') : (r.vehicle_type || '—'),
+            vehicle_no:      `#${r.step_number} ${r.process_name}`,
+            process_station: `#${r.step_number} ${r.process_name}`,
+        }));
+    }
+
     // Only include tasks that overlap the visible date range
     const visible = plans.filter(p =>
+        p.start_date && p.end_date &&
         p.start_date <= endDate && p.end_date >= startDate
     );
 
@@ -3369,7 +3394,8 @@ function renderGantt(plans, startDate, endDate) {
     const _unitSelG = document.getElementById('filterUnit');
     const _unitVehicleG = _unitSelG?.options[_unitSelG?.selectedIndex]?.dataset?.vehicle || '';
     const effectiveVehicleFilter = vehicleFilter || _unitVehicleG;
-    if (!isKd2ProcessView) {
+    // F100 has no unit registry — skip pre-population entirely
+    if (!isKd2ProcessView && !isF100KD2Module()) {
         unitRegistryRows
             .filter(row =>
                 (!effectiveVehicleFilter || row.vehicle === effectiveVehicleFilter) &&
@@ -3392,10 +3418,10 @@ function renderGantt(plans, startDate, endDate) {
     visible.forEach(p => {
         const groupKey = isKd2ProcessView
             ? (p.vehicle || '—')
-            : (isKD2Module() ? (p.battalion_code || '—') : p.vehicle);
+            : (isKD2Module() || isF100KD2Module() ? (p.battalion_code || '—') : p.vehicle);
         const laneKey = isKd2ProcessView
             ? (p.process_station || '—')
-            : (isKD2Module() ? `${p.vehicle}||${p.vehicle_no}` : p.vehicle_no);
+            : (isKD2Module() || isF100KD2Module() ? `${p.vehicle}||${p.vehicle_no}` : p.vehicle_no);
         ensureGroupLane(groupKey, laneKey);
         groups[groupKey][laneKey].push(p);
         laneMetaMap[laneMetaKey(groupKey, laneKey)] = {
@@ -3410,7 +3436,7 @@ function renderGantt(plans, startDate, endDate) {
     const groupKeys = Object.keys(groups).sort((a, b) =>
         isKd2ProcessView
             ? vehicleSort(a, b)
-            : isKD2Module()
+            : (isKD2Module() || isF100KD2Module())
                 ? a.localeCompare(b, undefined, { numeric: true })
                 : vehicleSort(a, b)
     );
@@ -3437,7 +3463,7 @@ function renderGantt(plans, startDate, endDate) {
     // ── 3. Header HTML ─────────────────────────────────────────────
     let mHtml = `<div class="gh-corner" style="width:${GANTT_LABEL_W}px;height:28px"></div>`;
     let wHtml = `<div class="gh-corner" style="width:${GANTT_LABEL_W}px;height:22px"></div>`;
-    let dHtml = `<div class="gh-corner gh-corner-label" style="width:${GANTT_LABEL_W}px;height:28px">${isKd2ProcessView ? 'Vehicle / Station' : isKD2Module() ? 'Battalion / Vehicle / Unit' : 'Vehicle / Unit'}</div>`;
+    let dHtml = `<div class="gh-corner gh-corner-label" style="width:${GANTT_LABEL_W}px;height:28px">${isF100KD2Module() ? 'Battalion / Part / Process' : isKd2ProcessView ? 'Vehicle / Station' : isKD2Module() ? 'Battalion / Vehicle / Unit' : 'Vehicle / Unit'}</div>`;
 
     let runMonth = '', runMonthSpan = 0;
     let runWeek = -1, runWeekSpan = 0;
@@ -3543,9 +3569,9 @@ function renderGantt(plans, startDate, endDate) {
         <div class="gr-track gr-track-group" style="width:${totalW}px">${bgCells}</div>
       </div>`;
 
-        const vehicleSections = (!isKd2ProcessView && isKD2Module())
+        const vehicleSections = (!isKd2ProcessView && (isKD2Module() || isF100KD2Module()))
             ? [...new Set(unitKeys.map(unit => unit.split('||')[0]).filter(Boolean))]
-                .sort(vehicleSort)
+                .sort((a, b) => isF100KD2Module() ? a.localeCompare(b, undefined, { numeric: true }) : vehicleSort(a, b))
                 .map(vehicle => ({
                     vehicle,
                     units: unitKeys.filter(unit => unit.startsWith(vehicle + '||')),
@@ -3553,7 +3579,7 @@ function renderGantt(plans, startDate, endDate) {
             : [{ vehicle: groupKey, units: unitKeys }];
 
         vehicleSections.forEach(section => {
-            if (!isKd2ProcessView && isKD2Module() && section.units.length) {
+            if (!isKd2ProcessView && (isKD2Module() || isF100KD2Module()) && section.units.length) {
                 bodyHtml += `
       <div class="gr gr-subgroup" style="height:${Math.max(30, GANTT_GRP_H - 8)}px">
         <div class="gr-label gr-subgroup-label" style="width:${GANTT_LABEL_W}px">
@@ -3565,8 +3591,8 @@ function renderGantt(plans, startDate, endDate) {
 
             section.units.forEach(unit => {
             const tasks = groups[groupKey][unit] || [];
-            const laneVehicle = isKd2ProcessView ? groupKey : (isKD2Module() ? unit.split('||')[0] : groupKey);
-            const laneUnit = isKd2ProcessView ? unit : (isKD2Module() ? unit.split('||').slice(1).join('||') : unit);
+            const laneVehicle = isKd2ProcessView ? groupKey : ((isKD2Module() || isF100KD2Module()) ? unit.split('||')[0] : groupKey);
+            const laneUnit = isKd2ProcessView ? unit : ((isKD2Module() || isF100KD2Module()) ? unit.split('||').slice(1).join('||') : unit);
             const laneMeta = laneMetaMap[laneMetaKey(groupKey, unit)] || {};
 
             // ── Lane assignment for overlapping bars ─────────────────────
@@ -3602,16 +3628,28 @@ function renderGantt(plans, startDate, endDate) {
                     actualStartMarker = `<div class="gc-actual-start-tick" style="left:${tickLeft}px;border-color:${tickColor}" title="Actual start: ${formatDate(actualStart)}"></div>`;
                 }
 
-                const tip = [
-                    isKD2Module() ? `${task.battalion_code || '—'}  ${task.vehicle}  ${task.vehicle_no}` : `${task.vehicle}  ${task.vehicle_no}`,
-                    `Station      : ${task.process_station}`,
-                    isKD2Module() ? `Work Center  : ${getRowCode(task)}` : '',
-                    `Planned      : ${formatDate(task.start_date)} → ${formatDate(task.end_date)}`,
-                    actualStart ? `Actual Start : ${formatDate(actualStart)}` : '',
-                    task.progress?.completion_date ? `Completed    : ${formatDate(task.progress.completion_date)}` : '',
-                    `Status       : ${status}`,
-                    task.remark ? `Remark       : ${task.remark}` : '',
-                ].filter(Boolean).join('\n');
+                const tip = isF100KD2Module()
+                    ? [
+                        `${task.battalion_code || '—'}  ·  ${task.part_name || task.vehicle}`,
+                        `Process      : ${task.process_name || task.process_station}`,
+                        `Step         : #${task.step_number}`,
+                        task.manufacturer ? `Manufacturer : ${task.manufacturer}` : '',
+                        task.vehicle_type ? `Vehicle      : ${task.vehicle_type}` : '',
+                        `Planned      : ${formatDate(task.planned_start_date)} → ${formatDate(task.planned_end_date)}`,
+                        task.actual_start_date ? `Actual Start : ${formatDate(task.actual_start_date)}` : '',
+                        task.actual_end_date   ? `Actual End   : ${formatDate(task.actual_end_date)}` : '',
+                        `Status       : ${status}`,
+                    ].filter(Boolean).join('\n')
+                    : [
+                        isKD2Module() ? `${task.battalion_code || '—'}  ${task.vehicle}  ${task.vehicle_no}` : `${task.vehicle}  ${task.vehicle_no}`,
+                        `Station      : ${task.process_station}`,
+                        isKD2Module() ? `Work Center  : ${getRowCode(task)}` : '',
+                        `Planned      : ${formatDate(task.start_date)} → ${formatDate(task.end_date)}`,
+                        actualStart ? `Actual Start : ${formatDate(actualStart)}` : '',
+                        task.progress?.completion_date ? `Completed    : ${formatDate(task.progress.completion_date)}` : '',
+                        `Status       : ${status}`,
+                        task.remark ? `Remark       : ${task.remark}` : '',
+                    ].filter(Boolean).join('\n');
 
                 const menuIsOpen = _openGanttBlockMenuPlanId === task.id;
                 const isSelected = _selectedGanttPlanIds.has(task.id);
@@ -3692,7 +3730,7 @@ function renderGantt(plans, startDate, endDate) {
           style="left:${left}px;width:${width}px;height:${BAR_H}px;top:${topPx}px;transform:none;background:${color}"
           title="${esc(tip)}">
           ${actualStartMarker}
-          <span class="gc-bar-text">${esc(isKd2ProcessView ? `${task.battalion_code || '—'} · ${task.vehicle_no}` : isKD2Module() ? `${getRowCode(task)} · ${task.process_station}` : task.process_station)}</span>
+          <span class="gc-bar-text">${esc(isF100KD2Module() ? task.process_station : isKd2ProcessView ? `${task.battalion_code || '—'} · ${task.vehicle_no}` : isKD2Module() ? `${getRowCode(task)} · ${task.process_station}` : task.process_station)}</span>
           ${blockMenu}
         </div>`;
             }).join('');
@@ -3706,7 +3744,7 @@ function renderGantt(plans, startDate, endDate) {
         <div class="gr${rowMenuOpen ? ' gc-row-menu-open' : ''}" style="height:${rowH}px">
           <div class="gr-label gr-unit-label" style="width:${GANTT_LABEL_W}px">
             <span class="gr-unit-dot"></span>
-            <span class="gr-unit-name">${esc(isKd2ProcessView ? laneUnit : isKD2Module() ? `${laneVehicle} · ${unitLabel(laneVehicle, laneUnit)}` : unitLabel(laneVehicle, laneUnit))}</span>
+            <span class="gr-unit-name">${esc(isF100KD2Module() ? laneUnit : isKd2ProcessView ? laneUnit : isKD2Module() ? `${laneVehicle} · ${unitLabel(laneVehicle, laneUnit)}` : unitLabel(laneVehicle, laneUnit))}</span>
             ${isKD2Module() && _ganttEditMode && _ganttSelectLaneMode && anchorTask ? `<button type="button" class="gantt-lane-select-btn" data-gantt-lane-select="${anchorTask.id}" aria-pressed="${laneSelected ? 'true' : 'false'}">${laneSelected ? 'Clear lane' : 'Select lane'}</button>` : ''}
           </div>
           <div class="gr-track" style="width:${totalW}px;height:${rowH}px"

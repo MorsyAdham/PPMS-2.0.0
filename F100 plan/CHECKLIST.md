@@ -68,17 +68,17 @@ Rename display labels only. Internal IDs (`kd1`, `kd2`) and localStorage keys st
 
 ---
 
-## Phase 6 — F100 Gantt
+## Phase 6 — F100 Gantt ✅
 
-- ⬜ Build F100 row-builder for gun mode:
-  - Battalion → Part (group) → Process (row with bar)
-- ⬜ Build F100 row-builder for vehicle mode:
-  - Battalion → Vehicle type (group) → Part (sub-group) → Process (row)
-- ⬜ Pass rows to existing `renderGantt()` engine (reuse F200 engine)
-- ⬜ Verify lane packing works correctly
-- ⬜ Verify edit mode (drag / resize) works
-- ⬜ Bar label: `#step_number PROCESS_NAME`
-- ⬜ Hover tooltip matching VPX tooltip content
+- ✅ Build F100 row-builder for gun mode: Battalion (group) → Part (sub-group) → Process (lane with bar)
+- ✅ Build F100 row-builder for vehicle mode: Battalion (group) → Vehicle type (sub-group) → Part+Process (lane)
+- ✅ Pre-process F100 rows to Gantt-compatible fields (vehicle=part/vehicle_type, vehicle_no=#step process_name)
+- ✅ Reuse existing `renderGantt()` engine with targeted F100 branches for grouping, labels, tooltip
+- ✅ F100 unit registry skipped (no pre-populated empty lanes for F100)
+- ✅ Bar label: `#step_number PROCESS_NAME`
+- ✅ Hover tooltip: battalion · part, process, step, planned/actual dates, status
+- ✅ `calculateStatus()` and `ganttHighlightState()` handle F100 rows via direct `status` field
+- ⬜ Edit mode (drag/resize) — deferred to Phase 7 (requires f100_plans update logic)
 
 ---
 
