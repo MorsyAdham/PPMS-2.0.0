@@ -100,10 +100,6 @@ export function initFeature() {
                             <label class="filter-label" for="kd2TimelineEnd">To</label>
                             <input type="date" id="kd2TimelineEnd" class="filter-control" />
                         </div>
-                        <div class="kd2-timeline-view-toggle" id="kd2TimelineViewToggle" aria-label="Timeline view mode">
-                            <button class="btn btn-outline btn-sm kd2-timeline-view-btn kd2-timeline-view-btn-active" id="btnKd2TimelineViewUnit" type="button" data-view="unit">Unit View</button>
-                            <button class="btn btn-outline btn-sm kd2-timeline-view-btn" id="btnKd2TimelineViewProcess" type="button" data-view="process">Process View</button>
-                        </div>
                         <button class="btn btn-primary btn-sm" id="btnKd2AddBlock">Add Plan Block</button>
                         <div class="kd2-visual-add-shell" id="kd2VisualAddShell">
                             <button class="btn btn-sm btn-visual-block" id="btnKd2VisualAdd" aria-expanded="false" aria-pressed="false">
@@ -136,6 +132,10 @@ export function initFeature() {
                             </div>
                         </div>
                         <button class="btn btn-outline btn-sm" id="btnKd2TimelineRefresh">Refresh Timeline</button>
+                        <div class="kd2-timeline-view-toggle" id="kd2TimelineViewToggle" aria-label="Timeline view mode">
+                            <button class="btn btn-outline btn-sm kd2-timeline-view-btn kd2-timeline-view-btn-active" id="btnKd2TimelineViewUnit" type="button" data-view="unit">Unit View</button>
+                            <button class="btn btn-outline btn-sm kd2-timeline-view-btn" id="btnKd2TimelineViewProcess" type="button" data-view="process">Process View</button>
+                        </div>
                         <button class="btn btn-ghost btn-sm" id="btnKd2TimelineEdit">Edit Timeline</button>
                         <div class="kd2-timeline-editbar" id="kd2TimelineEditBar" style="display:none">
                             <button class="btn btn-outline btn-sm kd2-timeline-mode-btn kd2-timeline-mode-active" id="btnKd2TimelineModeBlock" data-mode="block">Block</button>

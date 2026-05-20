@@ -379,22 +379,17 @@ function buildPositionedGanttLaneTasks(tasks, startDate, endDate) {
         .sort(compareGanttLanePriority);
 
     const laneEndAt = [];
-    // Assign packed lanes ensuring no two overlapping tasks occupy the same lane.
+    // Pack greedily from lane 0. Only honour a preferred lane for blocks the user
+    // explicitly moved; everything else always floats to the topmost free row.
     positioned.forEach(item => {
-        // Prefer preserving an existing visual lane if it does not cause overlap.
-        const existing = Number.isFinite(_ganttVisualLane[item.task.id]) ? _ganttVisualLane[item.task.id] : null;
-        let lane = existing !== null ? existing : 0;
-        // If chosen lane conflicts (overlaps), find the next available lane.
+        const preferred = Number.isFinite(_ganttManualLane[item.task.id])
+            ? _ganttManualLane[item.task.id]
+            : 0;
+        let lane = preferred;
         while (laneEndAt[lane] !== undefined && laneEndAt[lane] >= item.si) lane++;
-        item.packedLane = lane;
+        item.lane = lane;
         laneEndAt[lane] = item.ei;
-        // Record the chosen lane so future renders keep the same non-overlapping layout.
         _ganttVisualLane[item.task.id] = lane;
-    });
-
-    // Finalize lane for each item from the visual mapping (now guaranteed non-overlapping).
-    positioned.forEach(item => {
-        item.lane = _ganttVisualLane[item.task.id];
     });
 
     return positioned;
@@ -426,7 +421,11 @@ function moveGanttBlockOneLane(planId, direction, startDate, endDate) {
             return compareGanttLanePriority(a, b);
         })[0];
 
-    if (neighbor) _ganttVisualLane[neighbor.task.id] = anchor.lane;
+    if (neighbor) {
+        _ganttManualLane[neighbor.task.id] = anchor.lane;
+        _ganttVisualLane[neighbor.task.id] = anchor.lane;
+    }
+    _ganttManualLane[planId] = targetLane;
     _ganttVisualLane[planId] = targetLane;
     return true;
 }
@@ -675,7 +674,7 @@ async function loadFilters() {
             populateSelect('filterWeek', kd2Filters.weeks, 'All Weeks');
             populateCategorySelect(kd2Filters.categories || []);
             await loadUnitCodes();
-            populateUnitFilter(kd2Filters.units || []);
+            populateUnitFilter(null);
             await getModuleRuntime().loadPlanningSnapshot?.(db);
             return;
         }
@@ -705,7 +704,7 @@ async function loadFilters() {
 
         populateSelect('filterVehicle', vehicles, 'All Vehicles');
         populateSelect('filterWeek', weeks, 'All Weeks');
-        populateUnitFilter(getRegisteredUnitNames(null, plans));
+        populateUnitFilter(null);
 
     } catch (err) {
         showToast('Failed to load filter options.', 'error');
@@ -789,32 +788,53 @@ function getRegisteredUnitNames(vehicle = null, fallbackRows = currentData) {
     ].filter(Boolean))].sort(naturalSort);
 }
 
-/** Populate unit filter showing "M1 · EGY N25020" format */
-function populateUnitFilter(units, vehicle) {
+/** Populate unit filter. When vehicle is given, shows "M1 · code"; otherwise shows "K9 · M1 · code"
+ *  so the vehicle context is always captured in data-vehicle for correct filtering. */
+function populateUnitFilter(vehicle = null) {
     const sel = document.getElementById('filterUnit');
-    const currentVal = sel.value;
+    const prevVal = sel.value;
+    const prevVehicle = sel.options[sel.selectedIndex]?.dataset?.vehicle || '';
     sel.innerHTML = '<option value="">All Units</option>';
-    units.forEach(u => {
-        // Scope lookup to specific vehicle when known, otherwise take first match
-        let code = '';
-        if (vehicle) {
-            code = unitCodeMap[vehicle + '||' + u] || '';
-        } else {
-            const key = Object.keys(unitCodeMap).find(k => k.split('||')[1] === u);
-            code = key ? unitCodeMap[key] : '';
-        }
+
+    const pairs = [];
+    const seen = new Set();
+    [...unitRegistryRows, ...(currentData || [])].forEach(r => {
+        const v = r.vehicle || r.vehicle_type || '';
+        const u = r.vehicle_no || '';
+        if (!v || !u) return;
+        if (vehicle && v !== vehicle) return;
+        const key = v + '||' + u;
+        if (!seen.has(key)) { seen.add(key); pairs.push({ v, u }); }
+    });
+    pairs.sort((a, b) => {
+        const vc = vehicleSort(a.v, b.v);
+        return vc !== 0 ? vc : naturalSort(a.u, b.u);
+    });
+
+    pairs.forEach(({ v, u }) => {
+        const code = unitCodeMap[v + '||' + u] || '';
         const opt = document.createElement('option');
         opt.value = u;
-        opt.textContent = code ? u + ' · ' + code : u;
+        opt.dataset.vehicle = v;
+        const base = code ? u + ' · ' + code : u;
+        opt.textContent = vehicle ? base : v + ' · ' + base;
         sel.appendChild(opt);
     });
-    if (currentVal) sel.value = currentVal;
+
+    if (prevVal) {
+        const idx = [...sel.options].findIndex(o => o.value === prevVal && o.dataset.vehicle === prevVehicle);
+        if (idx >= 0) sel.selectedIndex = idx;
+        else {
+            const fallback = [...sel.options].findIndex(o => o.value === prevVal);
+            if (fallback >= 0) sel.selectedIndex = fallback;
+        }
+    }
 }
 
 /** Called when filterVehicle changes — cascade unit dropdown */
 function onVehicleFilterChange() {
     const vehicle = getVal('filterVehicle');
-    populateUnitFilter(getRegisteredUnitNames(vehicle || null), vehicle || null);
+    populateUnitFilter(vehicle || null);
     
     // Show K9 component filter only when K9 is selected
     const k9ComponentGroup = document.getElementById('filterK9ComponentGroup');
@@ -869,9 +889,8 @@ function refreshAllViews() {
 
     const gsEl = document.getElementById('ganttStart');
     const geEl = document.getElementById('ganttEnd');
-    if (gsEl?.value && geEl?.value) {
-        renderGantt(displayData, gsEl.value, geEl.value);
-    }
+    if (!gsEl?.value || !geEl?.value) setGanttRangeFromData(displayData);
+    renderGantt(displayData, gsEl?.value, geEl?.value);
 }
 
 async function loadData() {
@@ -881,8 +900,10 @@ async function loadData() {
         if (isKD2Module() && getModuleRuntime()?.loadData) {
             const week = getVal('filterWeek');
             const wr = week ? isoWeekDateRange(week) : null;
+            const _unitSel = document.getElementById('filterUnit');
+            const _unitVehicle = _unitSel?.options[_unitSel.selectedIndex]?.dataset?.vehicle || '';
             currentData = await getModuleRuntime().loadData(db, {
-                vehicle: getVal('filterVehicle'),
+                vehicle: getVal('filterVehicle') || _unitVehicle,
                 battalion: getVal('filterBattalion'),
                 unit: getVal('filterUnit'),
                 week,
@@ -925,9 +946,8 @@ async function loadData() {
             await getModuleRuntime().renderSchedule?.(currentData);
             const gsEl = document.getElementById('ganttStart');
             const geEl = document.getElementById('ganttEnd');
-            if (gsEl?.value && geEl?.value) {
-                renderGantt(displayData, gsEl.value, geEl.value);
-            }
+            if (!gsEl?.value || !geEl?.value) setGanttRangeFromData(displayData);
+            renderGantt(displayData, gsEl?.value, geEl?.value);
             return;
         }
 
@@ -942,8 +962,10 @@ async function loadData() {
         )
       `);
 
-        // Vehicle filter
-        const vehicle = getVal('filterVehicle');
+        // Vehicle filter — also inherit from unit option's data-vehicle when vehicle filter is unset
+        const _unitSelA = document.getElementById('filterUnit');
+        const _unitVehicleA = _unitSelA?.options[_unitSelA.selectedIndex]?.dataset?.vehicle || '';
+        const vehicle = getVal('filterVehicle') || _unitVehicleA;
         if (vehicle) query = query.eq('vehicle', vehicle);
 
         // Unit filter
@@ -1056,12 +1078,11 @@ async function loadData() {
         renderCharts(displayData);
         renderVPX(displayData);   // use same filtered data as table/charts
 
-        // Auto-refresh gantt with current date range
+        // Auto-set gantt range from data on first load or when inputs are empty
         const gsEl = document.getElementById('ganttStart');
         const geEl = document.getElementById('ganttEnd');
-        if (gsEl?.value && geEl?.value) {
-            renderGantt(displayData, gsEl.value, geEl.value);
-        }
+        if (!gsEl?.value || !geEl?.value) setGanttRangeFromData(displayData);
+        renderGantt(displayData, gsEl?.value, geEl?.value);
 
     } catch (err) {
         showToast('Error loading data: ' + err.message, 'error');
@@ -1622,6 +1643,22 @@ function buildVpxColumns(data) {
         cols.get(meta.key).vehicles.add(task.vehicle || '');
     });
 
+    // Override order from module runtime route data (task.route_sequence may be absent in the view)
+    const rt = getModuleRuntime?.();
+    if (rt?.getStationRouteOrder) {
+        const mergedOrder = new Map();
+        ['K9', 'K10', 'K11'].forEach(v => {
+            rt.getStationRouteOrder(v).forEach((seq, stationName) => {
+                if (!mergedOrder.has(stationName) || seq < mergedOrder.get(stationName)) {
+                    mergedOrder.set(stationName, seq);
+                }
+            });
+        });
+        cols.forEach(col => {
+            if (mergedOrder.has(col.name)) col.order = mergedOrder.get(col.name);
+        });
+    }
+
     return [...cols.values()]
         .sort((a, b) => {
             if (a.order !== b.order) return a.order - b.order;
@@ -1752,8 +1789,10 @@ function renderVPX(data) {
             if (row.battalion_code !== prevBattalion) {
                 html += '<tr class="vpx-row vpx-row-group vpx-row-battalion">';
                 html += '<td class="vpx-td-vehicle vpx-td-group vpx-td-battalion" colspan="1">'
+                    + '<div class="vpx-grp-inner">'
                     + '<svg class="vpx-bat-icon" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.8"><rect x="2" y="3" width="12" height="10" rx="1.5"/><path d="M6 9h4M4 6h8M4 12h8"/></svg>'
                     + '<span class="vpx-battalion-name">' + esc(row.battalion_code || '—') + '</span>'
+                    + '</div>'
                     + '</td>';
                 activeCols.forEach(() => { html += '<td class="vpx-group-fill vpx-group-battalion"></td>'; });
                 html += '</tr>';
@@ -1763,8 +1802,9 @@ function renderVPX(data) {
             if (row.vehicle !== prevVehicle) {
                 html += '<tr class="vpx-row vpx-row-group vpx-row-vehicle">';
                 html += '<td class="vpx-td-vehicle vpx-td-group vpx-td-vehicle" colspan="1">'
-                    + '<svg class="vpx-veh-icon" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.8"><rect x="2" y="3" width="12" height="10" rx="1.5"/><path d="M5 8h6M5 11h4"/></svg>'
-                    + '<span class="vpx-veh-name">' + esc(row.vehicle) + '</span>'
+                    + '<div class="vpx-grp-inner">'
+                    + '<span class="vpx-veh-badge">' + esc(row.vehicle) + '</span>'
+                    + '</div>'
                     + '</td>';
                 activeCols.forEach(() => { html += '<td class="vpx-group-fill vpx-group-vehicle"></td>'; });
                 html += '</tr>';
@@ -1773,8 +1813,9 @@ function renderVPX(data) {
             // For KD1, add group header only for vehicle changes
             html += '<tr class="vpx-row vpx-row-group">';
             html += '<td class="vpx-td-vehicle vpx-td-group" colspan="1">'
-                + '<svg class="vpx-veh-icon" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.8"><rect x="2" y="3" width="12" height="10" rx="1.5"/><path d="M5 8h6M5 11h4"/></svg>'
-                + '<span class="vpx-veh-name">' + esc(row.vehicle) + '</span>'
+                + '<div class="vpx-grp-inner">'
+                + '<span class="vpx-veh-badge">' + esc(row.vehicle) + '</span>'
+                + '</div>'
                 + '</td>';
             activeCols.forEach(() => { html += '<td class="vpx-group-fill"></td>'; });
             html += '</tr>';
@@ -1784,9 +1825,13 @@ function renderVPX(data) {
         var primaryLabel = getVpxRowPrimaryLabel(row);
         var secondaryLabel = getVpxRowSecondaryLabel(row);
         html += '<td class="vpx-td-vehicle vpx-td-unit">'
+            + '<div class="vpx-unit-inner">'
             + '<span class="vpx-unit-dot"></span>'
+            + '<div class="vpx-unit-text">'
             + '<span class="vpx-unit-name">' + esc(primaryLabel) + '</span>'
             + (secondaryLabel ? '<span class="vpx-unit-code">' + esc(secondaryLabel) + '</span>' : '')
+            + '</div>'
+            + '</div>'
             + '</td>';
 
         activeCols.forEach((col, ci) => {
@@ -2542,7 +2587,7 @@ function resetFilters() {
     const srch = document.getElementById('tableSearch');
     if (srch) srch.value = '';
     // Restore full unit list with no vehicle scope
-    populateUnitFilter(getRegisteredUnitNames(), null);
+    populateUnitFilter(null);
     loadData();
 }
 
@@ -2932,22 +2977,29 @@ function isoWeekDateRange(label) {
    WIRE GANTT CONTROLS  — call from wireEvents()
    ────────────────────────────────────────────────────────────────── */
 function wireGanttControls() {
-    // Default range: first day of current month → last day 2 months out
-    const now = new Date();
-    const y = now.getFullYear();
-    const m = now.getMonth();
-    const defaultStart = new Date(y, m - 2, 1).toISOString().slice(0, 10);
-    const defaultEnd = new Date(y, m + 4, 0).toISOString().slice(0, 10);
-
     const gsEl = document.getElementById('ganttStart');
     const geEl = document.getElementById('ganttEnd');
-    if (gsEl) gsEl.value = defaultStart;
-    if (geEl) geEl.value = defaultEnd;
 
     document.getElementById('btnGanttRefresh')?.addEventListener('click', () => {
         renderGantt(currentData, gsEl?.value, geEl?.value);
     });
     syncGanttLegendUi();
+}
+
+function setGanttRangeFromData(data) {
+    if (!data?.length) return;
+    let minDate = '', maxDate = '';
+    for (const r of data) {
+        const s = r.start_date || '';
+        const e = r.end_date || '';
+        if (s && (!minDate || s < minDate)) minDate = s;
+        if (e && (!maxDate || e > maxDate)) maxDate = e;
+    }
+    if (!minDate || !maxDate) return;
+    const gsEl = document.getElementById('ganttStart');
+    const geEl = document.getElementById('ganttEnd');
+    if (gsEl) gsEl.value = minDate;
+    if (geEl) geEl.value = maxDate;
 }
 
 /* ──────────────────────────────────────────────────────────────────
@@ -3001,6 +3053,7 @@ function renderGantt(plans, startDate, endDate) {
     // Fast lookup: date string → column index (Fridays have no entry)
     const dayIndex = Object.fromEntries(days.map((d, i) => [d, i]));
     const specialZones = getModuleGanttZones(startDate, endDate);
+    const isKd2ProcessView = isKD2Module() && getModuleRuntime()?.currentTimelineViewMode?.() === 'process';
     const holidayStatusByDay = new Map();
     const holidayLabelsByDay = new Map();
     specialZones
@@ -3056,27 +3109,36 @@ function renderGantt(plans, startDate, endDate) {
     const vehicleFilter = getVal('filterVehicle');
     const unitFilter = getVal('filterUnit');
     const battalionFilter = isKD2Module() ? getVal('filterBattalion') : '';
-    unitRegistryRows
-        .filter(row =>
-            (!vehicleFilter || row.vehicle === vehicleFilter) &&
-            (!unitFilter || row.vehicle_no === unitFilter) &&
-            (!battalionFilter || !isKD2Module() || row.battalion_code === battalionFilter)
-        )
-        .forEach(row => {
-            const groupKey = isKD2Module() ? (row.battalion_code || '—') : row.vehicle;
-            const laneKey = isKD2Module() ? `${row.vehicle}||${row.vehicle_no}` : row.vehicle_no;
-            ensureGroupLane(groupKey, laneKey);
-            laneMetaMap[laneMetaKey(groupKey, laneKey)] = {
-                battalion_id: row.battalion_id ?? null,
-                battalion_code: row.battalion_code || '',
-                vehicle_type: row.vehicle_type || row.vehicle || '',
-                unit_serial: row.unit_serial ?? null,
-                unit_label: row.unit_label || row.vehicle_no || '',
-            };
-        });
+    const _unitSelG = document.getElementById('filterUnit');
+    const _unitVehicleG = _unitSelG?.options[_unitSelG?.selectedIndex]?.dataset?.vehicle || '';
+    const effectiveVehicleFilter = vehicleFilter || _unitVehicleG;
+    if (!isKd2ProcessView) {
+        unitRegistryRows
+            .filter(row =>
+                (!effectiveVehicleFilter || row.vehicle === effectiveVehicleFilter) &&
+                (!unitFilter || row.vehicle_no === unitFilter) &&
+                (!battalionFilter || !isKD2Module() || row.battalion_code === battalionFilter)
+            )
+            .forEach(row => {
+                const groupKey = isKD2Module() ? (row.battalion_code || '—') : row.vehicle;
+                const laneKey = isKD2Module() ? `${row.vehicle}||${row.vehicle_no}` : row.vehicle_no;
+                ensureGroupLane(groupKey, laneKey);
+                laneMetaMap[laneMetaKey(groupKey, laneKey)] = {
+                    battalion_id: row.battalion_id ?? null,
+                    battalion_code: row.battalion_code || '',
+                    vehicle_type: row.vehicle_type || row.vehicle || '',
+                    unit_serial: row.unit_serial ?? null,
+                    unit_label: row.unit_label || row.vehicle_no || '',
+                };
+            });
+    }
     visible.forEach(p => {
-        const groupKey = isKD2Module() ? (p.battalion_code || '—') : p.vehicle;
-        const laneKey = isKD2Module() ? `${p.vehicle}||${p.vehicle_no}` : p.vehicle_no;
+        const groupKey = isKd2ProcessView
+            ? (p.vehicle || '—')
+            : (isKD2Module() ? (p.battalion_code || '—') : p.vehicle);
+        const laneKey = isKd2ProcessView
+            ? (p.process_station || '—')
+            : (isKD2Module() ? `${p.vehicle}||${p.vehicle_no}` : p.vehicle_no);
         ensureGroupLane(groupKey, laneKey);
         groups[groupKey][laneKey].push(p);
         laneMetaMap[laneMetaKey(groupKey, laneKey)] = {
@@ -3089,9 +3151,11 @@ function renderGantt(plans, startDate, endDate) {
     });
 
     const groupKeys = Object.keys(groups).sort((a, b) =>
-        isKD2Module()
-            ? a.localeCompare(b, undefined, { numeric: true })
-            : vehicleSort(a, b)
+        isKd2ProcessView
+            ? vehicleSort(a, b)
+            : isKD2Module()
+                ? a.localeCompare(b, undefined, { numeric: true })
+                : vehicleSort(a, b)
     );
 
     if (!groupKeys.length) {
@@ -3116,7 +3180,7 @@ function renderGantt(plans, startDate, endDate) {
     // ── 3. Header HTML ─────────────────────────────────────────────
     let mHtml = `<div class="gh-corner" style="width:${GANTT_LABEL_W}px;height:28px"></div>`;
     let wHtml = `<div class="gh-corner" style="width:${GANTT_LABEL_W}px;height:22px"></div>`;
-    let dHtml = `<div class="gh-corner gh-corner-label" style="width:${GANTT_LABEL_W}px;height:28px">${isKD2Module() ? 'Battalion / Vehicle / Unit' : 'Vehicle / Unit'}</div>`;
+    let dHtml = `<div class="gh-corner gh-corner-label" style="width:${GANTT_LABEL_W}px;height:28px">${isKd2ProcessView ? 'Vehicle / Station' : isKD2Module() ? 'Battalion / Vehicle / Unit' : 'Vehicle / Unit'}</div>`;
 
     let runMonth = '', runMonthSpan = 0;
     let runWeek = -1, runWeekSpan = 0;
@@ -3194,6 +3258,13 @@ function renderGantt(plans, startDate, endDate) {
 
     groupKeys.forEach(groupKey => {
         const unitKeys = Object.keys(groups[groupKey]).sort((a, b) => {
+            if (isKd2ProcessView) {
+                const routeOrder = getModuleRuntime()?.getStationRouteOrder?.(groupKey) || new Map();
+                const seqA = routeOrder.get(a) ?? 9999;
+                const seqB = routeOrder.get(b) ?? 9999;
+                if (seqA !== seqB) return seqA - seqB;
+                return a.localeCompare(b, undefined, { numeric: true });
+            }
             if (!isKD2Module()) return naturalSort(a, b);
             const [vehicleA, ...unitAParts] = a.split('||');
             const [vehicleB, ...unitBParts] = b.split('||');
@@ -3215,7 +3286,7 @@ function renderGantt(plans, startDate, endDate) {
         <div class="gr-track gr-track-group" style="width:${totalW}px">${bgCells}</div>
       </div>`;
 
-        const vehicleSections = isKD2Module()
+        const vehicleSections = (!isKd2ProcessView && isKD2Module())
             ? [...new Set(unitKeys.map(unit => unit.split('||')[0]).filter(Boolean))]
                 .sort(vehicleSort)
                 .map(vehicle => ({
@@ -3225,7 +3296,7 @@ function renderGantt(plans, startDate, endDate) {
             : [{ vehicle: groupKey, units: unitKeys }];
 
         vehicleSections.forEach(section => {
-            if (isKD2Module() && section.units.length) {
+            if (!isKd2ProcessView && isKD2Module() && section.units.length) {
                 bodyHtml += `
       <div class="gr gr-subgroup" style="height:${Math.max(30, GANTT_GRP_H - 8)}px">
         <div class="gr-label gr-subgroup-label" style="width:${GANTT_LABEL_W}px">
@@ -3237,8 +3308,8 @@ function renderGantt(plans, startDate, endDate) {
 
             section.units.forEach(unit => {
             const tasks = groups[groupKey][unit] || [];
-            const laneVehicle = isKD2Module() ? unit.split('||')[0] : groupKey;
-            const laneUnit = isKD2Module() ? unit.split('||').slice(1).join('||') : unit;
+            const laneVehicle = isKd2ProcessView ? groupKey : (isKD2Module() ? unit.split('||')[0] : groupKey);
+            const laneUnit = isKd2ProcessView ? unit : (isKD2Module() ? unit.split('||').slice(1).join('||') : unit);
             const laneMeta = laneMetaMap[laneMetaKey(groupKey, unit)] || {};
 
             // ── Lane assignment for overlapping bars ─────────────────────
@@ -3364,7 +3435,7 @@ function renderGantt(plans, startDate, endDate) {
           style="left:${left}px;width:${width}px;height:${BAR_H}px;top:${topPx}px;transform:none;background:${color}"
           title="${esc(tip)}">
           ${actualStartMarker}
-          <span class="gc-bar-text">${esc(isKD2Module() ? `${getRowCode(task)} · ${task.process_station}` : task.process_station)}</span>
+          <span class="gc-bar-text">${esc(isKd2ProcessView ? `${task.battalion_code || '—'} · ${task.vehicle_no}` : isKD2Module() ? `${getRowCode(task)} · ${task.process_station}` : task.process_station)}</span>
           ${blockMenu}
         </div>`;
             }).join('');
@@ -3378,7 +3449,7 @@ function renderGantt(plans, startDate, endDate) {
         <div class="gr${rowMenuOpen ? ' gc-row-menu-open' : ''}" style="height:${rowH}px">
           <div class="gr-label gr-unit-label" style="width:${GANTT_LABEL_W}px">
             <span class="gr-unit-dot"></span>
-            <span class="gr-unit-name">${esc(isKD2Module() ? `${laneVehicle} · ${unitLabel(laneVehicle, laneUnit)}` : unitLabel(laneVehicle, laneUnit))}</span>
+            <span class="gr-unit-name">${esc(isKd2ProcessView ? laneUnit : isKD2Module() ? `${laneVehicle} · ${unitLabel(laneVehicle, laneUnit)}` : unitLabel(laneVehicle, laneUnit))}</span>
             ${isKD2Module() && _ganttEditMode && _ganttSelectLaneMode && anchorTask ? `<button type="button" class="gantt-lane-select-btn" data-gantt-lane-select="${anchorTask.id}" aria-pressed="${laneSelected ? 'true' : 'false'}">${laneSelected ? 'Clear lane' : 'Select lane'}</button>` : ''}
           </div>
           <div class="gr-track" style="width:${totalW}px;height:${rowH}px"
@@ -5024,7 +5095,7 @@ async function saveUnitCode() {
             if (error) throw error;
 
             await loadUnitCodes();
-            populateUnitFilter(getRegisteredUnitNames(getVal('filterVehicle') || null), getVal('filterVehicle') || undefined);
+            populateUnitFilter(getVal('filterVehicle') || null);
             refreshAllViews();
             closeUcForm();
             loadUcTable();
@@ -5046,7 +5117,7 @@ async function saveUnitCode() {
 
         // Refresh in-memory map and re-render
         await loadUnitCodes();
-        populateUnitFilter(getRegisteredUnitNames());
+        populateUnitFilter(getVal('filterVehicle') || null);
         refreshAllViews();
         closeUcForm();
         loadUcTable();
@@ -5062,10 +5133,7 @@ async function deleteUnitCode(id) {
         const { error } = await db.from(isKD2Module() ? 'kd2_vehicle_units' : 'vehicle_units').delete().eq('id', id);
         if (error) throw error;
         await loadUnitCodes();
-        populateUnitFilter(
-            getRegisteredUnitNames(getVal('filterVehicle') || null),
-            getVal('filterVehicle') || undefined
-        );
+        populateUnitFilter(getVal('filterVehicle') || null);
         refreshAllViews();
         loadUcTable();
         showToast(isKD2Module() ? 'KD2 unit code deleted.' : 'Unit code deleted.', 'success');
@@ -5342,6 +5410,7 @@ let _openGanttBlockMenuPlanId = null;
 const _selectedGanttPlanIds = new Set();
 const _laneOrder = {};
 const _ganttVisualLane = {};
+const _ganttManualLane = {}; // lanes set explicitly by the user via move-up/down buttons
 let _ganttLegendOpen = false;
 let _ganttFullscreenEventsBound = false;
 let _ganttFullscreenHandlersBound = false;
@@ -5711,11 +5780,13 @@ function syncGanttModuleEditControls() {
     const fromBlockBtn = document.getElementById('gmtFromBlock');
     const satWrap = document.getElementById('ganttSatToggleWrap');
     const visualAddShell = document.getElementById('ganttVisualAddShell');
+    const viewToggleWrap = document.getElementById('ganttViewToggleWrap');
     if (kd2Tools) kd2Tools.style.display = _ganttEditMode && isKd2 ? 'inline-flex' : 'none';
     if (visualAddShell) visualAddShell.style.display = _ganttEditMode && isKd2 ? 'inline-flex' : 'none';
     if (planBtn) planBtn.style.display = isKd2 ? 'none' : '';
     if (fromBlockBtn) fromBlockBtn.style.display = isKd2 ? '' : 'none';
     if (satWrap) satWrap.style.display = isKd2 ? 'none' : '';
+    if (viewToggleWrap) viewToggleWrap.style.display = isKd2 ? '' : 'none';
     if ((!_ganttEditMode || !isKd2) && getModuleRuntime()?.toggleTimelineVisualMenu) {
         getModuleRuntime().toggleTimelineVisualMenu(false);
     }
@@ -6197,6 +6268,19 @@ const _origWireGantt = wireGanttControls;
 wireGanttControls = function () {
     _origWireGantt();
 
+    document.getElementById('btnGanttViewUnit')?.addEventListener('click', () => {
+        getModuleRuntime()?.setTimelineViewMode?.('unit', { skipRender: true });
+        const gsEl = document.getElementById('ganttStart');
+        const geEl = document.getElementById('ganttEnd');
+        if (gsEl?.value && geEl?.value) renderGantt(currentData, gsEl.value, geEl.value);
+    });
+    document.getElementById('btnGanttViewProcess')?.addEventListener('click', () => {
+        getModuleRuntime()?.setTimelineViewMode?.('process', { skipRender: true });
+        const gsEl = document.getElementById('ganttStart');
+        const geEl = document.getElementById('ganttEnd');
+        if (gsEl?.value && geEl?.value) renderGantt(currentData, gsEl.value, geEl.value);
+    });
+
     document.getElementById('btnGanttEdit')?.addEventListener('click', () => setGanttEditMode(true));
     document.getElementById('btnGanttEditDone')?.addEventListener('click', () => {
         _ganttSatAsked = false; // reset for next edit session
@@ -6442,6 +6526,7 @@ async function deleteGanttBlock(planId) {
         // Remove from in-memory data
         currentData = currentData.filter(t => t.id !== planId);
         delete _ganttVisualLane[planId];
+        delete _ganttManualLane[planId];
         _selectedGanttPlanIds.delete(planId);
         _pushUndoAction({
             label: 'block delete',
@@ -6479,7 +6564,7 @@ async function deleteSelectedGanttBlocks() {
         await removeGanttTaskSnapshots(snapshots, 'batch-delete');
 
         currentData = currentData.filter(task => !planIds.includes(task.id));
-        planIds.forEach(id => { delete _ganttVisualLane[id]; });
+        planIds.forEach(id => { delete _ganttVisualLane[id]; delete _ganttManualLane[id]; });
         planIds.forEach(id => _selectedGanttPlanIds.delete(id));
         _pushUndoAction({
             label: `${snapshots.length} block delete${snapshots.length > 1 ? 's' : ''}`,

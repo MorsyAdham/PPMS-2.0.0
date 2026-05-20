@@ -871,8 +871,11 @@ export function renderSharedDialogs() {
                             <input type="text" id="kd2NoWorkLabel" class="filter-control" placeholder="Optional reason" />
                         </div>
                         <div class="form-group">
-                            <label class="form-label" for="kd2NoWorkActive">Status</label>
-                            <label class="kd2-check"><input type="checkbox" id="kd2NoWorkActive" checked /> Active</label>
+                            <label class="form-label">Status</label>
+                            <label class="form-check">
+                                <input type="checkbox" id="kd2NoWorkActive" checked />
+                                <span>Active (blocks scheduling)</span>
+                            </label>
                         </div>
                     </div>
                     <div class="import-footer" style="margin-bottom:14px">
@@ -880,7 +883,7 @@ export function renderSharedDialogs() {
                         <button class="btn btn-ghost" id="btnKd2NoWorkCancelEdit" style="display:none">Cancel Edit</button>
                     </div>
                     <div class="ab-error" id="kd2NoWorkError" style="display:none"></div>
-                    <div class="kd2-import-summary" id="kd2NoWorkSummary">Active KD2 no-work ranges affect scheduling. Inactive ranges stay visible but do not move the plan.</div>
+                    <div class="kd2-import-summary" id="kd2NoWorkSummary">KD2 no-work ranges block scheduling for the selected dates. Delete a range to re-enable those days.</div>
                     <div class="kd2-no-work-list" id="kd2NoWorkList"></div>
                 </div>
                 <div class="modal-footer">

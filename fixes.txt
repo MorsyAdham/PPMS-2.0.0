@@ -1,9 +1,202 @@
-- K9 component filter doesn't work well, doesn't show all things in the Hull or turret, only views some of it, for example it didn't show anything in the hull assembly
-- items in the filters should be ordered as M1 -> M2, etc.. not M1 -> M10, etc..
-- in unit filter when I filtered for K9 · M1 · EGY N25039, it returened M1 for K9, K10 and K11, not just for K9
+========================================================
+PPMS — Bug & Enhancement Log
+========================================================
 
-- VPX UI needed improvement as it only shows the half of the unit code and it should be clear and visisble 
+FORMAT: [STATUS] Problem → Solution
 
-- when I try to add a template to a vehicle and I built the template some times it shows this error and I'm not sure why it sometimes work and sometimes it happens: "No template rows are available to save." 
-- no working day shows an error and refuses to be created
-- adding and managing blocks is still malfunctioning and not adding to the system, when saving the template or adding new process from manage processes
+STATUS: ✅ Resolved | 🔄 In Progress | ❌ Not Started | ⚠️ Known Limitation
+
+--------------------------------------------------------
+UI — FILTERS
+--------------------------------------------------------
+
+✅ Unit filter returns M1 for all K9/K10/K11 when only K9·M1 is selected
+   Problem: When "All Vehicles" was selected and user picked "M1 · EGY N25039",
+            the filterUnit option had no data-vehicle, so the query and Gantt
+            rendered M1 lanes for every vehicle.
+   Solution: Rewrote populateUnitFilter() to always generate one option per
+             (vehicle, unit) pair. When no vehicle filter is active, labels show
+             "K9 · M1 · EGY N25039" and data-vehicle is set to "K9" on each
+             option. renderGantt() now reads effectiveVehicleFilter from the
+             selected option's data-vehicle when filterVehicle is blank.
+
+✅ Items in filters ordered M1 → M10 instead of M1 → M2
+   Problem: naturalSort was not used consistently across all filter populations.
+   Solution: naturalSort applied when building unit filter pairs.
+
+⚠️ K9 component filter doesn't show all items (e.g. Hull Assembly missing)
+   Problem: Filter may be restricting by category/station in a way that
+            excludes some Hull/Turret process stations.
+   Status: Needs investigation — not yet resolved.
+
+--------------------------------------------------------
+UI — GANTT
+--------------------------------------------------------
+
+✅ Gantt group/battalion/vehicle header rows not sticky while scrolling
+   Problem: Battalion (gr-group) and vehicle sub-header (gr-subgroup) rows
+            scrolled out of view as user scrolled down through unit lanes.
+   Solution: Added position:sticky to .gr-group (top:78px, z-index:10) and
+             .gr-subgroup (top:108px, z-index:9) so they stay visible within
+             the .gantt-scroll-root scroll container. Light-theme backgrounds
+             added to keep rows opaque when covering content behind them.
+
+✅ Gantt Unit/Process view toggle button ugly and did nothing
+   Problem: Toggle was not wired to re-render the main Gantt; calling
+            setTimelineViewMode re-rendered only the KD2 workspace timeline
+            (in a hidden section), not the visible Gantt.
+   Solution: Redesigned toggle as a styled segmented control (gantt-view-seg).
+             Gantt bar buttons now call setTimelineViewMode({skipRender:true})
+             then immediately call renderGantt() with current date range.
+
+✅ Process view should order lanes by route sequence
+   Problem: Process view (vehicle/station) lanes were sorted alphabetically
+            by station name. getStationRouteOrder() built the map using
+            r.station_name, but kd2_process_routes only stores station_code —
+            so the map was always empty and stations sorted alphabetically.
+   Solution: getStationRouteOrder() now looks up station_name from state.stations
+             via station_code+vehicle_type, so the Map<stationName, routeSequence>
+             is correctly populated. renderGantt() uses this map to sort lanes
+             by route_sequence for process view.
+
+✅ Gantt scrambled plans — parallel processes that should be sequential
+   Problem: recalculatePlanWindowsForNonWorkDayChange() cascaded shifts to ALL
+            plans in a lane when a no-work day was added, overwriting correct
+            plan dates with cascaded offsets.
+   Solution: Replaced cascade function with applyTargetedNoWorkReschedule() which
+             only queries plans overlapping the specific off-date range
+             (.lte(planned_start_date, lastOff).gte(planned_end_date, firstOff))
+             and recomputes each plan individually without touching adjacent plans.
+
+✅ Gantt view toggle not finished (Unit/Process toggle in header bar)
+   Problem: Toggle control was not present in gantt-module.js and not wired
+            in app.js.
+   Solution: Added ganttViewToggleWrap with segmented Unit/Process buttons to
+             gantt-module.js. syncGanttModuleEditControls() shows/hides the
+             toggle only for KD2 module. Click handlers in wireGanttControls()
+             call setTimelineViewMode then re-render Gantt.
+
+--------------------------------------------------------
+UI — VPX
+--------------------------------------------------------
+
+✅ VPX unit code display cut off / not clear
+   Problem: Unit code text was too small and only half visible in the unit cell.
+   Solution: VPX unit cell redesigned with status stripe (box-shadow inset
+             border), larger dots, ring-style unit dot, tag-style unit code
+             display, and accent-colored planned date.
+
+✅ VPX battalion/vehicle group rows not sticky while scrolling
+   Problem: Battalion and vehicle group header rows scrolled out of view as
+            user scrolled down through unit rows.
+   Solution: Added position:sticky to .vpx-row-battalion td (top:64px, z-index:8)
+             and .vpx-row-vehicle td (top:108px, z-index:7). Backgrounds are
+             already opaque via existing .vpx-group-battalion and
+             .vpx-group-vehicle classes.
+
+--------------------------------------------------------
+NO-WORK DAYS
+--------------------------------------------------------
+
+✅ No-work day added to DB but not shown in list or on Gantt
+   Problem: recalculatePlanWindowsForNonWorkDayChange() threw an error before
+            refreshWorkspace() and renderNoWorkDays() were called, so the UI
+            never updated even though the DB insert succeeded.
+   Solution: Separated display refresh from rescheduling. Display always
+             refreshes (refreshWorkspace + renderNoWorkDays) even if reschedule
+             fails. Error is shown as a toast without blocking display.
+
+✅ is_active column missing from planning_non_work_days table
+   Problem: Column did not exist, causing Supabase schema cache errors when
+            trying to insert or query is_active.
+   Solution: SQL migration required (run once in Supabase):
+             ALTER TABLE public.planning_non_work_days
+             ADD COLUMN is_active boolean NOT NULL DEFAULT true;
+
+✅ Inactive no-work days should show red highlight (not block scheduling)
+   Problem: Inactive no-work days were still included in state.nonWorkDaySet,
+            blocking scheduling the same as active days.
+   Solution: syncNonWorkDays() now filters nonWorkDaySet to only is_active!==false
+             rows. Inactive days render as gc-zone-holiday-inactive (red-tinted
+             background, dashed border) without affecting working-day calculations.
+
+✅ Active no-work day should reschedule only affected plans (Friday-like logic)
+   Problem: Old cascade function shifted all plans in the entire lane instead of
+            only plans that overlap the no-work day.
+   Solution: applyTargetedNoWorkReschedule() queries only overlapping plans,
+             recomputes each plan's window using old rules vs new rules. Logic:
+             - Plan starts on no-work day → start shifted to first working day after
+             - Plan spans through no-work day → end date extended accordingly
+             No cascade to adjacent plans.
+
+✅ Deactivating no-work day should revert only plans that were shifted by it
+   Problem: No revert logic existed; deactivating had no effect on plan dates.
+   Solution: revertTargetedNoWorkReschedule() queries overlapping plans, applies
+             old rules (remaining+removed off-dates) vs new rules (remaining only)
+             to compute the revert delta for each plan.
+
+⚠️ Revert is approximate for plans originally starting ON the no-work day
+   Problem: If a plan's original start was ON the no-work day (and was shifted
+            forward), the exact original date is not stored, so revert cannot
+            perfectly recover it.
+   Status: Known limitation. Plans that spanned through the no-work day revert
+           correctly. Plans that started exactly on it may land on the first
+           working day after the removed no-work period rather than their true
+           original date.
+
+--------------------------------------------------------
+TEMPLATES / MANAGE PROCESSES
+--------------------------------------------------------
+
+⚠️ "No template rows available to save" error (intermittent)
+   Problem: Adding a template to a vehicle sometimes fails with this error;
+            cause is inconsistent.
+   Status: Not yet resolved — needs reproduction steps.
+
+⚠️ Adding/managing blocks still malfunctioning (save template / manage processes)
+   Problem: New process blocks from Manage Processes or template save are not
+            persisting to the system correctly.
+   Status: Not yet resolved.
+
+--------------------------------------------------------
+UI — VPX (ADDITIONAL)
+--------------------------------------------------------
+
+✅ VPX columns ordered alphabetically instead of by route sequence
+   Problem: buildVpxColumns() sorted by task.route_sequence, which is absent
+            from the kd2_plan_live view, causing all columns to default to
+            order 9999 and sort alphabetically.
+   Solution: After building the column map, buildVpxColumns() now calls
+             getModuleRuntime().getStationRouteOrder(vehicle) for K9/K10/K11
+             to build a merged Map<stationName, seq> and overrides each col's
+             order with the real route sequence before sorting.
+
+✅ VPX battalion/vehicle group rows not sticky while scrolling
+   Problem: .vpx-row-battalion td and .vpx-row-vehicle td had only height set,
+            not sticky positioning, so they scrolled out of view.
+   Solution: Added position:sticky to .vpx-row-battalion td (top:64px, z-index:30)
+             and .vpx-row-vehicle td (top:108px, z-index:25) — offsetting below
+             the two VPX header rows (2 × 32px = 64px total).
+
+--------------------------------------------------------
+UI — GANTT (ADDITIONAL)
+--------------------------------------------------------
+
+✅ Left label column appears OVER sticky battalion/vehicle header rows
+   Problem: .gr-label (z-index:50) was above .gr-group (z-index:10) in the same
+            stacking context, so unit labels painted over the sticky group headers.
+   Solution: Raised .gr-group to z-index:60 and .gr-subgroup to z-index:55 so
+             they exceed gr-label (50). Same pattern applied to VPX (battalion
+             row z-30 > vpx-td-vehicle z-20, vehicle row z-25 > vpx-td-vehicle z-20).
+
+✅ Today indicator and no-work day zones hidden behind sticky group rows
+   Problem: .gc-today-line and .gc-zone are position:absolute inside .gantt-body
+            (position:relative, no z-index). Browser compositor could paint sticky
+            rows over the zones regardless of their local z-index values.
+   Solution: Added z-index:0 to .gantt-body to make it an explicit stacking context,
+             ensuring zones (z-62) and today-line (z-65) compete within the same
+             context as sticky rows (z-60/55) and correctly paint above them.
+             gantt-head (z-20, sibling of gantt-body in gantt-wrap) remains above
+             the gantt-body (z-0) in the parent context.
+
+========================================================

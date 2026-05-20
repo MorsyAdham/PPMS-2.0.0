@@ -3773,14 +3773,15 @@ body {
 }
 
 .gh-day-holiday-inactive {
-    background: rgba(148, 163, 184, .12);
+    background: rgba(239, 68, 68, .06);
     color: var(--clr-text-muted);
-    box-shadow: inset 0 -2px 0 rgba(148, 163, 184, .32);
+    box-shadow: inset 0 -2px 0 rgba(239, 68, 68, .3);
 }
 
 /* ─── Body ──────────────────────────────────────────────────────── */
 .gantt-body {
     position: relative;
+    z-index: 0; /* creates stacking context so zones/today-line compete with sticky rows here */
 }
 
 /* ─── Row ───────────────────────────────────────────────────────── */
@@ -3794,12 +3795,20 @@ body {
     background: rgba(255, 255, 255, .012);
 }
 
-/* Group header row */
+/* Group header row — sticky top so battalion/vehicle headers stay visible while scrolling */
 .gr-group {
+    position: sticky;
+    top: 78px; /* below gantt-head (28+22+28 px) */
+    z-index: 60; /* above gr-label (50) so labels tuck behind battalion rows */
+    background: var(--clr-surface-2);
     border-bottom: 1px solid var(--clr-border);
 }
 
 .gr-subgroup {
+    position: sticky;
+    top: 108px; /* below gantt-head (78px) + group row (30px) */
+    z-index: 55; /* above gr-label (50), below gr-group (60) */
+    background: color-mix(in srgb, var(--clr-surface-2) 80%, var(--clr-accent) 20%);
     border-bottom: 1px solid var(--clr-border-soft);
 }
 
@@ -4043,7 +4052,7 @@ body {
     position: absolute;
     top: 0;
     bottom: 0;
-    z-index: 1;
+    z-index: 62; /* above gr-group (60) so zone bands overlay sticky rows */
     pointer-events: none;
     display: flex;
     align-items: flex-start;
@@ -4056,8 +4065,8 @@ body {
 }
 
 .gc-zone-holiday-inactive {
-    background: rgba(148, 163, 184, .07);
-    border-left: 2px solid rgba(148, 163, 184, .45);
+    background: rgba(239, 68, 68, .04);
+    border-left: 2px dashed rgba(239, 68, 68, .35);
 }
 
 .gc-zone-fat {
@@ -4083,7 +4092,7 @@ body {
     width: 2px;
     background: var(--clr-accent);
     opacity: .7;
-    z-index: 3;
+    z-index: 65; /* above gr-group (60) and zones (62) so today line is always on top */
     pointer-events: none;
 }
 
@@ -5226,6 +5235,10 @@ body {
     background: #eff6ff;
 }
 
+[data-theme="light"] .gr-subgroup {
+    background: #dbeafe;
+}
+
 [data-theme="light"] .gr-label {
     background: #fff;
     border-color: #e2e8f0;
@@ -6333,6 +6346,67 @@ body {
     color: #b45309;
 }
 
+/* ── Gantt bar Unit / Process segmented toggle ─────────────────── */
+.gantt-view-seg {
+    display: inline-flex;
+    align-items: center;
+    gap: 2px;
+    padding: 3px;
+    border-radius: 10px;
+    background: rgba(0, 0, 0, .32);
+    border: 1px solid rgba(255, 255, 255, .07);
+}
+
+.gantt-view-seg-btn {
+    display: inline-flex;
+    align-items: center;
+    gap: 5px;
+    padding: 4px 11px;
+    font-size: .7rem;
+    font-weight: 700;
+    letter-spacing: .06em;
+    text-transform: uppercase;
+    border-radius: 7px;
+    border: none;
+    background: transparent;
+    color: var(--clr-text-muted);
+    cursor: pointer;
+    transition: background .15s, color .15s, box-shadow .15s;
+    white-space: nowrap;
+    line-height: 1;
+}
+
+.gantt-view-seg-btn.gantt-view-seg-active {
+    background: var(--clr-accent);
+    color: #fff;
+    box-shadow: 0 1px 6px rgba(79, 142, 247, .45);
+}
+
+.gantt-view-seg-btn:hover:not(.gantt-view-seg-active) {
+    background: rgba(255, 255, 255, .09);
+    color: var(--clr-text);
+}
+
+[data-theme="light"] .gantt-view-seg {
+    background: rgba(0, 0, 0, .06);
+    border-color: rgba(0, 0, 0, .1);
+}
+
+[data-theme="light"] .gantt-view-seg-btn {
+    color: #64748b;
+}
+
+[data-theme="light"] .gantt-view-seg-btn.gantt-view-seg-active {
+    background: #2563eb;
+    color: #fff;
+    box-shadow: 0 1px 6px rgba(37, 99, 235, .35);
+}
+
+[data-theme="light"] .gantt-view-seg-btn:hover:not(.gantt-view-seg-active) {
+    background: rgba(0, 0, 0, .06);
+    color: #1e293b;
+}
+
 /* ── Auto-computed week badge (read-only, shown in Edit Block modal) ── */
 .eb-week-badge {
     display: inline-flex;
@@ -6522,6 +6596,18 @@ body {
     box-shadow: 2px 0 5px rgba(0, 0, 0, .18);
 }
 
+/* Label cell in sticky group rows must also pin vertically — same top as its row,
+   left: 0 from .vpx-td-vehicle, z-index higher than fill cells in the same row. */
+.vpx-row-battalion .vpx-td-vehicle {
+    top: 64px; /* same as .vpx-row-battalion td */
+    z-index: 35 !important; /* above battalion fill cells (30) */
+}
+
+.vpx-row-vehicle .vpx-td-vehicle {
+    top: 94px; /* 64px header + 30px battalion row */
+    z-index: 28 !important; /* above vehicle fill cells (25) */
+}
+
 /* Corner header cell — matches Gantt .gh-corner */
 .vpx-th-vehicle {
     position: sticky;
@@ -6544,138 +6630,156 @@ body {
 
 /* Vehicle group row — matches Gantt .gr-group */
 .vpx-row-group td {
-    height: 32px;
+    height: 34px;
 }
 
-/* Battalion group row (for KD2) — higher level grouping */
+/* Battalion group row — matches Gantt .gr-group */
 .vpx-row-battalion td {
-    height: 40px;
-}
-
-.vpx-row-battalion .vpx-td-battalion {
-    background: var(--clr-surface-3) !important;
-    border-bottom: 2px solid var(--clr-border);
-    padding: 0 14px;
-    height: 40px;
-    font-weight: 600;
+    position: sticky;
+    top: 64px;
+    z-index: 30;
+    height: 30px; /* matches GANTT_GRP_H */
 }
 
 .vpx-group-battalion {
-    background: var(--clr-surface-3) !important;
-    border-bottom: 2px solid var(--clr-border);
+    background: var(--clr-surface-2) !important;
+    border-bottom: 1px solid var(--clr-border);
 }
 
+.vpx-row-battalion .vpx-td-vehicle {
+    background: var(--clr-surface-2) !important;
+    border-right: 2px solid var(--clr-border);
+}
+
+/* Battalion icon — matches Gantt .gr-label-icon */
 .vpx-bat-icon {
-    width: 15px;
-    height: 15px;
-    color: var(--clr-accent-alt, #f59e0b);
-    margin-right: 10px;
-    flex-shrink: 0;
-    vertical-align: middle;
-}
-
-.vpx-battalion-name {
-    font-family: var(--ff-display);
-    font-size: 0.9rem;
-    font-weight: 700;
-    letter-spacing: .08em;
-    color: var(--clr-text);
-    vertical-align: middle;
-    text-transform: uppercase;
-}
-
-/* Vehicle group row within battalion (for KD2) */
-.vpx-row-vehicle td {
-    height: 36px;
-}
-
-.vpx-row-vehicle .vpx-td-vehicle {
-    background: var(--clr-surface-2) !important;
-    padding: 0 14px;
-    padding-left: 28px;
-    height: 36px;
-    border-bottom: 1px solid var(--clr-border-soft);
-}
-
-.vpx-group-vehicle {
-    background: var(--clr-surface-2) !important;
-    border-bottom: 1px solid var(--clr-border-soft);
-}
-
-.vpx-td-group>.vpx-veh-icon,
-.vpx-td-group>.vpx-veh-name {
-    vertical-align: middle;
-}
-
-.vpx-td-group>.vpx-veh-icon {
-    margin-right: 8px;
-}
-
-.vpx-veh-icon {
     width: 14px;
     height: 14px;
     color: var(--clr-accent);
     flex-shrink: 0;
 }
 
-.vpx-veh-name {
+/* Battalion name — matches Gantt .gr-group-label text style */
+.vpx-battalion-name {
     font-family: var(--ff-display);
     font-size: .92rem;
     font-weight: 700;
     letter-spacing: .08em;
     color: var(--clr-text);
+    text-transform: uppercase;
 }
 
-/* Group fill cells (rest of row when vehicle header shown) */
-.vpx-group-fill {
-    background: var(--clr-surface-2) !important;
+/* Vehicle group row — matches Gantt .gr-subgroup (64px header + 30px battalion = 94px) */
+.vpx-row-vehicle td {
+    position: sticky;
+    top: 94px;
+    z-index: 25;
+    height: 30px; /* matches Gantt subgroup height */
+}
+
+.vpx-group-vehicle {
+    background: color-mix(in srgb, var(--clr-surface-2) 80%, var(--clr-accent) 20%) !important;
     border-bottom: 1px solid var(--clr-border-soft);
+}
+
+.vpx-row-vehicle .vpx-td-vehicle {
+    background: color-mix(in srgb, var(--clr-surface-2) 78%, var(--clr-accent) 22%) !important;
+    border-right: 2px solid var(--clr-border);
+}
+
+/* Flex wrapper inside group label cells — matches Gantt .gr-label layout */
+.vpx-grp-inner {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 0 14px; /* matches Gantt .gr-label padding */
+    height: 100%;
+}
+
+/* Vehicle badge — matches Gantt .gr-subgroup-badge */
+.vpx-veh-badge {
+    display: inline-flex;
+    align-items: center;
+    min-height: 20px;
+    padding: 0 10px;
+    border-radius: 999px;
+    background: rgba(15, 23, 42, .24);
+    color: inherit;
+    font-family: var(--ff-display);
+    font-size: .78rem;
+    font-weight: 700;
+    letter-spacing: .08em;
+}
+
+/* Group fill cells — match Gantt .gr-track-group / .gr-track-subgroup */
+.vpx-group-fill {
+    background: var(--clr-surface-2) !important; /* battalion track = gr-track-group */
+    border-bottom: 1px solid var(--clr-border);
+}
+
+.vpx-group-fill.vpx-group-vehicle {
+    background: color-mix(in srgb, var(--clr-surface-2) 80%, var(--clr-accent) 20%) !important;
+    border-bottom: 1px solid var(--clr-border-soft);
+}
+
+/* Unit cell layout helpers */
+.vpx-unit-inner {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    min-width: 0;
+}
+
+.vpx-unit-text {
+    display: flex;
+    flex-direction: column;
+    min-width: 0;
 }
 
 /* Unit cell — matches Gantt .gr-unit-label */
 .vpx-td-unit {
     vertical-align: middle;
-    padding: 0 14px;
-    height: 44px;
+    padding: 0 16px 0 12px;
+    height: 48px;
+    min-width: 150px;
     border-bottom: 1px solid var(--clr-border-soft);
+    white-space: nowrap;
 }
 
 .vpx-unit-dot {
     display: inline-block;
     vertical-align: middle;
     margin-right: 8px;
+    width: 8px;
+    height: 8px;
+    border-radius: 50%;
+    background: var(--clr-accent);
+    flex-shrink: 0;
 }
 
 .vpx-unit-name {
-    vertical-align: middle;
+    font-family: var(--ff-display);
+    font-size: .84rem;
+    font-weight: 600;
+    color: var(--clr-text);
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    letter-spacing: .01em;
+    line-height: 1.2;
 }
 
 .vpx-unit-code {
     display: block;
-    font-size: .58rem;
+    font-size: .65rem;
     color: var(--clr-text-dim);
-    letter-spacing: .02em;
-    margin-top: 1px;
+    letter-spacing: .03em;
+    margin-top: 2px;
     white-space: nowrap;
     overflow: hidden;
     text-overflow: ellipsis;
-    max-width: 80px;
-}
-
-.vpx-unit-dot {
-    width: 6px;
-    height: 6px;
-    border-radius: 50%;
-    background: var(--clr-text-dim);
-}
-
-.vpx-unit-name {
+    max-width: 140px;
     font-family: var(--ff-mono);
-    font-size: .78rem;
-    color: var(--clr-text-muted);
-    white-space: nowrap;
-    overflow: hidden;
-    text-overflow: ellipsis;
 }
 
 /* ── Sticky header rows (top) ────────────────────────────────────── */
@@ -6685,13 +6789,13 @@ body {
     top: 0;
     z-index: 20;
     background: var(--clr-surface-2);
-    color: var(--clr-text-muted);
+    color: var(--clr-text);
     font-family: var(--ff-display);
-    font-size: .68rem;
+    font-size: .7rem;
     font-weight: 700;
-    letter-spacing: .1em;
+    letter-spacing: .08em;
     text-transform: uppercase;
-    padding: 7px 8px 5px;
+    padding: 9px 10px 7px;
     text-align: center;
     border-bottom: 1px solid var(--clr-border);
     border-right: 1px solid var(--clr-border-soft);
@@ -6701,17 +6805,16 @@ body {
 /* Column code row — sits below group row, so push it down */
 .vpx-col-row th {
     position: sticky;
-    top: 29px;
-    /* height of group row */
+    top: 32px;
     z-index: 15;
     background: var(--clr-surface-2);
     color: var(--clr-text-muted);
-    font-size: .68rem;
+    font-size: .7rem;
     font-weight: 600;
-    padding: 5px 5px 6px;
+    padding: 6px 7px 7px;
     text-align: center;
     white-space: nowrap;
-    border-bottom: 1px solid var(--clr-border);
+    border-bottom: 2px solid var(--clr-border);
     cursor: default;
 }
 
@@ -6719,49 +6822,41 @@ body {
     z-index: 40;
 }
 
-/* Column group colour accents */
-.vpx-th-group.vpx-grp-welding,
-.vpx-th-col.vpx-grp-welding {
-    border-bottom: 2px solid rgba(239, 68, 68, .45);
-}
+/* Column group colour accents.
+   vpx-th-group (category row): top stripe only — single coloured cap.
+   vpx-th-col   (code row):     bottom stripe only — single coloured underline.
+   Splitting the two selectors eliminates the double-line at their shared border.
+   box-shadow has zero layout impact so sticky top-values are never displaced. */
+.vpx-th-group.vpx-grp-welding { box-shadow: inset 0 2px 0 rgba(239, 68, 68, .7); }
+.vpx-th-col.vpx-grp-welding   { box-shadow: inset 0 -2px 0 rgba(239, 68, 68, .55); }
 
-.vpx-th-group.vpx-grp-machining,
-.vpx-th-col.vpx-grp-machining {
-    border-bottom: 2px solid rgba(20, 184, 166, .45);
-}
+.vpx-th-group.vpx-grp-machining { box-shadow: inset 0 2px 0 rgba(20, 184, 166, .7); }
+.vpx-th-col.vpx-grp-machining   { box-shadow: inset 0 -2px 0 rgba(20, 184, 166, .55); }
 
-.vpx-th-group.vpx-grp-shot-blasting-and-painting,
-.vpx-th-col.vpx-grp-shot-blasting-and-painting {
-    border-bottom: 2px solid rgba(168, 85, 247, .45);
-}
+.vpx-th-group.vpx-grp-shot-blasting-and-painting { box-shadow: inset 0 2px 0 rgba(168, 85, 247, .7); }
+.vpx-th-col.vpx-grp-shot-blasting-and-painting   { box-shadow: inset 0 -2px 0 rgba(168, 85, 247, .55); }
 
-.vpx-th-group.vpx-grp-assembly,
-.vpx-th-col.vpx-grp-assembly {
-    border-bottom: 2px solid rgba(79, 142, 247, .45);
-}
+.vpx-th-group.vpx-grp-assembly { box-shadow: inset 0 2px 0 rgba(79, 142, 247, .7); }
+.vpx-th-col.vpx-grp-assembly   { box-shadow: inset 0 -2px 0 rgba(79, 142, 247, .55); }
 
-.vpx-th-group.vpx-grp-final-test,
-.vpx-th-col.vpx-grp-final-test {
-    border-bottom: 2px solid rgba(139, 92, 246, .45);
-}
+.vpx-th-group.vpx-grp-final-test { box-shadow: inset 0 2px 0 rgba(139, 92, 246, .7); }
+.vpx-th-col.vpx-grp-final-test   { box-shadow: inset 0 -2px 0 rgba(139, 92, 246, .55); }
 
-.vpx-th-group.vpx-grp-processing,
-.vpx-th-col.vpx-grp-processing {
-    border-bottom: 2px solid rgba(245, 158, 11, .45);
-}
+.vpx-th-group.vpx-grp-processing { box-shadow: inset 0 2px 0 rgba(245, 158, 11, .7); }
+.vpx-th-col.vpx-grp-processing   { box-shadow: inset 0 -2px 0 rgba(245, 158, 11, .55); }
 
 
 
 /* Data cell */
 .vpx-cell {
-    padding: 5px 5px;
+    padding: 7px 8px;
     text-align: center;
-    border-bottom: 1px solid rgba(255, 255, 255, .04);
-    border-right: 1px solid rgba(255, 255, 255, .03);
+    border-bottom: 1px solid rgba(255, 255, 255, .05);
+    border-right: 1px solid rgba(255, 255, 255, .04);
     vertical-align: middle;
     transition: background .15s;
     cursor: default;
-    min-width: 68px;
+    min-width: 82px;
 }
 
 .vpx-cell:hover {
@@ -6775,20 +6870,20 @@ body {
 
 /* Status background tints per status */
 .vpx-status-completed {
-    background: rgba(34, 197, 94, .06);
+    background: rgba(34, 197, 94, .11);
 }
 
 .vpx-status-in-progress {
-    background: rgba(245, 158, 11, .07);
+    background: rgba(245, 158, 11, .12);
 }
 
 .vpx-status-late {
-    background: rgba(59, 130, 246, .09);
+    background: rgba(59, 130, 246, .13);
 }
 
 /* blue tint — Late Completion */
 .vpx-status-overdue {
-    background: rgba(220, 38, 38, .12);
+    background: rgba(220, 38, 38, .18);
 }
 
 .vpx-status-planned {
@@ -6815,7 +6910,7 @@ body {
 }
 
 .vpx-date-plan {
-    font-size: .58rem;
+    font-size: .62rem;
     color: var(--clr-text-muted);
     font-weight: 500;
     white-space: nowrap;
@@ -6823,7 +6918,7 @@ body {
 }
 
 .vpx-date-act {
-    font-size: .58rem;
+    font-size: .62rem;
     color: var(--clr-text);
     font-weight: 600;
     white-space: nowrap;
@@ -6927,13 +7022,186 @@ th.vpx-grp-processing:first-of-type {
 }
 
 /* Final Inspection group accent */
-.vpx-th-group.vpx-grp-final-inspection,
-.vpx-th-col.vpx-grp-final-inspection {
-    border-bottom: 2px solid rgba(34, 197, 94, .45);
+.vpx-th-group.vpx-grp-final-inspection { box-shadow: inset 0 2px 0 rgba(34, 197, 94, .7); }
+.vpx-th-col.vpx-grp-final-inspection   { box-shadow: inset 0 -2px 0 rgba(34, 197, 94, .55); }
+
+/* Light theme — matches Gantt light-mode group/subgroup colours */
+[data-theme="light"] .vpx-group-battalion,
+[data-theme="light"] .vpx-group-fill {
+    background: #eff6ff !important;
+}
+
+[data-theme="light"] .vpx-row-battalion .vpx-td-vehicle {
+    background: #eff6ff !important;
+}
+
+[data-theme="light"] .vpx-battalion-name {
+    color: #1e40af;
+}
+
+[data-theme="light"] .vpx-bat-icon {
+    color: #2563eb;
+}
+
+[data-theme="light"] .vpx-group-vehicle,
+[data-theme="light"] .vpx-group-fill.vpx-group-vehicle {
+    background: color-mix(in srgb, #eff6ff 75%, var(--clr-accent) 25%) !important;
+}
+
+[data-theme="light"] .vpx-row-vehicle .vpx-td-vehicle {
+    background: color-mix(in srgb, #eff6ff 73%, var(--clr-accent) 27%) !important;
 }
 
 [data-theme="light"] .vpx-cell-na {
     background: repeating-linear-gradient(135deg, transparent, transparent 3px, rgba(0, 0, 0, .03) 3px, rgba(0, 0, 0, .03) 6px);
+}
+
+/* ── VPX enhanced visuals ──────────────────────────────────────── */
+
+/* Bigger, sharper dots */
+.vpx-dot {
+    width: 10px;
+    height: 10px;
+    margin-bottom: 4px;
+}
+
+/* Stronger status tints + colored bottom stripe */
+.vpx-status-completed {
+    background: rgba(34, 197, 94, .13);
+    box-shadow: inset 0 -2px 0 rgba(34, 197, 94, .55);
+}
+
+.vpx-status-in-progress {
+    background: rgba(245, 158, 11, .14);
+    box-shadow: inset 0 -2px 0 rgba(245, 158, 11, .55);
+}
+
+.vpx-status-late {
+    background: rgba(59, 130, 246, .14);
+    box-shadow: inset 0 -2px 0 rgba(59, 130, 246, .55);
+}
+
+.vpx-status-overdue {
+    background: rgba(220, 38, 38, .2);
+    box-shadow: inset 0 -2px 0 rgba(220, 38, 38, .7);
+}
+
+/* Wider cells for readability */
+.vpx-cell {
+    min-width: 98px;
+    padding: 6px 8px 8px;
+}
+
+/* Better hover — highlight border */
+.vpx-cell:hover {
+    background: rgba(255, 255, 255, .09) !important;
+    box-shadow: inset 0 0 0 1px rgba(255, 255, 255, .15);
+}
+
+/* Empty cell: subtle, not just "—" */
+.vpx-cell-empty {
+    color: var(--clr-text-dim);
+    font-size: .62rem;
+    letter-spacing: .04em;
+    opacity: .5;
+}
+
+/* Planned date: accent-colored */
+.vpx-date-plan {
+    color: var(--clr-accent);
+    font-weight: 600;
+    font-size: .63rem;
+}
+
+/* Actual date: white / bright */
+.vpx-date-act {
+    color: var(--clr-text);
+    font-weight: 700;
+    font-size: .63rem;
+}
+
+/* Unit dot — accent-colored ring + fill */
+.vpx-unit-dot {
+    width: 9px;
+    height: 9px;
+    background: transparent;
+    border: 2px solid var(--clr-accent);
+    box-shadow: 0 0 5px rgba(79, 142, 247, .35);
+}
+
+/* Larger, bolder unit name */
+.vpx-unit-name {
+    font-size: .86rem;
+    font-weight: 700;
+    letter-spacing: .02em;
+}
+
+/* Code tag styling */
+.vpx-unit-code {
+    font-size: .66rem;
+    color: var(--clr-text-muted);
+    background: rgba(255, 255, 255, .06);
+    border-radius: 3px;
+    padding: 1px 5px;
+    max-width: 160px;
+}
+
+/* Group header row — make column codes bolder */
+.vpx-col-row th {
+    font-size: .72rem;
+    font-weight: 700;
+    padding: 7px 7px 8px;
+    color: var(--clr-text);
+}
+
+/* Battalion row */
+.vpx-row-battalion .vpx-td-battalion {
+    font-size: .82rem;
+    letter-spacing: .12em;
+}
+
+/* Light theme */
+[data-theme="light"] .vpx-status-completed {
+    background: rgba(34, 197, 94, .09);
+    box-shadow: inset 0 -2px 0 rgba(34, 197, 94, .4);
+}
+
+[data-theme="light"] .vpx-status-in-progress {
+    background: rgba(245, 158, 11, .09);
+    box-shadow: inset 0 -2px 0 rgba(245, 158, 11, .45);
+}
+
+[data-theme="light"] .vpx-status-late {
+    background: rgba(59, 130, 246, .09);
+    box-shadow: inset 0 -2px 0 rgba(59, 130, 246, .4);
+}
+
+[data-theme="light"] .vpx-status-overdue {
+    background: rgba(220, 38, 38, .1);
+    box-shadow: inset 0 -2px 0 rgba(220, 38, 38, .5);
+}
+
+[data-theme="light"] .vpx-cell:hover {
+    background: rgba(0, 0, 0, .05) !important;
+    box-shadow: inset 0 0 0 1px rgba(0, 0, 0, .1);
+}
+
+[data-theme="light"] .vpx-unit-dot {
+    border-color: #2563eb;
+    box-shadow: 0 0 5px rgba(37, 99, 235, .25);
+}
+
+[data-theme="light"] .vpx-unit-code {
+    background: rgba(0, 0, 0, .05);
+    color: #475569;
+}
+
+[data-theme="light"] .vpx-date-plan {
+    color: #2563eb;
+}
+
+[data-theme="light"] .vpx-date-act {
+    color: #0f172a;
 }
 
 /* ── Table search bar ─────────────────────────────────────────── */
