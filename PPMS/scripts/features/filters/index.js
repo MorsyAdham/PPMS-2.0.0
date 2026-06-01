@@ -74,7 +74,7 @@ export function initFeature() {
                 <div class="filter-item" id="f100ModeGroup" style="display:none;">
                     <label class="filter-label" for="f100Mode">Mode</label>
                     <select id="f100Mode" class="filter-control">
-                        <option value="gun">Gun Parts</option>
+                        <option value="gun" selected>Gun Parts</option>
                         <option value="vehicle">Vehicle Parts</option>
                     </select>
                 </div>
@@ -82,6 +82,12 @@ export function initFeature() {
                     <label class="filter-label" for="f100GunPart">Gun Part</label>
                     <select id="f100GunPart" class="filter-control">
                         <option value="">All Parts</option>
+                    </select>
+                </div>
+                <div class="filter-item" id="f100SerialGroup" style="display:none;">
+                    <label class="filter-label" for="f100Serial">Unit</label>
+                    <select id="f100Serial" class="filter-control">
+                        <option value="">All Units</option>
                     </select>
                 </div>
                 <div class="filter-item" id="f100ManufacturerGroup" style="display:none;">

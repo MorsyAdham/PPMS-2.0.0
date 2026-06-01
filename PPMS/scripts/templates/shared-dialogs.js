@@ -192,6 +192,8 @@ export function renderSharedDialogs() {
                                     <th id="ucHeaderVehicle">Vehicle</th>
                                     <th id="ucHeaderUnit">Unit</th>
                                     <th id="ucHeaderCode">Unit Code</th>
+                                    <th id="ucHeaderUnitName" style="display:none">Unit Name</th>
+                                    <th id="ucHeaderUnitCode" style="display:none">Unit Code (Text)</th>
                                     <th>Actions</th>
                                 </tr>
                             </thead>
@@ -223,15 +225,20 @@ export function renderSharedDialogs() {
                                     <select id="ucVehicle" class="filter-control"></select>
                                 </div>
                                 <div class="form-group">
-                                    <label class="form-label">Unit</label>
+                                    <label class="form-label" id="ucUnitLabel">Unit</label>
                                     <select id="ucUnit" class="filter-control"></select>
                                     <input type="text" id="ucUnitText" class="filter-control" style="display:none"
                                         placeholder="e.g. M1" />
                                 </div>
+                                <div class="form-group" id="ucNameGroup" style="display:none">
+                                    <label class="form-label">Unit Name</label>
+                                    <input type="text" id="ucName" class="filter-control"
+                                        placeholder="e.g. First K9 Section" />
+                                </div>
                                 <div class="form-group">
-                                    <label class="form-label">Unit Code</label>
+                                    <label class="form-label" id="ucCodeLabel">Unit Code</label>
                                     <input type="text" id="ucCode" class="filter-control"
-                                        placeholder="e.g. EGY N25020" />
+                                        placeholder="e.g. EGY N25039" />
                                 </div>
                             </div>
                         </div>
@@ -538,6 +545,155 @@ export function renderSharedDialogs() {
             </div>
         </div>
 
+        <!-- ════════════════════════════════════════ F100 ADD BLOCK MODAL -->
+        <div class="modal-overlay" id="f100AddBlockOverlay" style="display:none" role="dialog" aria-modal="true">
+            <div class="modal kd2-plan-create-modal">
+                <div class="modal-header">
+                    <h4 class="modal-title" id="f100AbTitle">Add F100 Plan Block</h4>
+                    <button class="modal-close" id="f100AddBlockClose">&#x2715;</button>
+                </div>
+                <div class="modal-body">
+                    <div class="kd2-modal-grid">
+
+                        <!-- Mode toggle (Block / Template) -->
+                        <div class="form-group" style="grid-column:1/-1">
+                            <label class="form-label">Add Type</label>
+                            <div class="kd2-create-mode-toggle" id="f100AbModeToggle">
+                                <button type="button" class="kd2-create-mode-btn active" data-f100-mode="block">Block</button>
+                                <button type="button" class="kd2-create-mode-btn" data-f100-mode="template">Template</button>
+                            </div>
+                        </div>
+
+                        <!-- Shared fields toolbar -->
+                        <div class="kd2-plan-create-toolbar">
+                            <div class="form-group">
+                                <label class="form-label" for="f100AbBattalion">Battalion</label>
+                                <select id="f100AbBattalion" class="filter-control"></select>
+                            </div>
+                            <div class="form-group">
+                                <label class="form-label" for="f100AbMode">Mode</label>
+                                <select id="f100AbMode" class="filter-control">
+                                    <option value="gun">Gun</option>
+                                    <option value="vehicle">Vehicle</option>
+                                </select>
+                            </div>
+                            <div class="form-group">
+                                <label class="form-label" for="f100AbVehicleType">Vehicle Type</label>
+                                <select id="f100AbVehicleType" class="filter-control">
+                                    <option value="K9">K9</option>
+                                    <option value="K10">K10</option>
+                                    <option value="K11">K11</option>
+                                </select>
+                            </div>
+                            <div class="form-group">
+                                <label class="form-label" for="f100AbSerial">Serial No.</label>
+                                <input type="number" id="f100AbSerial" class="filter-control" min="1" placeholder="e.g. 1" />
+                            </div>
+                        </div>
+
+                        <div class="form-group" style="grid-column:1/-1">
+                            <label class="form-label" for="f100AbPart">Part</label>
+                            <select id="f100AbPart" class="filter-control"></select>
+                        </div>
+
+                        <!-- Block-only fields -->
+                        <div class="form-group" style="grid-column:1/-1" id="f100AbProcessGroup">
+                            <label class="form-label" for="f100AbProcess">Process / Station</label>
+                            <select id="f100AbProcess" class="filter-control"></select>
+                        </div>
+
+                        <div class="form-group" id="f100AbStartGroup">
+                            <label class="form-label" for="f100AbStart">Planned Start</label>
+                            <input type="date" id="f100AbStart" class="filter-control" />
+                        </div>
+
+                        <div class="form-group" id="f100AbEndGroup">
+                            <label class="form-label" for="f100AbEnd">Planned End</label>
+                            <input type="date" id="f100AbEnd" class="filter-control" />
+                        </div>
+
+                        <!-- Template-only section -->
+                        <div class="form-group kd2-template-editor-wrap" id="f100AbTemplateWrap" style="grid-column:1/-1;display:none">
+                            <div class="form-group">
+                                <label class="form-label" for="f100AbTplStart">Plan Start Date</label>
+                                <input type="date" id="f100AbTplStart" class="filter-control" style="max-width:180px" />
+                            </div>
+                            <div class="kd2-template-editor-head" style="margin-top:12px">
+                                <label class="form-label">Process Sequence</label>
+                                <div class="modal-info">Each process starts the day after the previous one ends. Adjust durations as needed.</div>
+                            </div>
+                            <div id="f100AbTemplateList" style="margin-top:8px">
+                                <p style="color:var(--clr-text-muted);font-size:.8rem">Select a part above to load the process sequence.</p>
+                            </div>
+                        </div>
+
+                    </div>
+                    <div class="ab-error" id="f100AbError" style="display:none"></div>
+                </div>
+                <div class="modal-footer">
+                    <button class="btn btn-primary" id="btnF100AddBlockSave">Add to Plan</button>
+                    <button class="btn btn-ghost" id="btnF100AddBlockCancel">Cancel</button>
+                </div>
+            </div>
+        </div>
+
+        <!-- ════════════════════════════════════════ F100 EDIT BLOCK MODAL -->
+        <div class="modal-overlay" id="f100EditBlockOverlay" style="display:none" role="dialog" aria-modal="true">
+            <div class="modal" style="max-width:440px">
+                <div class="modal-header">
+                    <h4 class="modal-title">Edit F100 Plan Block</h4>
+                    <button class="modal-close" id="f100EditBlockClose">&#x2715;</button>
+                </div>
+                <div class="modal-body" style="padding:20px 24px">
+                    <input type="hidden" id="f100EbPlanId" />
+                    <div class="um-form-grid" style="grid-template-columns:1fr 1fr;gap:14px 18px">
+
+                        <div class="form-group" style="grid-column:1/-1">
+                            <label class="form-label">Block</label>
+                            <div class="eb-block-info" id="f100EbBlockInfo">—</div>
+                        </div>
+
+                        <div class="form-group">
+                            <label class="form-label" for="f100EbStart">Planned Start</label>
+                            <input type="date" id="f100EbStart" class="filter-control" />
+                        </div>
+
+                        <div class="form-group">
+                            <label class="form-label" for="f100EbEnd">Planned End</label>
+                            <input type="date" id="f100EbEnd" class="filter-control" />
+                        </div>
+
+                        <div class="form-group">
+                            <label class="form-label" for="f100EbActualStart">Actual Start</label>
+                            <input type="date" id="f100EbActualStart" class="filter-control" />
+                        </div>
+
+                        <div class="form-group">
+                            <label class="form-label" for="f100EbActualEnd">Actual End</label>
+                            <input type="date" id="f100EbActualEnd" class="filter-control" />
+                        </div>
+
+                        <div class="form-group" style="grid-column:1/-1">
+                            <label class="form-label" for="f100EbStatus">Status</label>
+                            <select id="f100EbStatus" class="filter-control">
+                                <option value="Planned">Planned</option>
+                                <option value="In Progress">In Progress</option>
+                                <option value="Completed">Completed</option>
+                                <option value="Overdue">Overdue</option>
+                                <option value="Late Completion">Late Completion</option>
+                            </select>
+                        </div>
+
+                    </div>
+                    <div class="ab-error" id="f100EbError" style="display:none"></div>
+                </div>
+                <div class="modal-footer" style="justify-content:flex-end">
+                    <button class="btn btn-ghost" id="btnF100EditBlockCancel">Cancel</button>
+                    <button class="btn btn-primary" id="btnF100EditBlockSave">Save Changes</button>
+                </div>
+            </div>
+        </div>
+
         <!-- ════════════════════════════════════════════ EDIT BLOCK MODAL -->
         <div class="modal-overlay" id="editBlockOverlay" style="display:none" role="dialog" aria-modal="true">
             <div class="modal" style="max-width:400px">
@@ -590,9 +746,9 @@ export function renderSharedDialogs() {
                     </div>
                     <div class="ab-error" id="ebError" style="display:none"></div>
                 </div>
-                <div class="modal-footer">
-                    <button class="btn btn-primary" id="btnEditBlockSave">Save Changes</button>
+                <div class="modal-footer" style="justify-content:flex-end">
                     <button class="btn btn-ghost" id="btnEditBlockCancel">Cancel</button>
+                    <button class="btn btn-primary" id="btnEditBlockSave">Save Changes</button>
                 </div>
             </div>
         </div>
@@ -989,6 +1145,7 @@ export function renderSharedDialogs() {
                 </div>
             </div>
         </div>
+
     `.trim();
 }
 
