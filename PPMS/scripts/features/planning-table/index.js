@@ -5,18 +5,15 @@ export function initFeature() {
             <div class="table-card">
                 <div class="table-card-header">
                     <h3 class="table-title" id="tableTitle">Assembly Plan Details</h3>
-                    <div class="table-search-wrap">
-                        <svg class="table-search-icon" viewBox="0 0 20 20" fill="none" stroke="currentColor"
-                            stroke-width="2">
-                            <circle cx="8.5" cy="8.5" r="5.5" />
-                            <path d="M15 15l-3-3" />
-                        </svg>
-                        <input type="text" id="tableSearch" class="table-search-input"
-                            placeholder="Search vehicle, unit, station…" autocomplete="off" name="table-search-x"
-                            role="searchbox" />
-                    </div>
+                    <div id="tblFilterBarInline" class="tbl-filter-bar-inline"></div>
                     <div class="table-actions-header">
                         <span class="row-count" id="rowCount">0 records</span>
+                        <button class="btn btn-outline btn-sm" id="btnTableFullscreen" aria-pressed="false" title="Full Screen">
+                            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                                <path d="M8 3H5a2 2 0 0 0-2 2v3m18 0V5a2 2 0 0 0-2-2h-3m0 18h3a2 2 0 0 0 2-2v-3M3 16v3a2 2 0 0 0 2 2h3"/>
+                            </svg>
+                            <span id="btnTableFullscreenLabel">Full Screen</span>
+                        </button>
                         <button class="btn btn-outline btn-sm" id="btnReports">
                             <svg viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="2">
                                 <path d="M4 4h12v2H4zM4 9h8v2H4zM4 14h6v2H4z" />
@@ -83,7 +80,6 @@ export function initFeature() {
                     <table class="data-table" id="mainTable">
                         <thead>
                             <tr>
-                                <th>#</th>
                                 <th>Vehicle</th>
                                 <th>Unit</th>
                                 <th>Station / Process</th>
@@ -100,7 +96,7 @@ export function initFeature() {
                         </thead>
                         <tbody id="tableBody">
                             <tr>
-                                <td colspan="13" class="table-empty">
+                                <td colspan="12" class="table-empty">
                                     <div class="empty-state">
                                         <svg viewBox="0 0 48 48" fill="none" stroke="currentColor" stroke-width="1.5">
                                             <rect x="6" y="6" width="36" height="36" rx="4" />

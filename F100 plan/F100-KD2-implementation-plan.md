@@ -8,7 +8,6 @@ Before building F100, rename both existing modules so the sidebar and all intern
 
 | Current name | New name |
 |---|---|
-| KD1 | F200 – KD1 |
 | KD2 | F200 – KD2 |
 
 **Scope:** module registry, sidebar labels, page titles, filter badge text, any hardcoded string that says "KD1" / "KD2" without a product qualifier.
@@ -341,7 +340,6 @@ const MODULES = {
 2. Register F100-KD2 in module bootstrap
 3. Implement Gun / Vehicle Parts toggle (mutually exclusive)
 4. Implement secondary filters (manufacturer, vehicle type for vehicle mode)
-5. Wire filter change → `loadData()`
 
 ### Phase 4 — Table view
 1. Adapt `renderTable()` for F100 columns

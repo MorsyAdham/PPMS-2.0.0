@@ -38,6 +38,28 @@ export function renderPageChrome() {
                     <span class="conn-dot"></span>
                     <span class="conn-label">Connecting…</span>
                 </div>
+                <!-- ── Active Users (master_admin only) ── -->
+                <div class="active-users-wrap" id="activeUsersWrap" style="display:none">
+                    <button class="btn-nav-icon active-users-btn" id="activeUsersBtn" title="Active users on system">
+                        <svg viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.8">
+                            <circle cx="7" cy="8" r="3"/>
+                            <path d="M1 18c0-3.3 2.7-6 6-6s6 2.7 6 6"/>
+                            <path d="M14 6a2.5 2.5 0 1 1 0 5"/>
+                            <path d="M20 18c0-2.8-2.2-5-5-5"/>
+                        </svg>
+                        <span class="active-users-badge" id="activeUsersCount">1</span>
+                    </button>
+                </div>
+                <!-- ── F100 Comment Notifications ── -->
+                <div class="f100-notif-wrap" id="f100NotifWrap" style="display:none">
+                    <button class="btn-nav-icon f100-notif-bell" id="f100NotifBell" title="Comment notifications">
+                        <svg viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.8">
+                            <path d="M10 2a6 6 0 00-6 6v3l-1.5 2.5h15L16 11V8a6 6 0 00-6-6z"/>
+                            <path d="M8.5 17a1.5 1.5 0 003 0"/>
+                        </svg>
+                        <span class="f100-notif-badge" id="f100NotifBadge" style="display:none">0</span>
+                    </button>
+                </div>
                 <!-- ── Audit Log button (master_admin only) ── -->
                 <button class="btn-nav-icon" id="btnAuditLog" title="Audit Log" style="display:none">
                     <svg viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.8">

@@ -65,6 +65,33 @@
                         </svg>
                     </button>
                 </div>
+                <div class="filter-item gantt-export-schedule-wrap" style="padding-top:18px;position:relative">
+                    <button class="btn btn-outline btn-sm" id="btnGanttExportSchedule" aria-haspopup="true" aria-expanded="false">
+                        <svg viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.8">
+                            <path d="M4 15h12M10 3v9m-4-4 4 4 4-4"/>
+                        </svg>
+                        Export Schedule
+                        <svg viewBox="0 0 10 6" fill="none" stroke="currentColor" stroke-width="1.5" style="width:8px;height:8px;margin-left:2px">
+                            <path d="M1 1l4 4 4-4"/>
+                        </svg>
+                    </button>
+                    <div class="gantt-export-menu" id="ganttExportMenu" role="menu" style="display:none">
+                        <button type="button" class="gantt-export-opt" data-export-view="process" role="menuitem">
+                            <svg viewBox="0 0 14 14" fill="none" stroke="currentColor" stroke-width="1.7" style="width:11px;height:11px">
+                                <path d="M2 4h10M2 7h10M2 10h10" stroke-dasharray="3 2"/>
+                            </svg>
+                            Process View
+                        </button>
+                        <button type="button" class="gantt-export-opt" data-export-view="unit" role="menuitem">
+                            <svg viewBox="0 0 14 14" fill="none" stroke="currentColor" stroke-width="1.7" style="width:11px;height:11px">
+                                <rect x="1" y="1" width="12" height="3" rx="1"/>
+                                <rect x="1" y="5.5" width="12" height="3" rx="1"/>
+                                <rect x="1" y="10" width="12" height="3" rx="1"/>
+                            </svg>
+                            Unit View
+                        </button>
+                    </div>
+                </div>
                 <div class="filter-item" style="padding-top:18px">
                     <button class="btn btn-outline gantt-fullscreen-btn" id="btnGanttFullscreen" aria-pressed="false">
                         <svg viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.8">
@@ -167,6 +194,14 @@
                                 <path d="M8 5.5v5M5.5 8h5" />
                             </svg>
                             <span>Add Visual Block</span>
+                        </button>
+                        <button class="btn btn-sm btn-outline" id="btnF100AddTemplate" style="display:none">
+                            <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.8" style="width:13px;height:13px">
+                                <rect x="2" y="2" width="12" height="3" rx="1"/>
+                                <rect x="2" y="6.5" width="12" height="3" rx="1"/>
+                                <rect x="2" y="11" width="12" height="3" rx="1"/>
+                            </svg>
+                            <span>Add Template</span>
                         </button>
                     </div>
                     <button class="btn btn-ghost btn-sm" id="btnDeleteSelectedBlocks" disabled>

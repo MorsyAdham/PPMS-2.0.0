@@ -105,8 +105,17 @@ window.PPMSModuleRuntime = (() => {
         '#0ea5e9', '#a855f7', '#d97706', '#4ade80', '#38bdf8',
     ];
 
+    // Per-user module key so each account keeps its own active module
+    function _userModuleKey() {
+        try {
+            const s = JSON.parse(sessionStorage.getItem(SESSION_KEY));
+            const uid = s?.id || s?.email;
+            return uid ? MODULE_KEY + '_u_' + uid : MODULE_KEY;
+        } catch { return MODULE_KEY; }
+    }
+
     function getActiveModule() {
-        const stored = localStorage.getItem(MODULE_KEY);
+        const stored = localStorage.getItem(_userModuleKey());
         return MODULES[stored] ? stored : 'kd1';
     }
 
@@ -124,7 +133,7 @@ window.PPMSModuleRuntime = (() => {
     }
 
     function setActiveModule(moduleId) {
-        localStorage.setItem(MODULE_KEY, MODULES[moduleId] ? moduleId : 'kd1');
+        localStorage.setItem(_userModuleKey(), MODULES[moduleId] ? moduleId : 'kd1');
     }
 
     function getActiveConfig() {
@@ -157,8 +166,8 @@ window.PPMSModuleRuntime = (() => {
     }
 
     function workCenterTokens(workCenter) {
-        return String(workCenter || '')
-            .toUpperCase()
+        // Normalize first (A1→A01, A9→A09) so single-digit codes match the /A\d{2}/ pattern.
+        return String(normalizeWorkCenter(workCenter))
             .match(/A\d{2}/g) || [];
     }
 
@@ -280,7 +289,7 @@ window.PPMSModuleRuntime = (() => {
         setDisplay('vpxSection', true);
         setDisplay('chartsSection', !f100);   // Charts not yet implemented for F100
         setDisplay('btnGanttEdit', true);
-        setDisplay('btnReports', !f100);       // Reports not yet implemented for F100
+        setDisplay('btnReports', true);
 
         // Dynamic text labels
         if (f100) {
@@ -745,7 +754,7 @@ window.PPMSModuleRuntime = (() => {
             for (const batch of chunk(ids, 500)) {
                 const detailRows = await queryAll(
                     db.from('kd2_plan')
-                        .select('id, battalion_id, vehicle_type, unit_serial, unit_label, category_code, station_code, planned_start_date, planned_end_date, planning_source')
+                        .select('id, battalion_id, vehicle_type, unit_serial, unit_label, category_code, station_code, planned_start_date, planned_end_date, planning_source, comments')
                         .in('id', batch)
                 );
                 detailRows.forEach(row => detailMap.set(row.id, row));
@@ -758,6 +767,7 @@ window.PPMSModuleRuntime = (() => {
             vehicle_type: detailMap.get(row.id)?.vehicle_type ?? row.vehicle,
             unit_label: detailMap.get(row.id)?.unit_label ?? row.vehicle_no,
             planning_source: detailMap.get(row.id)?.planning_source ?? null,
+            comments: Array.isArray(detailMap.get(row.id)?.comments) ? detailMap.get(row.id).comments : [],
             progress: {
                 id: row.progress_id || null,
                 completed: !!row.completed,
@@ -1473,7 +1483,8 @@ window.PPMSModuleRuntime = (() => {
             if (beforeLead?.id) {
                 const { error: leadError } = await dbRef
                     .from('kd2_process_lead_times')
-                    .upsert({ id: beforeLead.id, ...leadPayload }, { onConflict: 'id' });
+                    .update(leadPayload)
+                    .eq('id', beforeLead.id);
                 if (leadError) throw leadError;
             } else {
                 const { error: leadError } = await dbRef
@@ -6372,10 +6383,12 @@ window.PPMSModuleRuntime = (() => {
         document.getElementById('btnKd2AddBlock')?.addEventListener('click', () => openPlanCreateModal());
         document.getElementById('btnKd2VisualAdd')?.addEventListener('click', event => {
             event.stopPropagation();
+            if (!isKD2()) return;
             toggleTimelineVisualMenu();
         });
         document.getElementById('btnGanttVisualAdd')?.addEventListener('click', event => {
             event.stopPropagation();
+            if (!isKD2()) return;
             toggleTimelineVisualMenu();
         });
         document.addEventListener('pointermove', event => {
@@ -6746,20 +6759,54 @@ window.PPMSModuleRuntime = (() => {
         getGanttSpecialZones,
             getStationRouteOrder(vehicle) {
                 const order = new Map();
-                (state.routes || [])
-                    .filter(r => !vehicle || r.vehicle_type === vehicle)
-                    .forEach(r => {
-                        const seq = parseInt(r.route_sequence, 10) || 9999;
-                        // routes table has station_code not station_name — look up from stations
-                        const stationRow = (state.stations || []).find(
-                            s => s.station_code === r.station_code && s.vehicle_type === r.vehicle_type
-                        );
-                        const name = stationRow?.station_name || r.station_name || r.station_code;
+                // Read directly from state.stations (already ordered by route_sequence from DB).
+                // Using stations avoids needing the routes table to be in sync.
+                (state.stations || [])
+                    .filter(s => !vehicle || s.vehicle_type === vehicle)
+                    .forEach(s => {
+                        const name = s.station_name || s.station_code;
+                        const seq  = parseInt(s.route_sequence, 10) || 9999;
                         if (name && !order.has(name)) {
                             order.set(name, seq);
                         }
                     });
                 return order;
+            },
+            // Returns Map<stationName, {category_code, category_name, category_sequence, component_group, work_centers_combined}>
+            // work_centers_combined aggregates all parallel stations sharing the same station_name (e.g. "W05, W06")
+            getStationCategoryMap(vehicle) {
+                const catByCode = new Map(
+                    (state.categories || [])
+                        .filter(c => !vehicle || c.vehicle_type === vehicle)
+                        .map(c => [c.category_code, c])
+                );
+                const result = new Map();
+                const wcSets = new Map(); // stationName → Set of work_centers
+                (state.stations || [])
+                    .filter(s => !vehicle || s.vehicle_type === vehicle)
+                    .forEach(s => {
+                        const cat = catByCode.get(s.category_code);
+                        if (!cat) return;
+                        const name = s.station_name || s.station_code;
+                        if (!name) return;
+                        if (!result.has(name)) {
+                            result.set(name, {
+                                category_code:     cat.category_code,
+                                category_name:     cat.category_name,
+                                category_sequence: cat.category_sequence,
+                                component_group:   s.component_group || null,
+                            });
+                        }
+                        if (s.work_center) {
+                            if (!wcSets.has(name)) wcSets.set(name, new Set());
+                            wcSets.get(name).add(s.work_center);
+                        }
+                    });
+                result.forEach((v, k) => {
+                    const wcs = wcSets.get(k);
+                    if (wcs?.size) v.work_centers_combined = [...wcs].join(', ');
+                });
+                return result;
             },
         comparePlanRowsByLaneOrder,
         getPlanMoveRowsFromAnchor,

@@ -270,6 +270,7 @@ function getActiveModuleConfig() {
 }
 
 function getModuleBadge() {
+    if (isF100KD2Module()) return 'F100 – KD2';
     return getActiveModuleConfig()?.badge || (isKD2Module() ? 'F200 – KD2' : 'F200 – KD1');
 }
 
@@ -288,9 +289,21 @@ function getModuleCategory(processStation, row = null) {
 }
 
 function syncReportCategoryOptions() {
-    const source = document.getElementById('filterCategory');
     const target = document.getElementById('reportCategory');
-    if (!source || !target) return;
+    if (!target) return;
+    // F100 has no station categories — show a disabled placeholder
+    if (isF100KD2Module()) {
+        target.innerHTML = '<option value="">All (no categories)</option>';
+        target.disabled = true;
+        const wrap = target.closest('.form-group') || target.parentElement;
+        if (wrap) wrap.style.opacity = '0.4';
+        return;
+    }
+    target.disabled = false;
+    const wrap = target.closest('.form-group') || target.parentElement;
+    if (wrap) wrap.style.opacity = '';
+    const source = document.getElementById('filterCategory');
+    if (!source) return;
     const currentVal = target.value;
     target.innerHTML = source.innerHTML;
     if ([...target.options].some(opt => opt.value === currentVal)) {
@@ -346,7 +359,13 @@ function getModulePlanDatePayload(startDate, endDate, remark = undefined) {
 
 function samePlanLane(a, b) {
     if (!a || !b) return false;
-    if ((isKD2Module() || isF100KD2Module()) && (a.battalion_code || '') !== (b.battalion_code || '')) return false;
+    // F100: lane = same battalion + vehicle type + serial number
+    if (isF100KD2Module()) {
+        return (a.battalion_code || '') === (b.battalion_code || '') &&
+               (a.vehicle_type   || '') === (b.vehicle_type   || '') &&
+               String(a.serial_number ?? '') === String(b.serial_number ?? '');
+    }
+    if (isKD2Module() && (a.battalion_code || '') !== (b.battalion_code || '')) return false;
     return a.vehicle === b.vehicle && a.vehicle_no === b.vehicle_no;
 }
 
@@ -411,12 +430,12 @@ function buildPositionedGanttLaneTasks(tasks, startDate, endDate) {
 }
 
 function moveGanttBlockOneLane(planId, direction, startDate, endDate) {
-    const anchorTask = currentData.find(row => row.id === planId);
+    const anchorTask = currentData.find(row => String(row.id) === String(planId));
     if (!anchorTask || !Number.isFinite(direction)) return false;
 
     const laneTasks = currentData.filter(row => samePlanLane(row, anchorTask));
     const positioned = buildPositionedGanttLaneTasks(laneTasks, startDate, endDate);
-    const anchor = positioned.find(item => item.task.id === planId);
+    const anchor = positioned.find(item => String(item.task.id) === String(planId));
     if (!anchor) return false;
 
     const targetLane = Math.max(0, anchor.lane + direction);
@@ -424,7 +443,7 @@ function moveGanttBlockOneLane(planId, direction, startDate, endDate) {
 
     const neighbor = positioned
         .filter(item =>
-            item.task.id !== planId &&
+            String(item.task.id) !== String(planId) &&
             item.lane === targetLane &&
             item.si <= anchor.ei &&
             item.ei >= anchor.si
@@ -450,6 +469,14 @@ function getKd2ForwardMoveRows(anchorTask, rows = []) {
     if (typeof helper !== 'function') return anchorTask ? [anchorTask] : [];
     const moveRows = helper(anchorTask, rows);
     return moveRows?.length ? moveRows : (anchorTask ? [anchorTask] : []);
+}
+
+function getF100ForwardMoveRows(anchor, rows) {
+    const laneKey = r => [r.battalion_code || '', r.vehicle_type || '', r.serial_number ?? '', String(r.part_id || '')].join('||');
+    const anchorKey = laneKey(anchor);
+    const laneRows = rows.filter(r => laneKey(r) === anchorKey);
+    const anchorStep = anchor.step_number ?? anchor.sort_order ?? 9999;
+    return laneRows.filter(r => (r.step_number ?? r.sort_order ?? 9999) >= anchorStep);
 }
 
 function normalizeKd2PlanRowForGantt(row) {
@@ -487,6 +514,9 @@ async function resolveGanttMoveSet(task) {
         return currentData.filter(row => samePlanLane(row, task));
     }
     if (_ganttMoveMode === 'from-block') {
+        if (isF100KD2Module()) {
+            return getF100ForwardMoveRows(task, currentData);
+        }
         if (isKD2Module()) {
             const laneRows = await fetchKd2LaneRowsForGantt(task);
             if (laneRows.length) return getKd2ForwardMoveRows(task, laneRows);
@@ -494,8 +524,8 @@ async function resolveGanttMoveSet(task) {
         return getKd2ForwardMoveRows(task, currentData);
     }
     if (_ganttMoveMode === 'plan') return currentData;
-    return _selectedGanttPlanIds.has(task.id) && _selectedGanttPlanIds.size > 1
-        ? currentData.filter(row => _selectedGanttPlanIds.has(row.id))
+    return _selectedGanttPlanIds.has(String(task.id)) && _selectedGanttPlanIds.size > 1
+        ? currentData.filter(row => _selectedGanttPlanIds.has(String(row.id)))
         : [task];
 }
 
@@ -537,19 +567,24 @@ function getKd2BattalionOptionLabel(row) {
 }
 
 function setUnitCodesShell() {
-    const isKD2 = isKD2Module();
+    const isKD2 = isKD2Module() || isF100KD2Module();
+    const isF100 = isF100KD2Module();
     const battalionHeader = document.getElementById('ucHeaderBattalion');
     const battalionGroup = document.getElementById('ucBattalionGroup');
     const title = document.getElementById('unitCodesTitleText');
     const vehicleHeader = document.getElementById('ucHeaderVehicle');
     const unitHeader = document.getElementById('ucHeaderUnit');
     const codeHeader = document.getElementById('ucHeaderCode');
+    const unitNameHeader = document.getElementById('ucHeaderUnitName');
+    const unitCodeHeader = document.getElementById('ucHeaderUnitCode');
     const unitSelect = document.getElementById('ucUnit');
     const unitText = document.getElementById('ucUnitText');
     if (title) title.textContent = getUnitCodeTitle();
     if (vehicleHeader) vehicleHeader.textContent = 'Vehicle';
-    if (unitHeader) unitHeader.textContent = isKD2 ? 'Unit Name' : 'Unit';
-    if (codeHeader) codeHeader.textContent = 'Unit Code';
+    if (unitHeader) unitHeader.textContent = isKD2 ? 'Unit Label' : 'Unit';
+    if (codeHeader) codeHeader.textContent = isF100 ? 'Serial No.' : 'Unit Code';
+    if (unitNameHeader) unitNameHeader.style.display = isF100 ? '' : 'none';
+    if (unitCodeHeader) unitCodeHeader.style.display = isF100 ? '' : 'none';
     if (battalionHeader) battalionHeader.style.display = isKD2 ? '' : 'none';
     if (battalionGroup) battalionGroup.style.display = isKD2 ? '' : 'none';
     if (unitSelect) unitSelect.style.display = isKD2 ? 'none' : '';
@@ -615,18 +650,62 @@ function getRowCode(row) {
     return getStationCode(row.process_station, row.vehicle) || '—';
 }
 
+// Returns the stacked lines below the primary label in the Unit column for F200-KD2
+// Order: battalion (top) is shown above vehicle_no in the cell via the td structure,
+// so here we return unit_code (bottom line).
 function getRowUnitMeta(row) {
     if (isKD2Module()) {
-        return row.battalion_code ? `<br><span class="unit-code-badge">${esc(row.battalion_code)}</span>` : '';
+        const code = getUnitCode(row.vehicle, row.vehicle_no);
+        return code ? `<br><span class="unit-code-badge">${esc(code)}</span>` : '';
     }
     const code = getUnitCode(row.vehicle, row.vehicle_no);
     return code ? `<br><span class="unit-code-badge">${esc(code)}</span>` : '';
+}
+
+// Dynamic table filter definitions per module
+function getTableFilterFields() {
+    if (isF100KD2Module()) return [
+        { field: 'vehicle',   label: 'Vehicle',   match: r => [r.vehicle_type] },
+        { field: 'unit',      label: 'Unit',      match: r => [r.unit_code, r.unit_name, String(r.serial_number ?? '')] },
+        { field: 'battalion', label: 'Battalion', match: r => [r.battalion_code] },
+        { field: 'part',      label: 'Part',      match: r => [r.part_name, r.part_number] },
+        { field: 'process',   label: 'Process',   match: r => [r.process_name] },
+        { field: 'status',    label: 'Status',    match: r => [calculateStatus(r)] },
+    ];
+    return [
+        { field: 'vehicle',   label: 'Vehicle',   match: r => [r.vehicle] },
+        { field: 'unit',      label: 'Unit',      match: r => [r.vehicle_no, r.unit_label, getUnitCode(r.vehicle, r.vehicle_no)] },
+        { field: 'battalion', label: 'Battalion', match: r => [r.battalion_code] },
+        { field: 'week',      label: 'Week',      match: r => [r.week] },
+        { field: 'station',   label: 'Station',   match: r => [r.process_station] },
+        { field: 'code',      label: 'Code',      match: r => [getRowCode(r)] },
+        { field: 'status',    label: 'Status',    match: r => [calculateStatus(r)] },
+    ];
+}
+
+// Apply all active dynamic filters on top of a base dataset
+function applyTableSearchFilters(base) {
+    if (!_tableFilters.length) return base;
+    return base.filter(row =>
+        _tableFilters.every(f => {
+            if (!f.value) return true;
+            const q = f.value.toLowerCase();
+            const fields = getTableFilterFields();
+            const def = fields.find(d => d.field === f.field);
+            if (!def) return true;
+            return def.match(row).some(v => (v || '').toString().toLowerCase().includes(q));
+        })
+    );
 }
 
 let db = null;
 let barChartInst = null;
 let lineChartInst = null;
 let currentData = [];      // flat merged rows
+let _f100TableView = 'vehicle'; // 'vehicle' | 'part' | 'process'
+let _kd2TableView  = 'battalion'; // 'battalion' | 'vehicle' | 'unit' | 'station'
+let _tableFilters  = [];          // [{ id, field, fieldLabel, value }]
+let _filterSeq     = 0;           // unique id counter for filter chips
 let unitCodeMap = {};      // { 'K9||M1': 'EGY N25020', ... }
 let unitRegistryRows = [];
 let activePlanId = null;    // plan row being marked complete
@@ -672,9 +751,252 @@ async function initializeApp() {
         },
     });
 
+    applyUserTheme();          // restore this user's personal theme before first render
     await loadFilters();
     await loadData();
     await getModuleRuntime()?.refreshWorkspace?.();
+    startRealtimeSync();
+    startCommentNotifSync();
+    startPresenceTracking();
+}
+
+let _realtimeChannel = null;
+let _realtimePending = false;
+let _lastLocalSaveMs = 0; // timestamp of most recent local write — suppress echo toast
+
+function markLocalSave() { _lastLocalSaveMs = Date.now(); }
+
+function startRealtimeSync() {
+    if (_realtimeChannel) {
+        try { db.removeChannel(_realtimeChannel); } catch {}
+        _realtimeChannel = null;
+    }
+
+    if (!isF100KD2Module()) return;
+
+    _realtimeChannel = db
+        .channel('f100_plans_realtime')
+        .on('postgres_changes', { event: '*', schema: 'public', table: 'f100_plans' }, () => {
+            if (_realtimePending) return;
+            _realtimePending = true;
+            setTimeout(async () => {
+                _realtimePending = false;
+                const isEcho = (Date.now() - _lastLocalSaveMs) < 3000;
+                // Own saves: skip full reload — the in-memory data is already patched
+                if (isEcho) return;
+                // If a date input is focused, skip to avoid losing the user's input
+                const activeDateInput = document.activeElement?.matches?.('.inline-date-input, .inline-end-input');
+                if (activeDateInput) return;
+                await loadData();
+                showToast('Plan updated by another user.', 'info');
+            }, 800);
+        })
+        .subscribe();
+}
+
+// ── Cross-module comment notification real-time sync ─────────────
+// Listens to comment updates on BOTH kd2_plan and f100_plans so notifications
+// appear immediately for all users regardless of which module they are in.
+let _commentNotifChannels = [];
+
+function startCommentNotifSync() {
+    _commentNotifChannels.forEach(ch => { try { db.removeChannel(ch); } catch {} });
+    _commentNotifChannels = [];
+    const user = getCurrentUser();
+    if (!user || !db) return;
+    const myName = user?.name || user?.email || '';
+
+    function handleCommentUpdate(moduleId, row) {
+        const comments = row?.comments;
+        if (!Array.isArray(comments)) return;
+        const snapKey = _notifSnapKey(moduleId);
+        let snap;
+        try { snap = JSON.parse(localStorage.getItem(snapKey) || '[]'); } catch { snap = []; }
+        const existingKeys = new Set(snap.map(n => n.key));
+        let added = false;
+        comments.forEach(c => {
+            if (!c?.at || c.user === myName) return;
+            const key = _notifKey(row.id, c);
+            if (!existingKeys.has(key)) {
+                snap.push({
+                    key, planId: row.id, comment: c, moduleId,
+                    rowInfo: {
+                        vehicle:  row.vehicle_type || row.vehicle    || '',
+                        unit:     row.unit_label   || row.vehicle_no || '',
+                        process:  row.station_code || row.process_station || '',
+                    },
+                });
+                existingKeys.add(key);
+                added = true;
+            }
+        });
+        if (added) {
+            try { localStorage.setItem(snapKey, JSON.stringify(snap)); } catch {}
+            updateNotifBadge();
+        }
+    }
+
+    const kd2Ch = db.channel('ppms-kd2-comment-notif')
+        .on('postgres_changes', { event: 'UPDATE', schema: 'public', table: 'kd2_plan' }, ({ new: row }) => {
+            handleCommentUpdate('kd2', row);
+        })
+        .subscribe();
+
+    const f100Ch = db.channel('ppms-f100-comment-notif')
+        .on('postgres_changes', { event: 'UPDATE', schema: 'public', table: 'f100_plans' }, ({ new: row }) => {
+            handleCommentUpdate('f100kd2', row);
+        })
+        .subscribe();
+
+    _commentNotifChannels = [kd2Ch, f100Ch];
+}
+
+/* ── Active-user broadcast heartbeat (master admin view) ────────── */
+// Supabase Presence is unreliable with anon-only clients.
+// Instead each user broadcasts a heartbeat every 30 s on a broadcast channel.
+// Master admin keeps a local map of who sent a heartbeat in the last 90 s.
+let _presenceChannel = null;
+let _presenceOnlineMap = {};   // { userId: { name, email, role, ts } }
+let _heartbeatTimer   = null;
+
+function startPresenceTracking() {
+    const user = getCurrentUser();
+    if (!user || !db) return;
+
+    if (_presenceChannel) {
+        try { db.removeChannel(_presenceChannel); } catch {}
+        _presenceChannel = null;
+    }
+    if (_heartbeatTimer) { clearInterval(_heartbeatTimer); _heartbeatTimer = null; }
+
+    _presenceOnlineMap = {};
+
+    const myId   = String(user.id || user.email);
+    const myInfo = {
+        id:    myId,
+        name:  user.name  || user.email,
+        email: user.email,
+        role:  user.role,
+        joined: Date.now(),   // session start — stays fixed in each user's myInfo
+    };
+
+    function pruneAndRender() {
+        const cutoff = Date.now() - 90_000; // 90 s
+        Object.keys(_presenceOnlineMap).forEach(k => {
+            if ((_presenceOnlineMap[k].ts || 0) < cutoff) delete _presenceOnlineMap[k];
+        });
+        _renderActiveUsers(Object.values(_presenceOnlineMap));
+    }
+
+    function sendHeartbeat() {
+        _presenceChannel?.send({
+            type: 'broadcast',
+            event: 'hb',
+            payload: { ...myInfo, ts: Date.now(), moduleId: getActiveModuleId() },
+        }).catch(() => {});
+    }
+
+    _presenceChannel = db.channel('ppms-hb', {
+        config: { broadcast: { self: true, ack: false } },
+    });
+
+    _presenceChannel
+        .on('broadcast', { event: 'hb' }, ({ payload }) => {
+            if (!payload?.id) return;
+            _presenceOnlineMap[payload.id] = payload;
+            pruneAndRender();
+        })
+        .on('broadcast', { event: 'ping' }, () => {
+            // Another user just connected — respond immediately so they see us right away
+            sendHeartbeat();
+        })
+        .subscribe((status) => {
+            if (status !== 'SUBSCRIBED') return;
+            // Announce self immediately, then every 30 s
+            _presenceOnlineMap[myId] = { ...myInfo, ts: Date.now() };
+            pruneAndRender();
+            sendHeartbeat();
+            // Ask all already-connected users to respond with their heartbeat now
+            _presenceChannel?.send({ type: 'broadcast', event: 'ping', payload: { from: myId } }).catch(() => {});
+            _heartbeatTimer = setInterval(() => { sendHeartbeat(); pruneAndRender(); }, 30_000);
+        });
+}
+
+function _renderActiveUsers(users) {
+    if (!isMasterAdmin()) return;
+    const wrap   = document.getElementById('activeUsersWrap');
+    const countEl = document.getElementById('activeUsersCount');
+    if (!wrap) return;
+    wrap.style.display = 'flex';
+    if (countEl) countEl.textContent = users.length;
+}
+
+function openActiveUsersDropdown() {
+    document.querySelectorAll('.active-users-dropdown').forEach(d => d.remove());
+    // Use module-level map (rebuilt from presence sync/join/leave events)
+    const users = Object.values(_presenceOnlineMap).flat();
+    const me = getCurrentUser();
+
+    const dropdown = document.createElement('div');
+    dropdown.className = 'active-users-dropdown f100-notif-dropdown';
+
+    function _fmtDuration(ms) {
+        const m = Math.floor(ms / 60_000);
+        if (m < 1)  return 'just now';
+        if (m < 60) return m + 'm';
+        const h = Math.floor(m / 60);
+        const rm = m % 60;
+        return rm ? h + 'h ' + rm + 'm' : h + 'h';
+    }
+
+    dropdown.innerHTML = `
+        <div class="f100-notif-hdr" style="padding:10px 14px 8px">
+            <span style="font-weight:700;font-size:.82rem">Active Users</span>
+            <span style="font-size:.72rem;color:var(--clr-text-muted)">${users.length} online</span>
+        </div>
+        <div style="max-height:300px;overflow-y:auto">
+            ${users.map(u => {
+                const isMe = u.id === (me?.id || me?.email);
+                const roleLabels = { master_admin: 'Master Admin', admin: 'Admin', planner: 'Planner', viewer: 'Viewer' };
+                const roleLbl = roleLabels[u.role] || u.role || '';
+                const initials = (u.name || u.email || '?').charAt(0).toUpperCase();
+                const loginTime  = u.joined ? new Date(u.joined).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) : '—';
+                const sessionDur = u.joined ? _fmtDuration(Date.now() - u.joined) : '';
+                const modLbl = u.moduleId ? _moduleLabel(u.moduleId) : '';
+                return `<div class="au-row" style="align-items:flex-start;padding:10px 14px;gap:10px">
+                    <div class="au-avatar" style="margin-top:2px;flex-shrink:0">${initials}</div>
+                    <div class="au-info" style="flex:1;min-width:0">
+                        <div style="display:flex;align-items:center;gap:6px">
+                            <span class="au-name" style="font-weight:600">${u.name || u.email || '—'}${isMe ? ' <span style="color:var(--clr-text-muted);font-weight:400">(you)</span>' : ''}</span>
+                            ${modLbl ? `<span style="display:inline-block;padding:1px 5px;border-radius:4px;background:rgba(59,130,246,.12);color:#3b82f6;font-size:.63rem;font-weight:600;flex-shrink:0">${modLbl}</span>` : ''}
+                        </div>
+                        <span style="display:block;font-size:.71rem;color:var(--clr-text-muted);margin-top:1px">${u.email || ''}</span>
+                        <span style="display:block;font-size:.71rem;color:var(--clr-text-muted);margin-top:3px">
+                            ${roleLbl} · Logged in ${loginTime}${sessionDur ? ' · ' + sessionDur : ''}
+                        </span>
+                    </div>
+                    <span class="au-dot" style="flex-shrink:0;margin-top:6px"></span>
+                </div>`;
+            }).join('') || '<div style="padding:12px 14px;color:var(--clr-text-muted);font-size:.78rem">No users online</div>'}
+        </div>
+    `;
+
+    const btn = document.getElementById('activeUsersBtn');
+    if (!btn) return;
+    const rect = btn.getBoundingClientRect();
+    dropdown.style.cssText = `position:fixed;top:${rect.bottom + 6}px;right:${window.innerWidth - rect.right}px;z-index:10000;min-width:240px`;
+    document.body.appendChild(dropdown);
+
+    setTimeout(() => document.addEventListener('click', function handler(ev) {
+        if (!dropdown.contains(ev.target) && ev.target !== btn) {
+            dropdown.remove();
+            document.removeEventListener('click', handler);
+        }
+    }), 0);
+}
+
+function wireActiveUsersBtn() {
+    document.getElementById('activeUsersBtn')?.addEventListener('click', openActiveUsersDropdown);
 }
 
 /* ──────────────────────────────────────────────────────────────────
@@ -966,9 +1288,11 @@ async function loadF100Data() {
     const gunPartGroup = document.getElementById('f100GunPartGroup');
     const mfgGroup     = document.getElementById('f100ManufacturerGroup');
     const vtGroup      = document.getElementById('f100VehicleTypeGroup');
+    const serialGroup  = document.getElementById('f100SerialGroup');
     if (gunPartGroup) gunPartGroup.style.display = mode === 'gun'     ? '' : 'none';
     if (mfgGroup)     mfgGroup.style.display     = mode === 'vehicle' ? '' : 'none';
     if (vtGroup)      vtGroup.style.display      = mode === 'vehicle' ? '' : 'none';
+    if (serialGroup)  serialGroup.style.display  = mode === 'gun'     ? '' : 'none';
 
     await populateF100BattalionFilter();
     if (mode === 'gun') await populateF100GunPartFilter();
@@ -977,6 +1301,7 @@ async function loadF100Data() {
     const gunPart      = mode === 'gun'     ? (getVal('f100GunPart')      || null) : null;
     const manufacturer = mode === 'vehicle' ? (getVal('f100Manufacturer') || null) : null;
     const vehicleType  = mode === 'vehicle' ? (getVal('f100VehicleType')  || null) : null;
+    const serialFilter = mode === 'gun'     ? (getVal('f100Serial')       || null) : null;
 
     // 1. Load matching parts
     let partsQ = db.from('f100_parts').select('*').eq('module', mode).order('sort_order');
@@ -1011,14 +1336,52 @@ async function loadF100Data() {
     const processMap = {};
     (processes || []).forEach(p => { processMap[p.id] = p; });
 
-    // 3. Load plans — filtered by battalion and vehicle type if selected
+    // 3. Load plans — filtered by battalion, vehicle type, and serial if selected
     let plansQ = db.from('f100_plans').select('*').in('part_id', partIds);
-    if (battalion)   plansQ = plansQ.eq('battalion_code', battalion);
-    if (vehicleType) plansQ = plansQ.eq('vehicle_type', vehicleType);
+    if (battalion)    plansQ = plansQ.eq('battalion_code', battalion);
+    if (vehicleType)  plansQ = plansQ.eq('vehicle_type', vehicleType);
+    if (serialFilter) plansQ = plansQ.eq('serial_number', parseInt(serialFilter, 10));
+    // Gun mode always restricts to K9
+    if (mode === 'gun') plansQ = plansQ.eq('vehicle_type', 'K9');
     const { data: plans, error: plansErr } = await plansQ;
     if (plansErr) throw plansErr;
 
-    // 4. Flatten and normalize into display rows
+    // 4. Load unit labels from f100_vehicle_units + f100_battalions
+    const [{ data: vehicleUnits }, { data: battalionsList }] = await Promise.all([
+        db.from('f100_vehicle_units').select('*'),
+        db.from('f100_battalions').select('id, battalion_code'),
+    ]);
+    const batCodeById = {};
+    (battalionsList || []).forEach(b => { batCodeById[b.id] = b.battalion_code; });
+    const unitLabelMap = {};
+    (vehicleUnits || []).forEach(u => {
+        const bc = batCodeById[u.battalion_id];
+        if (bc) unitLabelMap[`${bc}||${u.vehicle_type}||${u.unit_serial}`] = {
+            unit_label: u.unit_label || '',
+            unit_code:  u.unit_code  || '',
+            unit_name:  u.unit_name  || '',
+        };
+    });
+
+    // 4b. Populate serial (unit) dropdown for gun mode using K9 vehicle units
+    if (mode === 'gun' && serialGroup) {
+        const serialSel = document.getElementById('f100Serial');
+        if (serialSel) {
+            const batId = battalionsList?.find(b => b.battalion_code === battalion)?.id;
+            const k9Units = (vehicleUnits || []).filter(u =>
+                u.vehicle_type === 'K9' && (!batId || u.battalion_id === batId)
+            ).sort((a, b) => (a.unit_serial ?? 0) - (b.unit_serial ?? 0));
+            const prevVal = serialSel.value;
+            serialSel.innerHTML = '<option value="">All Units</option>' +
+                k9Units.map(u => {
+                    const lbl = u.unit_label || u.unit_code || `Unit ${u.unit_serial}`;
+                    return `<option value="${u.unit_serial}">${esc(lbl)}</option>`;
+                }).join('');
+            if (prevVal && [...serialSel.options].some(o => o.value === prevVal)) serialSel.value = prevVal;
+        }
+    }
+
+    // 5. Flatten and normalize into display rows
     const rows = (plans || []).map(plan => {
         const part = partMap[plan.part_id] || {};
         const proc = processMap[plan.process_id] || {};
@@ -1027,6 +1390,9 @@ async function loadF100Data() {
             battalion_code:      plan.battalion_code,
             vehicle_type:        plan.vehicle_type,
             serial_number:       plan.serial_number,
+            unit_label:          (unitLabelMap[`${plan.battalion_code}||${plan.vehicle_type}||${plan.serial_number}`] || {}).unit_label || '',
+            unit_code:           (unitLabelMap[`${plan.battalion_code}||${plan.vehicle_type}||${plan.serial_number}`] || {}).unit_code  || '',
+            unit_name:           (unitLabelMap[`${plan.battalion_code}||${plan.vehicle_type}||${plan.serial_number}`] || {}).unit_name  || '',
             part_id:             part.id,
             part_number:         part.part_number  || '',
             part_name:           part.part_name    || '',
@@ -1044,12 +1410,18 @@ async function loadF100Data() {
             actual_start_date:   plan.actual_start_date,
             actual_end_date:     plan.actual_end_date,
             status:              plan.status        || 'Planned',
-            start_date:          plan.actual_start_date || plan.planned_start_date,
-            end_date:            plan.actual_end_date   || plan.planned_end_date,
+            notes:               plan.notes         || '',
+            comments:            Array.isArray(plan.comments) ? plan.comments : [],
+            start_date:          plan.planned_start_date,
+            end_date:            plan.planned_end_date,
         };
     }).sort((a, b) => {
-        const bc = (a.battalion_code || '').localeCompare(b.battalion_code || '');
+        const bc = (a.battalion_code || '').localeCompare(b.battalion_code || '', undefined, { numeric: true });
         if (bc !== 0) return bc;
+        const vc = vehicleSort(a.vehicle_type, b.vehicle_type);
+        if (vc !== 0) return vc;
+        const sc = (a.serial_number ?? 0) - (b.serial_number ?? 0);
+        if (sc !== 0) return sc;
         const ps = a.part_sort - b.part_sort;
         if (ps !== 0) return ps;
         return a.process_sort - b.process_sort;
@@ -1064,6 +1436,9 @@ async function loadF100Data() {
     const geEl = document.getElementById('ganttEnd');
     if (!gsEl?.value || !geEl?.value) setGanttRangeFromData(rows);
     renderGantt(rows, gsEl?.value, geEl?.value);
+    saveNotifSnapshot();
+    updateNotifBadge();
+    checkNotifJump();
 }
 
 async function loadData() {
@@ -1126,6 +1501,9 @@ async function loadData() {
             const geEl = document.getElementById('ganttEnd');
             if (!gsEl?.value || !geEl?.value) setGanttRangeFromData(displayData);
             renderGantt(displayData, gsEl?.value, geEl?.value);
+            saveNotifSnapshot();
+            updateNotifBadge();
+            checkNotifJump();
             return;
         }
 
@@ -1261,6 +1639,9 @@ async function loadData() {
         const geEl = document.getElementById('ganttEnd');
         if (!gsEl?.value || !geEl?.value) setGanttRangeFromData(displayData);
         renderGantt(displayData, gsEl?.value, geEl?.value);
+        saveNotifSnapshot();
+        updateNotifBadge();
+        checkNotifJump();
 
     } catch (err) {
         showToast('Error loading data: ' + err.message, 'error');
@@ -1274,8 +1655,18 @@ async function loadData() {
    6. STATUS CALCULATION
    ────────────────────────────────────────────────────────────────── */
 function calculateStatus(row) {
-    // F100 rows carry status directly from the database
-    if (row.module === 'gun' || row.module === 'vehicle') return row.status || 'Planned';
+    // F100: compute dynamically so Overdue is detected even without a DB write
+    if (row.module === 'gun' || row.module === 'vehicle') {
+        const today = todayStr();
+        const actualEnd   = row.actual_end_date   || null;
+        const actualStart = row.actual_start_date || null;
+        const plannedEnd  = row.planned_end_date  || null;
+        if (actualEnd && plannedEnd && actualEnd <= plannedEnd) return 'Completed';
+        if (actualEnd && plannedEnd && actualEnd >  plannedEnd) return 'Late Completion';
+        if (!actualEnd && plannedEnd && today > plannedEnd)     return 'Overdue';
+        if (!actualEnd && actualStart)                          return 'In Progress';
+        return 'Planned';
+    }
 
     const today = todayStr();
     const completed = row.progress?.completed || false;
@@ -1298,9 +1689,9 @@ function calculateStatus(row) {
 function ganttHighlightState(row) {
     // F100 uses status string directly
     if (row.module === 'gun' || row.module === 'vehicle') {
-        const s = row.status || 'Planned';
+        const s = calculateStatus(row);
         if (s === 'Completed') return 'complete';
-        if (s === 'Late Completion') return 'late';
+        if (s === 'Late Completion') return 'late-complete';
         if (s === 'Overdue') return 'late';
         if (s === 'In Progress') return 'progress';
         return 'planned';
@@ -1313,7 +1704,7 @@ function ganttHighlightState(row) {
     const today = todayStr();
 
     if (completed && compDate && compDate < endDate) return 'early';
-    if (completed && compDate && compDate > endDate) return 'late';
+    if (completed && compDate && compDate > endDate) return 'late-complete';
     if (!completed && today > endDate) return 'late';
     if (!completed && actualStart) return 'progress';
     if (completed && compDate) return 'complete';
@@ -1321,6 +1712,23 @@ function ganttHighlightState(row) {
 }
 
 function delayDays(row) {
+    // F100 rows store dates directly (no progress sub-object)
+    if (row.module === 'gun' || row.module === 'vehicle') {
+        const plannedEnd   = row.planned_end_date;
+        const plannedStart = row.planned_start_date;
+        const actualEnd    = row.actual_end_date;
+        const actualStart  = row.actual_start_date;
+        const today        = todayStr();
+        const status       = calculateStatus(row);
+        if ((status === 'Completed' || status === 'Late Completion') && actualEnd && actualEnd > plannedEnd)
+            return daysBetween(plannedEnd, actualEnd);
+        if (status === 'Overdue' && today > plannedEnd)
+            return daysBetween(plannedEnd, today);
+        if (status === 'In Progress' && actualStart && actualStart > plannedStart)
+            return daysBetween(plannedStart, actualStart);
+        return 0;
+    }
+
     const completed = row.progress?.completed || false;
     const compDate = row.progress?.completion_date || null;
     const actualStart = row.progress?.actual_start_date || null;
@@ -1347,109 +1755,688 @@ function delayDays(row) {
    7. TABLE RENDERING
    ────────────────────────────────────────────────────────────────── */
 
+/**
+ * Update a single F100 table row in-place without re-rendering the whole table.
+ * Only touches: actual start, actual end, status badge, delay cells.
+ * Returns true if the row was found and updated.
+ */
+function updateF100TableRowInPlace(planId) {
+    const row = currentData.find(t => String(t.id) === String(planId));
+    if (!row) return false;
+    const tr = document.querySelector(`#mainTable tbody tr[data-plan-id="${planId}"]`);
+    if (!tr) return false;
+
+    const cells = tr.querySelectorAll('td');
+    // Column order: Vehicle(0), Unit(1), Part(2), Step(3), Process(4),
+    //               Planned Start(5), Planned End(6), Actual Start(7), Actual End(8),
+    //               Status(9), Delay(10), Comments(11)
+
+    const status = calculateStatus(row);
+    const badgeCls = `badge badge-${status.toLowerCase().replace(/\s+/g, '-').replace('late-completion', 'late')}`;
+    if (cells[9]) cells[9].innerHTML = `<span class="${badgeCls}">${status}</span>`;
+
+    const delay = delayDays(row);
+    const isDone = status === 'Completed' || status === 'Late Completion';
+    let delayHtml;
+    if (delay > 0 && (status === 'Late Completion' || status === 'Overdue'))
+        delayHtml = `<span class="delay-positive">+${delay}d</span>`;
+    else if (delay > 0 && status === 'In Progress')
+        delayHtml = `<span class="delay-positive" title="Started ${delay}d late">+${delay}d start</span>`;
+    else if (isDone && delay === 0)
+        delayHtml = `<span class="delay-zero">On Time</span>`;
+    else
+        delayHtml = `<span class="delay-none">—</span>`;
+    if (cells[10]) cells[10].innerHTML = delayHtml;
+
+    const actualStart = row.actual_start_date || '';
+    if (cells[7]) {
+        cells[7].innerHTML = `<div class="inline-date-wrap">
+            <input type="date" class="inline-date-input" data-plan-id="${row.id}" value="${actualStart}" title="Actual start date" />
+            ${actualStart ? `<button class="inline-icon-btn inline-start-clear" data-plan-id="${row.id}" title="Clear">✕</button>` : ''}
+        </div>`;
+        cells[7].querySelector('.inline-date-input')?.addEventListener('change', function () {
+            saveActualStart(this.dataset.planId, this.value);
+        });
+        cells[7].querySelector('.inline-start-clear')?.addEventListener('click', function () {
+            saveActualStart(this.dataset.planId, '');
+        });
+    }
+
+    const actualEnd = row.actual_end_date || '';
+    if (cells[8]) {
+        cells[8].innerHTML = `<div class="inline-date-wrap">
+            <input type="date" class="inline-end-input" data-plan-id="${row.id}" value="${actualEnd}" title="Actual end date" />
+            ${actualEnd ? `<button class="inline-icon-btn inline-end-clear" data-plan-id="${row.id}" title="Clear">✕</button>` : ''}
+        </div>`;
+        cells[8].querySelector('.inline-end-input')?.addEventListener('change', function () {
+            saveCompletionDate(this.dataset.planId, this.value);
+        });
+        cells[8].querySelector('.inline-end-clear')?.addEventListener('click', function () {
+            saveCompletionDate(this.dataset.planId, '');
+        });
+    }
+
+    return true;
+}
+
 function renderF100Table(data) {
+    document.getElementById('kd2TableViewBar')?.remove();
+    const tbl = document.getElementById('mainTable');
+    const _f100TableCard = document.querySelector('.table-card');
+    if (_f100TableCard) renderTableFilterBar(_f100TableCard);
+    if (tbl) tbl.classList.add('f100-table');
     const thead = document.querySelector('#mainTable thead');
     if (thead) {
         thead.innerHTML = `
         <tr>
-            <th>#</th>
-            <th>Battalion</th>
-            <th>Part</th>
-            <th>Part No.</th>
-            <th>Manufacturer</th>
             <th>Vehicle</th>
-            <th>Serial</th>
-            <th>Step</th>
+            <th>Unit</th>
+            <th>Part</th>
+            <th class="mono">Step</th>
             <th>Process</th>
-            <th>Planned Start</th>
-            <th>Planned End</th>
+            <th class="mono">Planned Start</th>
+            <th class="mono">Planned End</th>
             <th>Actual Start</th>
             <th>Actual End</th>
             <th>Status</th>
-            <th>% Done</th>
+            <th>Delay</th>
+            <th>Comments</th>
         </tr>`;
+    }
+
+    // Inject / update view-tab bar above the table card header
+    const tableCard = document.querySelector('.table-card');
+    let viewBar = document.getElementById('f100TableViewBar');
+    if (tableCard && !viewBar) {
+        viewBar = document.createElement('div');
+        viewBar.id = 'f100TableViewBar';
+        viewBar.className = 'f100-table-view-bar';
+        viewBar.innerHTML = `
+            <span class="f100-view-label">Group by:</span>
+            <button class="f100-view-btn${_f100TableView === 'battalion' ? ' f100-view-btn-active' : ''}" data-view="battalion">Battalion</button>
+            <button class="f100-view-btn${_f100TableView === 'vehicle'   ? ' f100-view-btn-active' : ''}" data-view="vehicle">Vehicle</button>
+            <button class="f100-view-btn${_f100TableView === 'part'      ? ' f100-view-btn-active' : ''}" data-view="part">Part</button>
+            <button class="f100-view-btn${_f100TableView === 'process'   ? ' f100-view-btn-active' : ''}" data-view="process">Process</button>`;
+        tableCard.insertBefore(viewBar, tableCard.firstChild);
+        viewBar.querySelectorAll('.f100-view-btn').forEach(btn => {
+            btn.addEventListener('click', () => {
+                _f100TableView = btn.dataset.view;
+                const _cat = getVal('filterCategory');
+                const _base = _cat ? currentData.filter(r => getModuleCategory(r.process_station, r) === _cat) : currentData;
+                renderF100Table(applyTableSearchFilters(_base));
+            });
+        });
+    } else if (viewBar) {
+        // Update active state
+        viewBar.querySelectorAll('.f100-view-btn').forEach(btn => {
+            btn.classList.toggle('f100-view-btn-active', btn.dataset.view === _f100TableView);
+        });
     }
 
     const tbody = document.getElementById('tableBody');
     document.getElementById('rowCount').textContent = `${data.length} record${data.length !== 1 ? 's' : ''}`;
 
+    // Build completion maps per view
+    const tblBatCompMap  = {};
+    const tblCompMap     = {};
+    const tblPartCompMap = {};
+    const tblProcCompMap = {};
+    data.forEach(r => {
+        const rStatus = calculateStatus(r);
+        const rDone = rStatus === 'Completed' || rStatus === 'Late Completion';
+
+        const bk = r.battalion_code || '—';
+        if (!tblBatCompMap[bk]) tblBatCompMap[bk] = { done: 0, total: 0 };
+        tblBatCompMap[bk].total++;
+        if (rDone) tblBatCompMap[bk].done++;
+
+        const vk = `${r.battalion_code}||${r.vehicle_type}||${r.serial_number}`;
+        if (!tblCompMap[vk]) tblCompMap[vk] = { done: 0, total: 0 };
+        tblCompMap[vk].total++;
+        if (rDone) tblCompMap[vk].done++;
+
+        const pk = `${r.part_sort}||${r.part_name}`;
+        if (!tblPartCompMap[pk]) tblPartCompMap[pk] = { done: 0, total: 0 };
+        tblPartCompMap[pk].total++;
+        if (rDone) tblPartCompMap[pk].done++;
+
+        const prk = `${r.process_sort}||${r.step_number}||${r.process_name}`;
+        if (!tblProcCompMap[prk]) tblProcCompMap[prk] = { done: 0, total: 0 };
+        tblProcCompMap[prk].total++;
+        if (rDone) tblProcCompMap[prk].done++;
+    });
+
     if (!data.length) {
         tbody.innerHTML = `
         <tr>
-            <td colspan="15" class="table-empty">
+            <td colspan="12" class="table-empty">
                 <div class="empty-state">
                     <svg viewBox="0 0 48 48" fill="none" stroke="currentColor" stroke-width="1.5"><rect x="6" y="6" width="36" height="36" rx="4"/><path d="M16 24h16M24 16v16"/></svg>
-                    <p>No F100 plan records found. Enter plan data via the admin panel or apply different filters.</p>
+                    <p>No F100 plan records found.</p>
                 </div>
             </td>
         </tr>`;
+        wireF100TableEvents(tbody);
         return;
     }
 
-    // Compute % Done per (battalion, part_id, process_id) group
-    const groupTotals = {};
-    const groupDone   = {};
-    for (const r of data) {
-        const key = `${r.battalion_code}||${r.part_id}||${r.process_id}`;
-        groupTotals[key] = (groupTotals[key] || 0) + 1;
-        if (r.status === 'Completed' || r.status === 'Late Completion') {
-            groupDone[key] = (groupDone[key] || 0) + 1;
-        }
+    // Sort data depending on view
+    let sorted;
+    if (_f100TableView === 'battalion') {
+        sorted = data.slice().sort((a, b) => {
+            const bc = String(a.battalion_code || '').localeCompare(String(b.battalion_code || ''), undefined, { numeric: true });
+            if (bc !== 0) return bc;
+            const vc = vehicleSort(a.vehicle_type, b.vehicle_type);
+            if (vc !== 0) return vc;
+            const sc = (a.serial_number ?? 0) - (b.serial_number ?? 0);
+            if (sc !== 0) return sc;
+            return a.part_sort - b.part_sort;
+        });
+    } else if (_f100TableView === 'part') {
+        sorted = data.slice().sort((a, b) => {
+            const ps = a.part_sort - b.part_sort;
+            if (ps !== 0) return ps;
+            const vc = vehicleSort(a.vehicle_type, b.vehicle_type);
+            if (vc !== 0) return vc;
+            const sc = (a.serial_number ?? 0) - (b.serial_number ?? 0);
+            if (sc !== 0) return sc;
+            return a.process_sort - b.process_sort;
+        });
+    } else if (_f100TableView === 'process') {
+        sorted = data.slice().sort((a, b) => {
+            const ps = a.process_sort - b.process_sort;
+            if (ps !== 0) return ps;
+            const vc = vehicleSort(a.vehicle_type, b.vehicle_type);
+            if (vc !== 0) return vc;
+            return (a.serial_number ?? 0) - (b.serial_number ?? 0);
+        });
+    } else {
+        // By vehicle (default — already sorted correctly from loadF100Data)
+        sorted = data;
     }
 
-    tbody.innerHTML = data.map((row, idx) => {
-        const badgeCls = `badge badge-${(row.status || 'planned').toLowerCase().replace(/\s+/g, '-').replace('late-completion', 'late')}`;
-        const key = `${row.battalion_code}||${row.part_id}||${row.process_id}`;
-        const pct = groupTotals[key]
-            ? Math.round(((groupDone[key] || 0) / groupTotals[key]) * 100)
-            : 0;
-        const pctHtml = `<div class="f100-pct-wrap">
-            <span class="f100-pct-num">${pct}%</span>
-            <div class="f100-pct-bar"><div class="f100-pct-fill" style="width:${pct}%"></div></div>
+    // Build rows with group headers
+    let html = '';
+    let rowNum = 0;
+    let prevGroupKey = null;
+
+    sorted.forEach(row => {
+        // Compute group key for the current view
+        let groupKey, groupHtml;
+        if (_f100TableView === 'battalion') {
+            groupKey = row.battalion_code || '—';
+            if (groupKey !== prevGroupKey) {
+                const comp = tblBatCompMap[groupKey] || { done: 0, total: 0 };
+                const pct = comp.total > 0 ? Math.round((comp.done / comp.total) * 100) : 0;
+                const pctBar = comp.total > 0
+                    ? `<div class="f100-grp-pct-wrap"><div class="f100-grp-pct-bar" style="width:${pct}%"></div></div><span class="f100-grp-pct-text">${comp.done}/${comp.total} (${pct}%)</span>`
+                    : '';
+                groupHtml = `<tr class="f100-tbl-group-row f100-tbl-group-battalion">
+                    <td colspan="12">
+                        <svg style="width:13px;height:13px;vertical-align:middle;margin-right:5px;color:var(--clr-accent)" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.8"><rect x="2" y="3" width="12" height="10" rx="1.5"/><path d="M6 9h4M4 6h8M4 12h8"/></svg>
+                        <strong>${esc(groupKey)}</strong>
+                        ${pctBar}
+                    </td>
+                </tr>`;
+            }
+        } else if (_f100TableView === 'vehicle') {
+            groupKey = `${row.battalion_code}||${row.vehicle_type}||${row.serial_number}`;
+            if (groupKey !== prevGroupKey) {
+                const comp = tblCompMap[groupKey] || { done: 0, total: 0 };
+                const pct = comp.total > 0 ? Math.round((comp.done / comp.total) * 100) : 0;
+                const pctBar = comp.total > 0
+                    ? `<div class="f100-grp-pct-wrap"><div class="f100-grp-pct-bar" style="width:${pct}%"></div></div><span class="f100-grp-pct-text">${comp.done}/${comp.total} (${pct}%)</span>`
+                    : '';
+                groupHtml = `<tr class="f100-tbl-group-row f100-tbl-group-vehicle">
+                    <td colspan="12">
+                        <span class="f100-tbl-veh-badge">${esc(row.vehicle_type || '—')}</span>
+                        <strong>${esc(row.unit_code || `#${row.serial_number ?? '?'}`)}</strong>
+                        ${row.unit_name ? `<span class="f100-tbl-unit-name">${esc(row.unit_name)}</span>` : ''}
+                        <span class="f100-tbl-bat-tag">${esc(row.battalion_code || '—')}</span>
+                        ${pctBar}
+                    </td>
+                </tr>`;
+            }
+        } else if (_f100TableView === 'part') {
+            groupKey = `${row.part_sort}||${row.part_name}`;
+            if (groupKey !== prevGroupKey) {
+                const comp = tblPartCompMap[groupKey] || { done: 0, total: 0 };
+                const pct = comp.total > 0 ? Math.round((comp.done / comp.total) * 100) : 0;
+                const pctBar = comp.total > 0
+                    ? `<div class="f100-grp-pct-wrap"><div class="f100-grp-pct-bar" style="width:${pct}%"></div></div><span class="f100-grp-pct-text">${comp.done}/${comp.total} (${pct}%)</span>`
+                    : '';
+                groupHtml = `<tr class="f100-tbl-group-row f100-tbl-group-part">
+                    <td colspan="12">
+                        <span class="f100-tbl-part-icon">
+                            <svg viewBox="0 0 14 14" fill="none" stroke="currentColor" stroke-width="1.7"><rect x="1" y="3" width="12" height="9" rx="1.5"/><path d="M4 3V2h6v1"/></svg>
+                        </span>
+                        <strong>${esc(row.part_name || '—')}</strong>
+                        ${row.part_number ? `<span class="f100-tbl-bat-tag">${esc(row.part_number)}</span>` : ''}
+                        ${pctBar}
+                    </td>
+                </tr>`;
+            }
+        } else {
+            groupKey = `${row.process_sort}||${row.step_number}||${row.process_name}`;
+            if (groupKey !== prevGroupKey) {
+                const comp = tblProcCompMap[groupKey] || { done: 0, total: 0 };
+                const pct = comp.total > 0 ? Math.round((comp.done / comp.total) * 100) : 0;
+                const pctBar = comp.total > 0
+                    ? `<div class="f100-grp-pct-wrap"><div class="f100-grp-pct-bar" style="width:${pct}%"></div></div><span class="f100-grp-pct-text">${comp.done}/${comp.total} (${pct}%)</span>`
+                    : '';
+                groupHtml = `<tr class="f100-tbl-group-row f100-tbl-group-process">
+                    <td colspan="12">
+                        <span class="f100-tbl-step-badge">#${row.step_number || '?'}</span>
+                        <strong>${esc(row.process_name || '—')}</strong>
+                        ${pctBar}
+                    </td>
+                </tr>`;
+            }
+        }
+
+        if (groupKey !== prevGroupKey) {
+            if (groupHtml) html += groupHtml;
+            prevGroupKey = groupKey;
+        }
+
+        rowNum++;
+        const status = calculateStatus(row); // dynamic so Overdue is detected even without a DB write
+        const isDone = status === 'Completed' || status === 'Late Completion';
+
+        const delay = delayDays(row);
+        let delayHtml;
+        if (delay > 0 && (status === 'Late Completion' || status === 'Overdue')) {
+            delayHtml = `<span class="delay-positive">+${delay}d</span>`;
+        } else if (delay > 0 && status === 'In Progress') {
+            delayHtml = `<span class="delay-positive" title="Started ${delay}d late">+${delay}d start</span>`;
+        } else if (isDone && delay === 0) {
+            delayHtml = `<span class="delay-zero">On Time</span>`;
+        } else {
+            delayHtml = `<span class="delay-none">—</span>`;
+        }
+
+        const actualStart = row.actual_start_date || '';
+        const startInputHtml = `<div class="inline-date-wrap">
+            <input type="date" class="inline-date-input" data-plan-id="${row.id}" value="${actualStart}" title="Actual start date" />
+            ${actualStart ? `<button class="inline-icon-btn inline-start-clear" data-plan-id="${row.id}" title="Clear">✕</button>` : ''}
         </div>`;
 
-        return `
-        <tr>
-            <td class="mono">${idx + 1}</td>
-            <td><strong>${esc(row.battalion_code || '—')}</strong></td>
-            <td>${esc(row.part_name || '—')}</td>
-            <td class="mono">${esc(row.part_number || '—')}</td>
-            <td>${esc(row.manufacturer || '—')}</td>
+        const actualEnd = row.actual_end_date || '';
+        const endInputHtml = `<div class="inline-date-wrap">
+            <input type="date" class="inline-end-input" data-plan-id="${row.id}" value="${actualEnd}" title="Actual end date" />
+            ${actualEnd ? `<button class="inline-icon-btn inline-end-clear" data-plan-id="${row.id}" title="Clear">✕</button>` : ''}
+        </div>`;
+
+        const comments = Array.isArray(row.comments) ? row.comments : [];
+        const commentBtn = `<button class="btn-f100-comment" data-plan-id="${row.id}" title="${comments.length} comment${comments.length !== 1 ? 's' : ''}">
+            <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.6"><path d="M2 3a1 1 0 0 1 1-1h10a1 1 0 0 1 1 1v7a1 1 0 0 1-1 1H5l-3 2V3Z"/></svg>
+            ${comments.length ? `<span class="f100-comment-count">${comments.length}</span>` : ''}
+        </button>`;
+
+        const badgeCls = `badge badge-${status.toLowerCase().replace(/\s+/g, '-').replace('late-completion', 'late')}`;
+        const unitCell = [
+            row.battalion_code ? `<span class="f100-tbl-bat-tag">${esc(row.battalion_code)}</span>`  : '',
+            row.unit_name      ? `<span class="unit-main-label">${esc(row.unit_name)}</span>`         : '',
+            row.unit_code      ? `<span class="unit-code-badge">${esc(row.unit_code)}</span>`         : '',
+        ].filter(Boolean).join('') || '—';
+        html += `<tr data-plan-id="${row.id}">
             <td>${esc(row.vehicle_type || '—')}</td>
-            <td class="mono">${row.serial_number != null ? row.serial_number : '—'}</td>
+            <td class="unit-cell">${unitCell}</td>
+            <td>${esc(row.part_name || '—')}</td>
             <td class="mono">#${row.step_number || '?'}</td>
             <td>${esc(row.process_name || '—')}</td>
             <td class="mono">${formatDate(row.planned_start_date)}</td>
             <td class="mono">${formatDate(row.planned_end_date)}</td>
-            <td class="mono">${formatDate(row.actual_start_date)}</td>
-            <td class="mono">${formatDate(row.actual_end_date)}</td>
-            <td><span class="${badgeCls}">${row.status || 'Planned'}</span></td>
-            <td>${pctHtml}</td>
+            <td>${startInputHtml}</td>
+            <td>${endInputHtml}</td>
+            <td><span class="${badgeCls}">${status}</span></td>
+            <td>${delayHtml}</td>
+            <td class="f100-comment-cell">${commentBtn}</td>
         </tr>`;
-    }).join('');
+    });
+
+    tbody.innerHTML = html;
+    wireF100TableEvents(tbody);
+}
+
+function wireF100TableEvents(tbody) {
+    // Actual Start
+    tbody.querySelectorAll('.inline-date-input').forEach(input => {
+        input.addEventListener('change', () => saveActualStart(input.dataset.planId, input.value));
+    });
+    tbody.querySelectorAll('.inline-start-clear').forEach(btn => {
+        btn.addEventListener('click', () => saveActualStart(btn.dataset.planId, ''));
+    });
+
+    // Actual End — same inline pattern as Actual Start
+    tbody.querySelectorAll('.inline-end-input').forEach(input => {
+        input.addEventListener('change', () => saveCompletionDate(input.dataset.planId, input.value));
+    });
+    tbody.querySelectorAll('.inline-end-clear').forEach(btn => {
+        btn.addEventListener('click', () => saveCompletionDate(btn.dataset.planId, ''));
+    });
+
+    // Comments popover — multi-user
+    tbody.querySelectorAll('.btn-f100-comment').forEach(btn => {
+        btn.addEventListener('click', (e) => {
+            e.stopPropagation();
+            document.querySelectorAll('.f100-comments-popover').forEach(p => p.remove());
+            const planId = btn.dataset.planId;
+            const row = currentData.find(t => String(t.id) === String(planId));
+            const popover = document.createElement('div');
+            popover.className = 'f100-comments-popover';
+
+            function formatCommentTime(iso) {
+                try {
+                    const d = new Date(iso);
+                    return d.toLocaleDateString(undefined, { day: '2-digit', month: 'short', year: 'numeric' })
+                        + ' ' + d.toLocaleTimeString(undefined, { hour: '2-digit', minute: '2-digit' });
+                } catch { return iso || ''; }
+            }
+
+            function updateCommentBadge() {
+                const newCount = (row?.comments || []).length;
+                let countEl = btn.querySelector('.f100-comment-count');
+                if (newCount > 0) {
+                    if (countEl) countEl.textContent = newCount;
+                    else btn.insertAdjacentHTML('beforeend', `<span class="f100-comment-count">${newCount}</span>`);
+                } else if (countEl) countEl.remove();
+                btn.title = `${newCount} comment${newCount !== 1 ? 's' : ''}`;
+            }
+
+            function renderComments() {
+                const currentUser = getCurrentUser();
+                const myName = currentUser?.name || currentUser?.email || '';
+                const comments = Array.isArray(row?.comments) ? row.comments : [];
+
+                const listHtml = comments.length
+                    ? comments.map((c, ci) => {
+                        const isOwn = myName && c.user === myName;
+                        const ownActions = isOwn && canWrite() ? `
+                            <div class="f100-comment-actions">
+                                <button class="f100-comment-edit-btn" data-ci="${ci}" title="Edit">
+                                    <svg viewBox="0 0 14 14" fill="none" stroke="currentColor" stroke-width="1.7"><path d="M2 10.5 9.5 3 11 4.5 3.5 12H2v-1.5Z"/></svg>
+                                </button>
+                                <button class="f100-comment-del-btn" data-ci="${ci}" title="Delete">
+                                    <svg viewBox="0 0 14 14" fill="none" stroke="currentColor" stroke-width="1.7"><path d="M3 4h8M5 4V3h4v1M5.5 6v4M8.5 6v4M4 4l.5 7h5L10 4"/></svg>
+                                </button>
+                            </div>` : '';
+                        return `
+                        <div class="f100-comment-item" data-ci="${ci}">
+                            <div class="f100-comment-meta">
+                                <strong>${esc(c.user || 'Unknown')}</strong>
+                                <span class="f100-comment-time">${formatCommentTime(c.at)}</span>
+                                ${ownActions}
+                            </div>
+                            <div class="f100-comment-text" data-ci="${ci}">${esc(c.text)}</div>
+                        </div>`;
+                    }).join('')
+                    : '<div class="f100-comment-empty">No comments yet.</div>';
+
+                popover.innerHTML = `
+                    <div class="f100-comments-header">
+                        <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.6" style="width:14px;height:14px;flex-shrink:0">
+                            <path d="M2 3a1 1 0 0 1 1-1h10a1 1 0 0 1 1 1v7a1 1 0 0 1-1 1H5l-3 2V3Z"/>
+                        </svg>
+                        Comments
+                        <button class="f100-comments-close" title="Close">✕</button>
+                    </div>
+                    <div class="f100-comments-list">${listHtml}</div>
+                    ${canWrite() ? `
+                    <div class="f100-comments-add">
+                        <textarea class="f100-comment-textarea" rows="2" placeholder="Add a comment…"></textarea>
+                        <button class="btn btn-primary btn-sm f100-comment-submit">Add</button>
+                    </div>` : ''}`;
+
+                popover.querySelector('.f100-comments-close').addEventListener('click', () => popover.remove());
+
+                // Edit comment buttons
+                popover.querySelectorAll('.f100-comment-edit-btn').forEach(editBtn => {
+                    editBtn.addEventListener('click', () => {
+                        const ci = parseInt(editBtn.dataset.ci, 10);
+                        const comments = Array.isArray(row?.comments) ? row.comments : [];
+                        const c = comments[ci];
+                        if (!c) return;
+                        const item = popover.querySelector(`.f100-comment-item[data-ci="${ci}"]`);
+                        const textEl = item?.querySelector('.f100-comment-text');
+                        if (!textEl) return;
+                        const old = c.text;
+                        textEl.innerHTML = `<textarea class="f100-comment-textarea f100-comment-edit-ta" rows="2">${esc(old)}</textarea>
+                            <div style="display:flex;gap:6px;margin-top:6px">
+                                <button class="btn btn-primary btn-sm f100-edit-save-btn">Save</button>
+                                <button class="btn btn-sm f100-edit-cancel-btn">Cancel</button>
+                            </div>`;
+                        textEl.querySelector('.f100-edit-cancel-btn').addEventListener('click', renderComments);
+                        textEl.querySelector('.f100-edit-save-btn').addEventListener('click', async () => {
+                            const newText = textEl.querySelector('.f100-comment-edit-ta').value.trim();
+                            if (!newText) return;
+                            const updated = [...(row.comments || [])];
+                            updated[ci] = { ...updated[ci], text: newText, edited_at: new Date().toISOString() };
+                            markLocalSave();
+                            const { error } = await db.from('f100_plans')
+                                .update({ comments: updated, updated_at: new Date().toISOString() })
+                                .eq('id', planId);
+                            if (error) { showToast('Error updating comment: ' + error.message, 'error'); return; }
+                            row.comments = updated;
+                            updateCommentBadge();
+                            renderComments();
+                        });
+                    });
+                });
+
+                // Delete comment buttons
+                popover.querySelectorAll('.f100-comment-del-btn').forEach(delBtn => {
+                    delBtn.addEventListener('click', async () => {
+                        const ci = parseInt(delBtn.dataset.ci, 10);
+                        if (!confirm('Delete this comment?')) return;
+                        const updated = (row.comments || []).filter((_, i) => i !== ci);
+                        markLocalSave();
+                        const { error } = await db.from('f100_plans')
+                            .update({ comments: updated, updated_at: new Date().toISOString() })
+                            .eq('id', planId);
+                        if (error) { showToast('Error deleting comment: ' + error.message, 'error'); return; }
+                        row.comments = updated;
+                        updateCommentBadge();
+                        renderComments();
+                    });
+                });
+
+                if (canWrite()) {
+                    const ta = popover.querySelector('.f100-comment-textarea');
+                    const submitBtn = popover.querySelector('.f100-comment-submit');
+                    submitBtn.addEventListener('click', async () => {
+                        const text = ta.value.trim();
+                        if (!text) return;
+                        submitBtn.disabled = true;
+                        submitBtn.textContent = 'Saving…';
+                        try {
+                            await saveF100Comment(planId, text);
+                            updateCommentBadge();
+                            renderComments();
+                            const list = popover.querySelector('.f100-comments-list');
+                            if (list) list.scrollTop = list.scrollHeight;
+                        } catch (err) {
+                            showToast('Error saving comment: ' + err.message, 'error');
+                            submitBtn.disabled = false;
+                            submitBtn.textContent = 'Add';
+                        }
+                    });
+                }
+            }
+
+            renderComments();
+            document.body.appendChild(popover);
+            const rect = btn.getBoundingClientRect();
+            const pw = 320;
+            let left = rect.right + window.scrollX - pw;
+            if (left < 8) left = 8;
+            if (left + pw > window.innerWidth - 8) left = window.innerWidth - pw - 8;
+            popover.style.left = left + 'px';
+            popover.style.top = (rect.bottom + window.scrollY + 6) + 'px';
+            popover.style.width = pw + 'px';
+            setTimeout(() => document.addEventListener('click', function handler(ev) {
+                if (!popover.contains(ev.target) && ev.target !== btn) {
+                    popover.remove();
+                    document.removeEventListener('click', handler);
+                }
+            }), 0);
+        });
+    });
+}
+
+// ── Dynamic filter bar ────────────────────────────────────────────
+function _reapplyFilters() {
+    const cat = getVal('filterCategory');
+    const base = cat ? currentData.filter(r => getModuleCategory(r.process_station, r) === cat) : currentData;
+    const filtered = applyTableSearchFilters(base);
+    renderTable(filtered);
+    const rc = document.getElementById('rowCount');
+    if (rc) rc.textContent = filtered.length + ' record' + (filtered.length !== 1 ? 's' : '') + (_tableFilters.length ? ' (filtered)' : '');
+}
+
+function renderTableFilterBar(tableCard) {
+    // Render into the inline placeholder in the table header (always present in DOM)
+    const bar = document.getElementById('tblFilterBarInline');
+    if (!bar) return;
+    const fields = getTableFilterFields();
+
+    // Preserve focus so typing doesn't lose cursor position on re-render
+    const focusedId  = document.activeElement?.dataset?.filterId;
+    const focusedSel = document.activeElement instanceof HTMLInputElement
+        ? document.activeElement.selectionStart : null;
+
+    const chipsHtml = _tableFilters.map(f => `
+        <span class="tbl-filter-chip" data-filter-id="${f.id}">
+            <span class="tbl-filter-chip-label">${esc(f.fieldLabel)}:</span>
+            <input class="tbl-filter-chip-input" type="text" value="${esc(f.value)}"
+                placeholder="contains…" data-filter-id="${f.id}" autocomplete="off" />
+            <button class="tbl-filter-chip-remove" data-filter-id="${f.id}" title="Remove filter">✕</button>
+        </span>`).join('');
+
+    const fieldOptions = fields.map(d =>
+        `<button class="tbl-filter-field-opt" data-field="${d.field}" data-label="${esc(d.label)}">${esc(d.label)}</button>`
+    ).join('');
+
+    bar.innerHTML = `
+        <div class="tbl-filter-chips">${chipsHtml}</div>
+        <div class="tbl-filter-add-wrap">
+            <button class="tbl-filter-add-btn" id="tblAddFilterBtn">+ Add Filter</button>
+            <div class="tbl-filter-field-menu" id="tblFilterMenu" style="display:none">${fieldOptions}</div>
+        </div>`;
+
+    // Restore focus after re-render so typing continues uninterrupted
+    if (focusedId) {
+        const inp = bar.querySelector(`.tbl-filter-chip-input[data-filter-id="${focusedId}"]`);
+        if (inp) {
+            inp.focus();
+            if (focusedSel !== null) try { inp.setSelectionRange(focusedSel, focusedSel); } catch {}
+        }
+    }
+
+    // Wire chip inputs — live filter, focus-safe
+    bar.querySelectorAll('.tbl-filter-chip-input').forEach(inp => {
+        inp.addEventListener('input', () => {
+            const f = _tableFilters.find(x => String(x.id) === inp.dataset.filterId);
+            if (f) { f.value = inp.value; _reapplyFilters(); }
+        });
+    });
+
+    // Wire chip remove buttons
+    bar.querySelectorAll('.tbl-filter-chip-remove').forEach(btn => {
+        btn.addEventListener('click', () => {
+            _tableFilters = _tableFilters.filter(x => String(x.id) !== btn.dataset.filterId);
+            _reapplyFilters();
+        });
+    });
+
+    // Wire add-filter button / field picker
+    const addBtn = bar.querySelector('#tblAddFilterBtn');
+    const menu   = bar.querySelector('#tblFilterMenu');
+    addBtn?.addEventListener('click', e => {
+        e.stopPropagation();
+        menu.style.display = menu.style.display === 'none' ? 'flex' : 'none';
+    });
+    bar.querySelectorAll('.tbl-filter-field-opt').forEach(opt => {
+        opt.addEventListener('click', () => {
+            menu.style.display = 'none';
+            _tableFilters.push({ id: ++_filterSeq, field: opt.dataset.field, fieldLabel: opt.dataset.label, value: '' });
+            _reapplyFilters();
+            setTimeout(() => {
+                bar.querySelector(`.tbl-filter-chip-input[data-filter-id="${_filterSeq}"]`)?.focus();
+            }, 50);
+        });
+    });
+
+    // Close menu on outside click
+    setTimeout(() => document.addEventListener('click', function h(ev) {
+        if (!menu?.contains(ev.target) && ev.target !== addBtn) {
+            if (menu) menu.style.display = 'none';
+            document.removeEventListener('click', h);
+        }
+    }), 0);
 }
 
 function renderTable(data) {
     if (isF100KD2Module()) { renderF100Table(data); return; }
 
+    // Remove F100 view bar and class if present (switched away from F100)
+    document.getElementById('f100TableViewBar')?.remove();
+    document.getElementById('mainTable')?.classList.remove('f100-table');
+
     // Restore F200 table header if it was replaced by F100 headers
     const thead = document.querySelector('#mainTable thead');
-    if (thead && !thead.querySelector('th[data-f200]')) {
-        const cols = ['#', 'Vehicle', 'Unit', 'Station / Process', 'Code / Work Center',
-            'Week', 'Planned Start', 'Planned End', 'Actual Start', 'Completed On',
-            'Status', 'Delay (days)', 'Action'];
-        if (thead.querySelectorAll('th').length !== cols.length) {
-            thead.innerHTML = `<tr>${cols.map(c => `<th>${c}</th>`).join('')}</tr>`;
-        }
+    if (thead) {
+        const cols = ['Vehicle', 'Unit', 'Station / Process', 'Code', 'Week',
+            'Planned Start', 'Planned End', 'Actual Start', 'Completed On',
+            'Status', 'Delay', 'Comments'];
+        thead.innerHTML = `<tr>${cols.map(c => `<th>${c}</th>`).join('')}</tr>`;
     }
 
     const tbody = document.getElementById('tableBody');
     document.getElementById('rowCount').textContent = `${data.length} record${data.length !== 1 ? 's' : ''}`;
 
+    // ── View tab bar (KD2 only) ───────────────────────────────────
+    const tableCard = document.querySelector('.table-card');
+    let viewBar = document.getElementById('kd2TableViewBar');
+    if (isKD2Module()) {
+        if (tableCard && !viewBar) {
+            viewBar = document.createElement('div');
+            viewBar.id = 'kd2TableViewBar';
+            viewBar.className = 'f100-table-view-bar';
+            viewBar.innerHTML = `
+                <span class="f100-view-label">Group by:</span>
+                <button class="f100-view-btn${_kd2TableView === 'battalion' ? ' f100-view-btn-active' : ''}" data-view="battalion">Battalion</button>
+                <button class="f100-view-btn${_kd2TableView === 'vehicle'   ? ' f100-view-btn-active' : ''}" data-view="vehicle">Vehicle</button>
+                <button class="f100-view-btn${_kd2TableView === 'unit'      ? ' f100-view-btn-active' : ''}" data-view="unit">Unit</button>
+                <button class="f100-view-btn${_kd2TableView === 'station'   ? ' f100-view-btn-active' : ''}" data-view="station">Station</button>`;
+            tableCard.insertBefore(viewBar, tableCard.firstChild);
+            viewBar.querySelectorAll('.f100-view-btn').forEach(btn => {
+                btn.addEventListener('click', () => {
+                    _kd2TableView = btn.dataset.view;
+                    const _cat = getVal('filterCategory');
+                    const _base = _cat ? currentData.filter(r => getModuleCategory(r.process_station, r) === _cat) : currentData;
+                    renderTable(applyTableSearchFilters(_base));
+                });
+            });
+        } else if (viewBar) {
+            viewBar.querySelectorAll('.f100-view-btn').forEach(btn => {
+                btn.classList.toggle('f100-view-btn-active', btn.dataset.view === _kd2TableView);
+            });
+        }
+
+        // ── Dynamic filter bar ────────────────────────────────────
+        if (tableCard) renderTableFilterBar(tableCard);
+    } else {
+        viewBar?.remove();
+        const _inlineBar = document.getElementById('tblFilterBarInline');
+        if (_inlineBar) _inlineBar.innerHTML = '';
+        _tableFilters = [];
+    }
+
     if (!data.length) {
         tbody.innerHTML = `
       <tr>
-        <td colspan="13" class="table-empty">
+        <td colspan="12" class="table-empty">
           <div class="empty-state">
             <svg viewBox="0 0 48 48" fill="none" stroke="currentColor" stroke-width="1.5"><rect x="6" y="6" width="36" height="36" rx="4"/><path d="M16 24h16M24 16v16"/></svg>
             <p>No records match the current filters.</p>
@@ -1459,276 +2446,345 @@ function renderTable(data) {
         return;
     }
 
-    tbody.innerHTML = data.map((row, idx) => {
+    // ── Completion maps for group progress bars ───────────────────
+    const _vehComp = {}, _unitComp = {}, _statComp = {};
+    const _batComp = {};
+    if (isKD2Module()) {
+        data.forEach(r => {
+            const s = calculateStatus(r);
+            const done = s === 'Completed' || s === 'Late Completion';
+            if (!_vehComp[r.vehicle]) _vehComp[r.vehicle] = { done: 0, total: 0 };
+            _vehComp[r.vehicle].total++; if (done) _vehComp[r.vehicle].done++;
+            const uk = `${r.vehicle}||${r.vehicle_no}`;
+            if (!_unitComp[uk]) _unitComp[uk] = { done: 0, total: 0 };
+            _unitComp[uk].total++; if (done) _unitComp[uk].done++;
+            const sk = r.process_station;
+            if (!_statComp[sk]) _statComp[sk] = { done: 0, total: 0 };
+            _statComp[sk].total++; if (done) _statComp[sk].done++;
+            const bk = r.battalion_code || '—';
+            if (!_batComp[bk]) _batComp[bk] = { done: 0, total: 0 };
+            _batComp[bk].total++; if (done) _batComp[bk].done++;
+        });
+    }
+
+    // ── Sort data by active view ──────────────────────────────────
+    let sorted = data;
+    if (isKD2Module()) {
+        if (_kd2TableView === 'station') {
+            sorted = data.slice().sort((a, b) => {
+                const sc = String(a.process_station || '').localeCompare(String(b.process_station || ''));
+                if (sc !== 0) return sc;
+                const vc = vehicleSort(a.vehicle, b.vehicle);
+                if (vc !== 0) return vc;
+                return naturalSort(a.vehicle_no, b.vehicle_no);
+            });
+        } else if (_kd2TableView === 'unit') {
+            sorted = data.slice().sort((a, b) => {
+                const bc = String(a.battalion_code || '').localeCompare(String(b.battalion_code || ''), undefined, { numeric: true });
+                if (bc !== 0) return bc;
+                const vc = vehicleSort(a.vehicle, b.vehicle);
+                if (vc !== 0) return vc;
+                return naturalSort(a.vehicle_no, b.vehicle_no);
+            });
+        } else if (_kd2TableView === 'battalion') {
+            sorted = data.slice().sort((a, b) => {
+                const bc = String(a.battalion_code || '').localeCompare(String(b.battalion_code || ''), undefined, { numeric: true });
+                if (bc !== 0) return bc;
+                const vc = vehicleSort(a.vehicle, b.vehicle);
+                if (vc !== 0) return vc;
+                return naturalSort(a.vehicle_no, b.vehicle_no);
+            });
+        } else {
+            sorted = data.slice().sort((a, b) => {
+                const vc = vehicleSort(a.vehicle, b.vehicle);
+                if (vc !== 0) return vc;
+                const bc = String(a.battalion_code || '').localeCompare(String(b.battalion_code || ''), undefined, { numeric: true });
+                if (bc !== 0) return bc;
+                return naturalSort(a.vehicle_no, b.vehicle_no);
+            });
+        }
+    }
+
+    // ── Build HTML with group separator rows ──────────────────────
+    function _mkPctBar(comp) {
+        if (!comp || !comp.total) return '';
+        const pct = Math.round((comp.done / comp.total) * 100);
+        return `<div class="f100-grp-pct-wrap"><div class="f100-grp-pct-bar" style="width:${pct}%"></div></div><span class="f100-grp-pct-text">${comp.done}/${comp.total} (${pct}%)</span>`;
+    }
+
+    let html = '';
+    let prevGroupKey = null;
+
+    sorted.forEach(row => {
+        let groupKey, groupHtml;
+        if (isKD2Module()) {
+            if (_kd2TableView === 'vehicle') {
+                groupKey = row.vehicle;
+                if (groupKey !== prevGroupKey) {
+                    groupHtml = `<tr class="f100-tbl-group-row f100-tbl-group-vehicle"><td colspan="12">
+                        <span class="f100-tbl-veh-badge">${esc(groupKey)}</span>${_mkPctBar(_vehComp[groupKey])}
+                    </td></tr>`;
+                }
+            } else if (_kd2TableView === 'unit') {
+                groupKey = `${row.vehicle}||${row.vehicle_no}`;
+                if (groupKey !== prevGroupKey) {
+                    groupHtml = `<tr class="f100-tbl-group-row f100-tbl-group-vehicle"><td colspan="12">
+                        <span class="f100-tbl-veh-badge">${esc(row.vehicle)}</span>
+                        <strong>${esc(row.vehicle_no || '—')}</strong>
+                        ${row.battalion_code ? `<span class="f100-tbl-bat-tag">${esc(row.battalion_code)}</span>` : ''}
+                        ${_mkPctBar(_unitComp[groupKey])}
+                    </td></tr>`;
+                }
+            } else if (_kd2TableView === 'battalion') {
+                groupKey = row.battalion_code || '—';
+                if (groupKey !== prevGroupKey) {
+                    groupHtml = `<tr class="f100-tbl-group-row f100-tbl-group-vehicle"><td colspan="12">
+                        <svg style="width:13px;height:13px;flex-shrink:0;opacity:.7" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.8"><rect x="2" y="3" width="12" height="10" rx="1.5"/><path d="M6 9h4M4 6h8"/></svg>
+                        <span class="f100-tbl-bat-tag" style="font-size:.78rem;font-weight:700">${esc(groupKey)}</span>
+                        ${_mkPctBar(_batComp[groupKey])}
+                    </td></tr>`;
+                }
+            } else if (_kd2TableView === 'station') {
+                groupKey = row.process_station;
+                if (groupKey !== prevGroupKey) {
+                    groupHtml = `<tr class="f100-tbl-group-row f100-tbl-group-part"><td colspan="12">
+                        <strong>${esc(groupKey || '—')}</strong>${_mkPctBar(_statComp[groupKey])}
+                    </td></tr>`;
+                }
+            }
+        }
+
+        if (groupKey !== prevGroupKey) {
+            if (groupHtml) html += groupHtml;
+            prevGroupKey = groupKey;
+        }
         const status = calculateStatus(row);
         const delay = delayDays(row);
         const badgeCls = `badge badge-${status.toLowerCase().replace(' ', '-').replace('late-completion', 'late')}`;
         const compDate = row.progress?.completion_date || null;
         const actualStart = row.progress?.actual_start_date || '';
-        const isDone = status === 'Completed' || status === 'Late Completion';
 
-        // ── Delay label ───────────────────────────────────────────────
         let delayHtml;
         if (delay > 0 && (status === 'Late Completion' || status === 'Overdue')) {
             delayHtml = `<span class="delay-positive">+${delay}d</span>`;
         } else if (delay > 0 && status === 'In Progress') {
             delayHtml = `<span class="delay-positive" title="Started ${delay}d late">+${delay}d start</span>`;
-        } else if (status === 'Completed') {
-            delayHtml = `<span class="delay-zero">On Time</span>`;
+        } else if (status === 'Completed' || status === 'Late Completion') {
+            delayHtml = delay === 0 ? `<span class="delay-zero">On Time</span>` : `<span class="delay-positive">+${delay}d</span>`;
         } else {
             delayHtml = `<span class="delay-none">—</span>`;
         }
 
-        // ── Actual Start — always an editable inline date input ───────
-        const startInputHtml = `
-      <div class="inline-date-wrap">
-        <input type="date"
-          class="inline-date-input"
-          data-plan-id="${row.id}"
-          value="${actualStart}"
-          title="Actual start date" />
-        ${actualStart
-                ? `<button class="inline-icon-btn inline-start-clear" data-plan-id="${row.id}" title="Clear start date">✕</button>`
-                : ''}
-      </div>`;
+        // Actual Start — inline input (same as F100)
+        const startInputHtml = `<div class="inline-date-wrap">
+            <input type="date" class="inline-date-input" data-plan-id="${row.id}" value="${actualStart}" title="Actual start date" />
+            ${actualStart ? `<button class="inline-icon-btn inline-start-clear" data-plan-id="${row.id}" title="Clear">✕</button>` : ''}
+        </div>`;
 
-        // ── Completed On — text display + edit pencil + clear ✕ ──────
-        // When a date is set: show formatted date, edit button, clear button.
-        // The edit button swaps the cell contents to a live date-input on click.
-        const compCellHtml = compDate
-            ? `<div class="inline-date-wrap" id="comp-wrap-${row.id}">
-           <span class="inline-date-done" id="comp-display-${row.id}">${formatDate(compDate)}</span>
-           <button class="inline-icon-btn inline-comp-edit"
-             data-plan-id="${row.id}"
-             data-current="${compDate}"
-             title="Edit completion date">✎</button>
-           <button class="inline-icon-btn inline-comp-clear"
-             data-plan-id="${row.id}"
-             title="Clear completion date">✕</button>
-         </div>`
-            : `<div class="inline-date-wrap" id="comp-wrap-${row.id}">
-           <span class="inline-date-none">—</span>
-         </div>`;
+        // Completed On — inline input (same pattern as F100 actual end)
+        const endInputHtml = `<div class="inline-date-wrap">
+            <input type="date" class="inline-end-input" data-plan-id="${row.id}" value="${compDate || ''}" title="Completion date" />
+            ${compDate ? `<button class="inline-icon-btn inline-end-clear" data-plan-id="${row.id}" title="Clear">✕</button>` : ''}
+        </div>`;
 
-        // ── Completion note icon ─────────────────────────────────────
-        const note = row.progress?.notes || '';
-        const noteBtn = note
-            ? `<button class="btn-note-icon" data-plan-id="${row.id}" title="${esc(note)}">
-           <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.7">
-             <rect x="2" y="2" width="12" height="12" rx="2"/>
-             <path d="M5 6h6M5 8.5h6M5 11h4"/>
-           </svg>
-         </button>`
-            : '';
+        // Comments button — identical to F100 pattern
+        const comments = Array.isArray(row.comments) ? row.comments : [];
+        const commentBtn = `<button class="btn-f100-comment btn-kd2-comment" data-plan-id="${row.id}" title="${comments.length} comment${comments.length !== 1 ? 's' : ''}">
+            <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.6"><path d="M2 3a1 1 0 0 1 1-1h10a1 1 0 0 1 1 1v7a1 1 0 0 1-1 1H5l-3 2V3Z"/></svg>
+            ${comments.length ? `<span class="f100-comment-count">${comments.length}</span>` : ''}
+        </button>`;
 
-        // ── Action — Mark Complete button for non-done rows ───────────
-        const kd2EditBtn = isKD2Module()
-            ? `<button class="btn btn-ghost btn-sm btn-kd2-edit-plan" data-plan-id="${row.id}">Edit</button>`
-            : '';
-        const actionHtml = isDone
-            ? `<div class="action-cell">${noteBtn}${kd2EditBtn}<button class="btn btn-done" disabled>✓ Done</button></div>`
-            : `<div class="action-cell">${noteBtn}${kd2EditBtn}<button class="btn btn-action" data-plan-id="${row.id}" data-idx="${idx}">Mark Complete</button></div>`;
-
-        return `
-      <tr>
-        <td class="mono">${idx + 1}</td>
+        html += `
+      <tr data-plan-id="${row.id}">
         <td><strong>${esc(row.vehicle)}</strong></td>
-        <td class="mono">${esc(row.vehicle_no)}${getRowUnitMeta(row)}</td>
+        <td class="unit-cell">${[
+            row.battalion_code ? `<span class="f100-tbl-bat-tag">${esc(row.battalion_code)}</span>` : '',
+            `<span class="unit-main-label">${esc(row.vehicle_no)}</span>`,
+            getUnitCode(row.vehicle, row.vehicle_no) ? `<span class="unit-code-badge">${esc(getUnitCode(row.vehicle, row.vehicle_no))}</span>` : '',
+        ].filter(Boolean).join('')}</td>
         <td>${esc(row.process_station)}</td>
         <td class="mono station-code-cell">${esc(getRowCode(row))}</td>
         <td class="mono">${esc(row.week || '—')}</td>
         <td class="mono">${formatDate(row.start_date)}</td>
         <td class="mono">${formatDate(row.end_date)}</td>
         <td>${startInputHtml}</td>
-        <td>${compCellHtml}</td>
+        <td>${endInputHtml}</td>
         <td><span class="${badgeCls}">${status}</span></td>
         <td>${delayHtml}</td>
-        <td>${actionHtml}</td>
+        <td class="f100-comment-cell">${commentBtn}</td>
       </tr>`;
-    }).join('');
+    });
 
-    // ── Actual Start: save on change ──────────────────────────────
+    tbody.innerHTML = html;
+
+    // ── Viewer mode: disable date inputs ─────────────────────────
+    if (!canWrite()) {
+        tbody.querySelectorAll('.inline-date-input, .inline-end-input').forEach(el => {
+            el.disabled = true;
+        });
+    }
+
+    // ── Actual Start ─────────────────────────────────────────────
     tbody.querySelectorAll('.inline-date-input').forEach(input => {
-        input.addEventListener('change', () =>
-            saveActualStart(parseInt(input.dataset.planId), input.value)
-        );
+        input.addEventListener('change', () => saveActualStart(input.dataset.planId, input.value));
     });
     tbody.querySelectorAll('.inline-start-clear').forEach(btn => {
-        btn.addEventListener('click', () =>
-            saveActualStart(parseInt(btn.dataset.planId), '')
-        );
+        btn.addEventListener('click', () => saveActualStart(btn.dataset.planId, ''));
     });
 
-    // ── Completed On: edit pencil → swap display for live input ──
-    tbody.querySelectorAll('.inline-comp-edit').forEach(btn => {
-        btn.addEventListener('click', () => {
-            const planId = parseInt(btn.dataset.planId);
-            const current = btn.dataset.current;
-            const wrap = document.getElementById(`comp-wrap-${planId}`);
-            if (!wrap) return;
-
-            // Replace wrap contents with an active date input
-            wrap.innerHTML = `
-        <input type="date"
-          class="inline-date-input inline-comp-active"
-          data-plan-id="${planId}"
-          value="${current}"
-          title="Edit completion date" />
-        <button class="inline-icon-btn inline-comp-cancel"
-          data-plan-id="${planId}"
-          data-original="${current}"
-          title="Cancel">✕</button>`;
-
-            const newInput = wrap.querySelector('.inline-comp-active');
-            newInput.focus();
-
-            newInput.addEventListener('change', () =>
-                saveCompletionDate(planId, newInput.value)
-            );
-
-            // Cancel restores original display without saving
-            wrap.querySelector('.inline-comp-cancel').addEventListener('click', () =>
-                saveCompletionDate(planId, current, /* silent */ true)
-            );
-        });
+    // ── Completed On (inline end input) ───────────────────────────
+    tbody.querySelectorAll('.inline-end-input').forEach(input => {
+        input.addEventListener('change', () => saveCompletionDate(input.dataset.planId, input.value));
+    });
+    tbody.querySelectorAll('.inline-end-clear').forEach(btn => {
+        btn.addEventListener('click', () => saveCompletionDate(btn.dataset.planId, ''));
     });
 
-    // ── Completed On: clear button ────────────────────────────────
-    tbody.querySelectorAll('.inline-comp-clear').forEach(btn => {
-        btn.addEventListener('click', () =>
-            saveCompletionDate(parseInt(btn.dataset.planId), '')
-        );
-    });
-
-    // ── Note icon — show popover on click ───────────────────────
-    tbody.querySelectorAll('.btn-note-icon').forEach(btn => {
+    // ── Edit planned dates (pencil icon) ──────────────────────────
+    // ── Comments popover — full F100-style threaded comments ──────
+    tbody.querySelectorAll('.btn-kd2-comment').forEach(btn => {
         btn.addEventListener('click', (e) => {
             e.stopPropagation();
-            document.querySelectorAll('.note-popover').forEach(p => p.remove());
-
-            const planId = parseInt(btn.dataset.planId);
-            const note = btn.getAttribute('title');
-
+            document.querySelectorAll('.f100-comments-popover').forEach(p => p.remove());
+            const planId = btn.dataset.planId;
+            const row = currentData.find(t => String(t.id) === String(planId));
             const popover = document.createElement('div');
-            popover.className = 'note-popover';
-            popover.dataset.planId = planId;
+            popover.className = 'f100-comments-popover';
 
-            function renderView() {
-                const adminBtns = isAdmin() ? `
-          <button class="note-action-btn note-edit-btn" title="Edit note">
-            <svg viewBox="0 0 14 14" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M9.5 2.5l2 2L4 12H2v-2L9.5 2.5z"/></svg>
-          </button>
-          <button class="note-action-btn note-delete-btn" title="Delete note">
-            <svg viewBox="0 0 14 14" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M2 3.5h10M5 3.5V2h4v1.5M5.5 6v5M8.5 6v5M3 3.5l.7 8h6.6l.7-8"/></svg>
-          </button>` : '';
+            function formatCommentTime(iso) {
+                try {
+                    const d = new Date(iso);
+                    return d.toLocaleDateString(undefined, { day: '2-digit', month: 'short', year: 'numeric' })
+                        + ' ' + d.toLocaleTimeString(undefined, { hour: '2-digit', minute: '2-digit' });
+                } catch { return iso || ''; }
+            }
+
+            function updateCommentBadge() {
+                const newCount = (row?.comments || []).length;
+                let countEl = btn.querySelector('.f100-comment-count');
+                if (newCount > 0) {
+                    if (countEl) countEl.textContent = newCount;
+                    else btn.insertAdjacentHTML('beforeend', `<span class="f100-comment-count">${newCount}</span>`);
+                } else if (countEl) countEl.remove();
+                btn.title = `${newCount} comment${newCount !== 1 ? 's' : ''}`;
+            }
+
+            function renderComments() {
+                const currentUser = getCurrentUser();
+                const myName = currentUser?.name || currentUser?.email || '';
+                const comments = Array.isArray(row?.comments) ? row.comments : [];
+                const listHtml = comments.length
+                    ? comments.map((c, ci) => {
+                        const isOwn = myName && c.user === myName;
+                        const ownActions = isOwn && canWrite() ? `
+                            <div class="f100-comment-actions">
+                                <button class="f100-comment-edit-btn" data-ci="${ci}" title="Edit"><svg viewBox="0 0 14 14" fill="none" stroke="currentColor" stroke-width="1.7"><path d="M2 10.5 9.5 3 11 4.5 3.5 12H2v-1.5Z"/></svg></button>
+                                <button class="f100-comment-del-btn" data-ci="${ci}" title="Delete"><svg viewBox="0 0 14 14" fill="none" stroke="currentColor" stroke-width="1.7"><path d="M3 4h8M5 4V3h4v1M5.5 6v4M8.5 6v4M4 4l.5 7h5L10 4"/></svg></button>
+                            </div>` : '';
+                        return `<div class="f100-comment-item" data-ci="${ci}">
+                            <div class="f100-comment-meta">
+                                <strong>${esc(c.user || 'Unknown')}</strong>
+                                <span class="f100-comment-time">${formatCommentTime(c.at)}</span>
+                                ${ownActions}
+                            </div>
+                            <div class="f100-comment-text" data-ci="${ci}">${esc(c.text)}</div>
+                        </div>`;
+                    }).join('')
+                    : '<div class="f100-comment-empty">No comments yet.</div>';
 
                 popover.innerHTML = `
-          <div class="note-popover-header">
-            <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.7">
-              <rect x="2" y="2" width="12" height="12" rx="2"/>
-              <path d="M5 6h6M5 8.5h6M5 11h4"/>
-            </svg>
-            Completion Note
-            <div class="note-popover-actions">
-              ${adminBtns}
-              <button class="note-popover-close" title="Close">✕</button>
-            </div>
-          </div>
-          <div class="note-popover-body">${esc(popover._currentNote ?? note)}</div>`;
+                    <div class="f100-comments-header">
+                        <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.6" style="width:14px;height:14px;flex-shrink:0"><path d="M2 3a1 1 0 0 1 1-1h10a1 1 0 0 1 1 1v7a1 1 0 0 1-1 1H5l-3 2V3Z"/></svg>
+                        Comments
+                        <button class="f100-comments-close" title="Close">✕</button>
+                    </div>
+                    <div class="f100-comments-list">${listHtml}</div>
+                    ${canWrite() ? `<div class="f100-comments-add">
+                        <textarea class="f100-comment-textarea" rows="2" placeholder="Add a comment…"></textarea>
+                        <button class="btn btn-primary btn-sm f100-comment-submit">Add</button>
+                    </div>` : ''}`;
 
-                popover.querySelector('.note-popover-close').addEventListener('click', () => popover.remove());
+                popover.querySelector('.f100-comments-close').addEventListener('click', () => popover.remove());
 
-                if (isAdmin()) {
-                    popover.querySelector('.note-edit-btn').addEventListener('click', (e) => {
-                        e.stopPropagation();
-                        renderEdit();
+                popover.querySelectorAll('.f100-comment-edit-btn').forEach(editBtn => {
+                    editBtn.addEventListener('click', () => {
+                        const ci = parseInt(editBtn.dataset.ci, 10);
+                        const c = (row?.comments || [])[ci];
+                        if (!c) return;
+                        const item = popover.querySelector(`.f100-comment-item[data-ci="${ci}"]`);
+                        const textEl = item?.querySelector('.f100-comment-text');
+                        if (!textEl) return;
+                        textEl.innerHTML = `<textarea class="f100-comment-textarea f100-comment-edit-ta" rows="2">${esc(c.text)}</textarea>
+                            <div style="display:flex;gap:6px;margin-top:6px">
+                                <button class="btn btn-primary btn-sm f100-edit-save-btn">Save</button>
+                                <button class="btn btn-sm f100-edit-cancel-btn">Cancel</button>
+                            </div>`;
+                        textEl.querySelector('.f100-edit-cancel-btn').addEventListener('click', renderComments);
+                        textEl.querySelector('.f100-edit-save-btn').addEventListener('click', async () => {
+                            const newText = textEl.querySelector('.f100-comment-edit-ta').value.trim();
+                            if (!newText) return;
+                            const updated = [...(row.comments || [])];
+                            updated[ci] = { ...updated[ci], text: newText, edited_at: new Date().toISOString() };
+                            markLocalSave();
+                            const { error } = await db.from('kd2_plan').update({ comments: updated }).eq('id', planId);
+                            if (error) { showToast('Error updating comment: ' + error.message, 'error'); return; }
+                            row.comments = updated;
+                            updateCommentBadge();
+                            renderComments();
+                        });
                     });
+                });
 
-                    popover.querySelector('.note-delete-btn').addEventListener('click', async (e) => {
-                        e.stopPropagation();
-                        if (!confirm('Delete this completion note?')) return;
-                        await saveNoteOnly(planId, '');
-                        btn.setAttribute('title', '');
-                        btn.closest('.action-cell').querySelector('.btn-note-icon')?.remove();
-                        popover.remove();
+                popover.querySelectorAll('.f100-comment-del-btn').forEach(delBtn => {
+                    delBtn.addEventListener('click', async () => {
+                        const ci = parseInt(delBtn.dataset.ci, 10);
+                        if (!confirm('Delete this comment?')) return;
+                        const updated = (row.comments || []).filter((_, i) => i !== ci);
+                        markLocalSave();
+                        const { error } = await db.from('kd2_plan').update({ comments: updated }).eq('id', planId);
+                        if (error) { showToast('Error deleting comment: ' + error.message, 'error'); return; }
+                        row.comments = updated;
+                        updateCommentBadge();
+                        renderComments();
+                    });
+                });
+
+                if (canWrite()) {
+                    const ta = popover.querySelector('.f100-comment-textarea');
+                    const submitBtn = popover.querySelector('.f100-comment-submit');
+                    submitBtn.addEventListener('click', async () => {
+                        const text = ta.value.trim();
+                        if (!text) return;
+                        submitBtn.disabled = true;
+                        submitBtn.textContent = 'Saving…';
+                        try {
+                            await saveKd2Comment(planId, text);
+                            updateCommentBadge();
+                            renderComments();
+                            const list = popover.querySelector('.f100-comments-list');
+                            if (list) list.scrollTop = list.scrollHeight;
+                        } catch (err) {
+                            showToast('Error saving comment: ' + err.message, 'error');
+                            submitBtn.disabled = false;
+                            submitBtn.textContent = 'Add';
+                        }
                     });
                 }
             }
 
-            function renderEdit() {
-                const current = popover._currentNote ?? note;
-                popover.innerHTML = `
-          <div class="note-popover-header">
-            <svg viewBox="0 0 14 14" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M9.5 2.5l2 2L4 12H2v-2L9.5 2.5z"/></svg>
-            Edit Note
-            <button class="note-popover-close" title="Cancel">✕</button>
-          </div>
-          <div class="note-popover-edit-body">
-            <textarea class="note-edit-textarea" rows="4" placeholder="Completion note…">${esc(current)}</textarea>
-            <div class="note-edit-footer">
-              <button class="btn btn-primary btn-sm note-save-btn">Save</button>
-              <button class="btn btn-ghost btn-sm note-cancel-btn">Cancel</button>
-            </div>
-          </div>`;
-
-                const ta = popover.querySelector('.note-edit-textarea');
-                ta.focus();
-                ta.setSelectionRange(ta.value.length, ta.value.length);
-
-                popover.querySelector('.note-popover-close').addEventListener('click', () => {
-                    renderView();
-                });
-                popover.querySelector('.note-cancel-btn').addEventListener('click', () => {
-                    renderView();
-                });
-                popover.querySelector('.note-save-btn').addEventListener('click', async () => {
-                    const newNote = ta.value.trim();
-                    await saveNoteOnly(planId, newNote);
-                    popover._currentNote = newNote;
-                    btn.setAttribute('title', newNote);
-                    // If note was cleared, remove the icon button entirely and close
-                    if (!newNote) {
-                        btn.closest('.action-cell')?.querySelector('.btn-note-icon')?.remove();
-                        popover.remove();
-                        return;
-                    }
-                    renderView();
-                });
-            }
-
-            popover._currentNote = note;
-            renderView();
-
+            renderComments();
             document.body.appendChild(popover);
-
-            // Position below the button
             const rect = btn.getBoundingClientRect();
-            const pw = 280;
-            let left = rect.left + window.scrollX;
-            if (left + pw > window.innerWidth - 16) left = window.innerWidth - pw - 16;
+            const pw = 320;
+            let left = rect.right + window.scrollX - pw;
+            if (left < 8) left = 8;
+            if (left + pw > window.innerWidth - 8) left = window.innerWidth - pw - 8;
             popover.style.left = left + 'px';
             popover.style.top = (rect.bottom + window.scrollY + 6) + 'px';
             popover.style.width = pw + 'px';
-
             setTimeout(() => document.addEventListener('click', function handler(ev) {
-                if (!popover.contains(ev.target)) {
-                    popover.remove();
-                    document.removeEventListener('click', handler);
-                }
+                if (!popover.contains(ev.target) && ev.target !== btn) { popover.remove(); document.removeEventListener('click', handler); }
             }), 0);
-        });
-    });
-
-    // ── Mark Complete button ──────────────────────────────────────
-    tbody.querySelectorAll('.btn-action').forEach(btn => {
-        btn.addEventListener('click', () => openCompleteModal(
-            parseInt(btn.dataset.planId),
-            parseInt(btn.dataset.idx)
-        ));
-    });
-    tbody.querySelectorAll('.btn-kd2-edit-plan').forEach(btn => {
-        btn.addEventListener('click', () => {
-            getModuleRuntime()?.openPlanEdit?.(parseInt(btn.dataset.planId, 10));
         });
     });
 }
@@ -1984,6 +3040,8 @@ function buildVpxRows(data) {
                 vehicle: task.vehicle,
                 vehicle_no: task.vehicle_no,
                 stations: {},
+                done: 0,
+                total: 0,
             };
         }
         const stationKey = getVpxTaskStationKey(task);
@@ -1991,6 +3049,10 @@ function buildVpxRows(data) {
         if (!existing || task.end_date > existing.end_date) {
             rowMap[rowKey].stations[stationKey] = task;
         }
+        // Track completion for progress bar
+        rowMap[rowKey].total++;
+        const _s = calculateStatus(task);
+        if (_s === 'Completed' || _s === 'Late Completion') rowMap[rowKey].done++;
     });
 
     return Object.values(rowMap).sort((a, b) => {
@@ -2024,7 +3086,7 @@ function getVpxRowPrimaryLabel(row) {
 
 function getVpxRowSecondaryLabel(row) {
     const unitCode = getUnitCode(row.vehicle, row.vehicle_no);
-    if (isKD2Module()) return [row.battalion_code || '', unitCode || ''].filter(Boolean).join(' · ');
+    if (isKD2Module()) return unitCode || '';
     return unitCode;
 }
 
@@ -2074,31 +3136,38 @@ function buildF100VpxColumns(data) {
 function buildF100VpxRows(data) {
     const f100mode = document.getElementById('f100Mode')?.value || 'gun';
     const rowMap = {};
+    // Both modes: one row per vehicle unit (battalion_code||vehicle_type||serial_number)
+    // The mode only changes what PARTS/COLUMNS are shown, not the row granularity
     data.forEach(task => {
-        const rowKey = f100mode === 'gun'
-            ? (task.battalion_code || '—')
-            : [task.battalion_code || '—', task.vehicle_type || '—', task.serial_number ?? '—'].join('||');
+        const rowKey = [task.battalion_code || '—', task.vehicle_type || '—', task.serial_number ?? '—'].join('||');
         if (!rowMap[rowKey]) {
             rowMap[rowKey] = {
                 battalion_code: task.battalion_code || '—',
                 vehicle_type:   task.vehicle_type   || null,
                 serial_number:  task.serial_number  ?? null,
-                plans: {},  // `${part_id}||${process_sort}` → task
+                unit_label:     task.unit_label     || '',
+                unit_code:      task.unit_code      || '',
+                unit_name:      task.unit_name      || '',
+                done: 0, total: 0,
+                plans: {},
             };
         }
         const planKey = `${task.part_id}||${task.process_sort}`;
-        if (!rowMap[rowKey].plans[planKey]) rowMap[rowKey].plans[planKey] = task;
+        if (!rowMap[rowKey].plans[planKey]) {
+            rowMap[rowKey].plans[planKey] = task;
+            rowMap[rowKey].total++;
+            const _s = calculateStatus(task);
+            if (_s === 'Completed' || _s === 'Late Completion') rowMap[rowKey].done++;
+        }
     });
 
+    // Sort by battalion → vehicle type → serial number
     return Object.values(rowMap).sort((a, b) => {
         const bc = (a.battalion_code || '').localeCompare(b.battalion_code || '', undefined, { numeric: true });
         if (bc !== 0) return bc;
-        if (f100mode === 'vehicle') {
-            const vc = vehicleSort(a.vehicle_type, b.vehicle_type);
-            if (vc !== 0) return vc;
-            return (a.serial_number ?? 0) - (b.serial_number ?? 0);
-        }
-        return 0;
+        const vc = vehicleSort(a.vehicle_type, b.vehicle_type);
+        if (vc !== 0) return vc;
+        return (a.serial_number ?? 0) - (b.serial_number ?? 0);
     });
 }
 
@@ -2141,8 +3210,7 @@ function renderF100VPX(data) {
     let html = '<table class="vpx-table" role="grid"><thead>';
 
     // Header row 1: part group names
-    const rowHeaderLabel = f100mode === 'gun' ? 'Battalion' : 'Battalion · Vehicle · Serial';
-    html += `<tr class="vpx-group-row"><th class="vpx-th-vehicle" rowspan="2">${rowHeaderLabel}</th>`;
+    html += `<tr class="vpx-group-row"><th class="vpx-th-vehicle" rowspan="2">Vehicle Unit</th>`;
     let gPartIdx = 0;
     groups.forEach(g => {
         const partId = cols.find(c => c.group === g.label)?.part_id;
@@ -2152,18 +3220,17 @@ function renderF100VPX(data) {
     });
     html += '</tr><tr class="vpx-col-row">';
 
-    // Header row 2: step codes
+    // Header row 2: step code + process name
     cols.forEach((col, ci) => {
         const color = partColorMap[col.part_id] || F100_VPX_PART_COLORS[0];
-        html += `<th class="vpx-th-col" data-col="${ci}" title="${esc(col.group + ' · #' + col.code.replace('#','') + ' ' + col.name)}" style="box-shadow:inset 0 -2px 0 ${color.replace('.7', '.55')}">${esc(col.code)}</th>`;
+        html += `<th class="vpx-th-col" data-col="${ci}" title="${esc(col.group + ' · ' + col.code + ' ' + col.name)}" style="box-shadow:inset 0 -2px 0 ${color.replace('.7', '.55')}"><span class="vpx-col-step">${esc(col.code)}</span><span class="vpx-col-name">${esc(col.name)}</span></th>`;
     });
     html += '</tr></thead><tbody>';
 
     let prevBattalion = null;
-    let prevVehicle   = null;
 
     rows.forEach((row, ri) => {
-        // Battalion group header
+        // Always group rows by battalion (section divider)
         if (row.battalion_code !== prevBattalion) {
             html += '<tr class="vpx-row vpx-row-group vpx-row-battalion">';
             html += '<td class="vpx-td-vehicle vpx-td-group vpx-td-battalion" colspan="1">'
@@ -2174,30 +3241,23 @@ function renderF100VPX(data) {
             cols.forEach(() => { html += '<td class="vpx-group-fill vpx-group-battalion"></td>'; });
             html += '</tr>';
             prevBattalion = row.battalion_code;
-            prevVehicle   = null;
         }
 
-        // Vehicle subgroup header (vehicle mode only)
-        if (f100mode === 'vehicle' && row.vehicle_type !== prevVehicle) {
-            html += '<tr class="vpx-row vpx-row-group vpx-row-vehicle">';
-            html += '<td class="vpx-td-vehicle vpx-td-group vpx-td-vehicle" colspan="1">'
-                + '<div class="vpx-grp-inner">'
-                + `<span class="vpx-veh-badge">${esc(row.vehicle_type || '—')}</span>`
-                + '</div></td>';
-            cols.forEach(() => { html += '<td class="vpx-group-fill vpx-group-vehicle"></td>'; });
-            html += '</tr>';
-            prevVehicle = row.vehicle_type;
-        }
-
-        // Data row
-        const rowLabel = f100mode === 'gun'
-            ? esc(row.battalion_code)
-            : `#${row.serial_number ?? '?'}`;
+        // Data row — each row is one vehicle unit
+        const rowLabel = [row.unit_code, row.unit_name].filter(Boolean).join(' · ')
+            || (row.vehicle_type ? `${row.vehicle_type} #${row.serial_number ?? '?'}` : `#${row.serial_number ?? '?'}`);
+        const rowSubLabel = row.vehicle_type && row.serial_number != null ? `${row.vehicle_type} #${row.serial_number}` : '';
+        const rowPct = row.total > 0 ? Math.round((row.done / row.total) * 100) : 0;
+        const rowPctHtml = row.total > 0
+            ? `<div class="vpx-unit-pct-row"><div class="vpx-unit-pct-bar-wrap"><div class="vpx-unit-pct-bar-fill" style="width:${rowPct}%"></div></div><span class="vpx-unit-pct-text">${row.done}/${row.total} (${rowPct}%)</span></div>`
+            : '';
         html += `<tr class="vpx-row" data-ri="${ri}">`;
         html += '<td class="vpx-td-vehicle vpx-td-unit">'
             + '<div class="vpx-unit-inner"><span class="vpx-unit-dot"></span>'
             + '<div class="vpx-unit-text">'
-            + `<span class="vpx-unit-name">${rowLabel}</span>`
+            + `<span class="vpx-unit-name">${esc(rowLabel)}</span>`
+            + (rowSubLabel ? `<span class="vpx-unit-code">${esc(rowSubLabel)}</span>` : '')
+            + rowPctHtml
             + '</div></div></td>';
 
         cols.forEach((col, ci) => {
@@ -2209,7 +3269,7 @@ function renderF100VPX(data) {
                 return;
             }
 
-            const status = task.status || 'Planned';
+            const status = calculateStatus(task); // dynamic so Overdue is detected
             const dotClass = status === 'Completed'      ? 'vpx-dot-ok'
                            : status === 'In Progress'    ? 'vpx-dot-prog'
                            : status === 'Late Completion' ? 'vpx-dot-late'
@@ -2222,7 +3282,15 @@ function renderF100VPX(data) {
                 ? formatDateShort(task.actual_start_date) + ' → ' + (task.actual_end_date ? formatDateShort(task.actual_end_date) : '?')
                 : null;
 
+            const unitInfo = f100mode === 'vehicle'
+                ? [task.vehicle_type, task.serial_number != null ? `#${task.serial_number}` : null].filter(Boolean).join(' ')
+                : (task.battalion_code || '—');
             const tip = [
+                unitInfo,
+                task.unit_label ? `Unit Label : ${task.unit_label}` : null,
+                task.unit_code  ? `Unit Code  : ${task.unit_code}` : null,
+                task.unit_name  ? `Unit Name  : ${task.unit_name}` : null,
+                row.total > 0   ? `Progress   : ${row.done}/${row.total} (${Math.round((row.done/row.total)*100)}%)` : null,
                 `${task.part_name} · #${task.step_number} ${task.process_name}`,
                 `Planned : ${formatDate(task.planned_start_date)} → ${formatDate(task.planned_end_date)}`,
                 task.actual_start_date ? `Actual  : ${formatDate(task.actual_start_date)} → ${task.actual_end_date ? formatDate(task.actual_end_date) : '?'}` : null,
@@ -2266,27 +3334,37 @@ function renderVPX(data) {
         return;
     }
 
-    // Column group spans
+    // Column group spans + color map (mirrors F100 VPX palette)
     const groups = [];
+    const grpColorMap = {};
+    let grpColorIdx = 0;
     activeCols.forEach(col => {
-        if (!groups.length || groups[groups.length - 1].label !== col.group)
+        if (!groups.length || groups[groups.length - 1].label !== col.group) {
             groups.push({ label: col.group, span: 1 });
-        else
+            if (!(col.group in grpColorMap)) {
+                grpColorMap[col.group] = F100_VPX_PART_COLORS[grpColorIdx % F100_VPX_PART_COLORS.length];
+                grpColorIdx++;
+            }
+        } else {
             groups[groups.length - 1].span++;
+        }
     });
 
     function grpSlug(g) { return g.toLowerCase().replace(/[^a-z0-9]+/g, '-'); }
 
     let html = '<table class="vpx-table" role="grid"><thead>';
 
-    // Group header row
+    // Group header row — colored top border matching F100 style
     html += `<tr class="vpx-group-row"><th class="vpx-th-vehicle" rowspan="2">${meta.headerLabel.replace(/ · /g, ' &middot; ')}</th>`;
     groups.forEach(g => {
-        html += '<th class="vpx-th-group vpx-grp-' + grpSlug(g.label) + '" colspan="' + g.span + '">' + g.label + '</th>';
+        const color = grpColorMap[g.label] || F100_VPX_PART_COLORS[0];
+        html += '<th class="vpx-th-group vpx-grp-' + grpSlug(g.label) + '" colspan="' + g.span + '" style="box-shadow:inset 0 2px 0 ' + color + '">' + g.label + '</th>';
     });
     html += '</tr><tr class="vpx-col-row">';
     activeCols.forEach((col, ci) => {
-        html += '<th class="vpx-th-col vpx-grp-' + grpSlug(col.group) + '" data-col="' + ci + '" title="' + col.name + '">' + col.code + '</th>';
+        const color = grpColorMap[col.group] || F100_VPX_PART_COLORS[0];
+        const tip = esc(col.group + ' · ' + col.code + (col.code !== col.name ? ' ' + col.name : ''));
+        html += '<th class="vpx-th-col vpx-grp-' + grpSlug(col.group) + '" data-col="' + ci + '" title="' + tip + '" style="box-shadow:inset 0 -2px 0 ' + color.replace('.7', '.55') + '"><span class="vpx-col-step">' + esc(col.code) + '</span><span class="vpx-col-name">' + esc(col.name !== col.code ? col.name : '') + '</span></th>';
     });
     html += '</tr></thead><tbody>';
 
@@ -2296,7 +3374,7 @@ function renderVPX(data) {
         const prevVehicle = prevRow?.vehicle || null;
 
         if (isKD2Module()) {
-            // For KD2, add group header when battalion changes
+            // Battalion group row — sticks below the column header
             if (row.battalion_code !== prevBattalion) {
                 html += '<tr class="vpx-row vpx-row-group vpx-row-battalion">';
                 html += '<td class="vpx-td-vehicle vpx-td-group vpx-td-battalion" colspan="1">'
@@ -2308,11 +3386,10 @@ function renderVPX(data) {
                 activeCols.forEach(() => { html += '<td class="vpx-group-fill vpx-group-battalion"></td>'; });
                 html += '</tr>';
             }
-
-            // Add group header when vehicle changes within same battalion
+            // Vehicle group row — sticks below the battalion row
             if (row.vehicle !== prevVehicle) {
                 html += '<tr class="vpx-row vpx-row-group vpx-row-vehicle">';
-                html += '<td class="vpx-td-vehicle vpx-td-group vpx-td-vehicle" colspan="1">'
+                html += '<td class="vpx-td-vehicle vpx-td-group" colspan="1">'
                     + '<div class="vpx-grp-inner">'
                     + '<span class="vpx-veh-badge">' + esc(row.vehicle) + '</span>'
                     + '</div>'
@@ -2335,12 +3412,17 @@ function renderVPX(data) {
         html += '<tr class="vpx-row" data-ri="' + ri + '">';
         var primaryLabel = getVpxRowPrimaryLabel(row);
         var secondaryLabel = getVpxRowSecondaryLabel(row);
+        var rowPct = row.total > 0 ? Math.round((row.done / row.total) * 100) : 0;
+        var rowPctHtml = row.total > 0
+            ? '<div class="vpx-unit-pct-row"><div class="vpx-unit-pct-bar-wrap"><div class="vpx-unit-pct-bar-fill" style="width:' + rowPct + '%"></div></div><span class="vpx-unit-pct-text">' + row.done + '/' + row.total + ' (' + rowPct + '%)</span></div>'
+            : '';
         html += '<td class="vpx-td-vehicle vpx-td-unit">'
             + '<div class="vpx-unit-inner">'
             + '<span class="vpx-unit-dot"></span>'
             + '<div class="vpx-unit-text">'
             + '<span class="vpx-unit-name">' + esc(primaryLabel) + '</span>'
             + (secondaryLabel ? '<span class="vpx-unit-code">' + esc(secondaryLabel) + '</span>' : '')
+            + rowPctHtml
             + '</div>'
             + '</div>'
             + '</td>';
@@ -2405,9 +3487,256 @@ function renderVPX(data) {
 function renderCharts(data) {
     renderBarChart(data);
     renderLineChart(data);
+    renderF100ExtraCharts(data);
+}
+
+/* Extra charts shown only in F100-KD2: status donut, process-step bar, vehicle-type bar */
+let _f100ChartStatus = null, _f100ChartStep = null, _f100ChartVtype = null;
+function renderF100ExtraCharts(data) {
+    const section = document.getElementById('f100ChartsSection');
+    if (!section) return;
+
+    // Destroy old instances
+    [_f100ChartStatus, _f100ChartStep, _f100ChartVtype].forEach(c => { try { c?.destroy(); } catch {} });
+    _f100ChartStatus = _f100ChartStep = _f100ChartVtype = null;
+
+    if (!isF100KD2Module() || !data.length) {
+        section.style.display = 'none';
+        return;
+    }
+    section.style.display = '';
+
+    const c = themeChartColors();
+    const STATUS_COLORS = {
+        'Planned':         '#94a3b8',
+        'In Progress':     '#f59e0b',
+        'Completed':       '#22c55e',
+        'Late Completion': '#3b82f6',
+        'Overdue':         '#ef4444',
+    };
+
+    // ── 1. Status distribution donut ─────────────────────────────
+    const statusKeys = Object.keys(STATUS_COLORS);
+    const statusCounts = statusKeys.map(k => data.filter(r => calculateStatus(r) === k).length);
+    // Only show statuses that actually have data
+    const activeStatuses = statusKeys.filter((_, i) => statusCounts[i] > 0);
+    const activeCounts   = activeStatuses.map(k => data.filter(r => calculateStatus(r) === k).length);
+    const canvasStatus = document.getElementById('f100ChartStatus');
+    if (canvasStatus) {
+        _f100ChartStatus = new Chart(canvasStatus, {
+            type: 'doughnut',
+            data: {
+                labels: activeStatuses,
+                datasets: [{
+                    data: activeCounts,
+                    backgroundColor: activeStatuses.map(k => STATUS_COLORS[k]),
+                    borderColor: getCurrentTheme() === 'light' ? '#f8fafc' : '#161b27',
+                    borderWidth: 2,
+                    hoverOffset: 6,
+                }],
+            },
+            options: {
+                responsive: true,
+                maintainAspectRatio: false,
+                cutout: '65%',
+                plugins: {
+                    legend: { position: 'right', labels: { color: c.text, font: { family: 'Inter', size: 11 }, boxWidth: 12, padding: 10 } },
+                    tooltip: { callbacks: { label: ctx => ` ${ctx.label}: ${ctx.parsed} (${Math.round(ctx.parsed / data.length * 100)}%)` } },
+                },
+            },
+        });
+    }
+
+    // ── 2. Process step completion — group by part when multiple parts shown ──
+    // Build step map keyed by part+step to preserve uniqueness across parts
+    const uniquePartNames = [...new Set(data.map(r => r.part_name).filter(Boolean))];
+    const multiPart = uniquePartNames.length > 1;
+
+    const stepMap = {};
+    data.forEach(r => {
+        // Key uniquely by part + step; when multi-part, prefix label with abbreviated part name
+        const key = `${r.part_sort}||${r.part_id}||${r.process_sort}`;
+        if (!stepMap[key]) {
+            const partAbbr = multiPart
+                ? (r.part_name || '').split(/\s+/).map(w => w[0]).join('').toUpperCase().substring(0, 4)
+                : '';
+            const label = r.step_number
+                ? (multiPart ? `[${partAbbr}] #${r.step_number} ${r.process_name}` : `#${r.step_number} ${r.process_name}`)
+                : (multiPart ? `[${partAbbr}] ${r.process_name}` : r.process_name);
+            stepMap[key] = { label, partSort: r.part_sort, procSort: r.process_sort, done: 0, total: 0 };
+        }
+        stepMap[key].total++;
+        const s = calculateStatus(r);
+        if (s === 'Completed' || s === 'Late Completion') stepMap[key].done++;
+    });
+    const steps = Object.values(stepMap).sort((a, b) => a.partSort !== b.partSort ? a.partSort - b.partSort : a.procSort - b.procSort);
+    const stepLabels = steps.map(s => s.label);
+    const stepPcts   = steps.map(s => s.total ? Math.round(s.done / s.total * 100) : 0);
+    const stepTotals = steps.map(s => s.total);
+
+    // Update chart card subtitle with current scope
+    const stepSubEl = document.querySelector('#f100ChartsSection .f100-chart-card:nth-child(2) .chart-subtitle');
+    if (stepSubEl) {
+        stepSubEl.textContent = multiPart
+            ? `Showing ${steps.length} steps across ${uniquePartNames.length} parts — filter by Gun Part for detail`
+            : `${uniquePartNames[0] || 'All parts'} · ${steps.length} process steps`;
+    }
+
+    const canvasStep = document.getElementById('f100ChartStep');
+    if (canvasStep) {
+        _f100ChartStep = new Chart(canvasStep, {
+            type: 'bar',
+            data: {
+                labels: stepLabels,
+                datasets: [{
+                    label: '% Complete',
+                    data: stepPcts,
+                    backgroundColor: stepPcts.map(p => p >= 100 ? 'rgba(34,197,94,.8)' : p >= 50 ? 'rgba(245,158,11,.8)' : 'rgba(59,130,246,.75)'),
+                    borderRadius: 4,
+                    borderWidth: 0,
+                }],
+            },
+            options: {
+                indexAxis: 'y',
+                responsive: true,
+                maintainAspectRatio: false,
+                plugins: {
+                    legend: { display: false },
+                    tooltip: {
+                        callbacks: {
+                            label: ctx => ` ${ctx.parsed.x}% complete`,
+                            afterLabel: ctx => ` Based on ${stepTotals[ctx.dataIndex]} unit(s)`,
+                        },
+                    },
+                },
+                scales: {
+                    x: { min: 0, max: 100, ticks: { color: c.text, callback: v => v + '%', font: { size: 10 } }, grid: { color: c.grid } },
+                    y: { ticks: { color: c.text, font: { size: 9 } }, grid: { display: false } },
+                },
+            },
+        });
+    }
+
+    // ── 3. Context-aware third chart ──────────────────────────────
+    // Gun mode (only K9): show completion by GUN PART (meaningful)
+    // Vehicle mode (multiple types): show completion by vehicle type
+    const vtOrder = ['K9', 'K10', 'K11'];
+    const vtypes = [...new Set(data.map(r => r.vehicle_type).filter(Boolean))].sort((a, b) => {
+        const ai = vtOrder.indexOf(a); const bi = vtOrder.indexOf(b);
+        return (ai === -1 ? 99 : ai) - (bi === -1 ? 99 : bi);
+    });
+    const isGunMode = vtypes.length <= 1 && (vtypes[0] === 'K9' || !vtypes[0]);
+
+    // Update card title & subtitle
+    const vtCard = document.getElementById('f100ChartVtype')?.closest('.f100-chart-card');
+    if (vtCard) {
+        const titleEl = vtCard.querySelector('.chart-title');
+        const subEl   = vtCard.querySelector('.chart-subtitle');
+        if (isGunMode) {
+            if (titleEl) titleEl.textContent = 'Completion by Gun Part';
+            if (subEl)   subEl.textContent   = '% complete and task count per gun part';
+        } else {
+            if (titleEl) titleEl.textContent = 'Completion by Vehicle Type';
+            if (subEl)   subEl.textContent   = '% complete and total tasks per vehicle type';
+        }
+    }
+
+    const canvasVtype = document.getElementById('f100ChartVtype');
+    if (canvasVtype) {
+        if (isGunMode) {
+            // Group by gun part
+            const partData = uniquePartNames.map(pname => {
+                const rows = data.filter(r => r.part_name === pname);
+                const done = rows.filter(r => { const s = calculateStatus(r); return s === 'Completed' || s === 'Late Completion'; }).length;
+                return { pname, pct: rows.length ? Math.round(done / rows.length * 100) : 0, total: rows.length };
+            });
+            // Sort by part sort order (use first row's part_sort for each part)
+            const partSortMap = {};
+            data.forEach(r => { if (r.part_name && !(r.part_name in partSortMap)) partSortMap[r.part_name] = r.part_sort; });
+            partData.sort((a, b) => (partSortMap[a.pname] || 0) - (partSortMap[b.pname] || 0));
+
+            _f100ChartVtype = new Chart(canvasVtype, {
+                type: 'bar',
+                data: {
+                    labels: partData.map(p => p.pname),
+                    datasets: [
+                        {
+                            label: '% Complete',
+                            data: partData.map(p => p.pct),
+                            backgroundColor: partData.map(p => p.pct >= 100 ? 'rgba(34,197,94,.8)' : p.pct >= 50 ? 'rgba(245,158,11,.75)' : 'rgba(59,130,246,.75)'),
+                            borderRadius: 5, borderWidth: 0, yAxisID: 'yPct',
+                        },
+                        {
+                            label: 'Tasks',
+                            data: partData.map(p => p.total),
+                            backgroundColor: 'rgba(148,163,184,.35)',
+                            borderRadius: 5, borderWidth: 0, yAxisID: 'yCount',
+                        },
+                    ],
+                },
+                options: {
+                    responsive: true, maintainAspectRatio: false,
+                    plugins: {
+                        legend: { labels: { color: c.text, font: { family: 'Inter', size: 10 }, boxWidth: 10 } },
+                        tooltip: { callbacks: { label: ctx => ctx.datasetIndex === 0 ? ` ${ctx.parsed.y}% complete` : ` ${ctx.parsed.y} tasks` } },
+                    },
+                    scales: {
+                        yPct:   { type: 'linear', position: 'left',  min: 0, max: 100, ticks: { color: c.text, callback: v => v + '%', font: { size: 10 } }, grid: { color: c.grid } },
+                        yCount: { type: 'linear', position: 'right', beginAtZero: true, ticks: { color: c.text, font: { size: 10 }, stepSize: 1 }, grid: { display: false } },
+                        x:      { ticks: { color: c.text, font: { size: 9 }, maxRotation: 30 }, grid: { display: false } },
+                    },
+                },
+            });
+        } else {
+            // Vehicle mode — completion by vehicle type
+            const vtDone  = vtypes.map(vt => { const r = data.filter(x => x.vehicle_type === vt); const d = r.filter(x => { const s = calculateStatus(x); return s === 'Completed' || s === 'Late Completion'; }).length; return r.length ? Math.round(d / r.length * 100) : 0; });
+            const vtTotal = vtypes.map(vt => data.filter(x => x.vehicle_type === vt).length);
+            _f100ChartVtype = new Chart(canvasVtype, {
+                type: 'bar',
+                data: {
+                    labels: vtypes,
+                    datasets: [
+                        { label: '% Complete', data: vtDone,  backgroundColor: 'rgba(34,197,94,.75)',  borderColor: '#22c55e', borderWidth: 1, borderRadius: 6, yAxisID: 'yPct' },
+                        { label: 'Total Tasks', data: vtTotal, backgroundColor: 'rgba(59,130,246,.35)', borderColor: '#3b82f6', borderWidth: 1, borderRadius: 6, yAxisID: 'yCount' },
+                    ],
+                },
+                options: {
+                    responsive: true, maintainAspectRatio: false,
+                    plugins: { legend: { labels: { color: c.text, font: { family: 'Inter', size: 11 }, boxWidth: 12 } }, tooltip: { callbacks: { label: ctx => ctx.datasetIndex === 0 ? ` ${ctx.parsed.y}% complete` : ` ${ctx.parsed.y} tasks` } } },
+                    scales: {
+                        yPct:   { type: 'linear', position: 'left',  min: 0, max: 100, ticks: { color: c.text, callback: v => v + '%', font: { size: 10 } }, grid: { color: c.grid } },
+                        yCount: { type: 'linear', position: 'right', beginAtZero: true, ticks: { color: c.text, font: { size: 10 }, stepSize: 1 }, grid: { display: false } },
+                        x:      { ticks: { color: c.text, font: { size: 11 } }, grid: { display: false } },
+                    },
+                },
+            });
+        }
+    }
 }
 
 function getChartGrouping(data) {
+    if (isF100KD2Module()) {
+        const battalions = [...new Set(data.map(row => row.battalion_code).filter(Boolean))].sort(naturalSort);
+        if (battalions.length > 1) {
+            return { keyLabel: 'battalion', labels: battalions, valueFor: row => row.battalion_code || 'Unknown' };
+        }
+        const vtOrder = ['K9', 'K10', 'K11'];
+        const vtypes = [...new Set(data.map(row => row.vehicle_type).filter(Boolean))]
+            .sort((a, b) => {
+                const ai = vtOrder.indexOf(a); const bi = vtOrder.indexOf(b);
+                return (ai === -1 ? 99 : ai) - (bi === -1 ? 99 : bi);
+            });
+        if (vtypes.length > 1) {
+            return { keyLabel: 'vehicle type', labels: vtypes, valueFor: row => row.vehicle_type || 'Unknown' };
+        }
+        const parts = [...new Set(data.map(row => row.part_name).filter(Boolean))].sort(naturalSort);
+        return {
+            keyLabel: 'part',
+            labels: parts.length ? parts : ['All'],
+            valueFor: row => row.part_name || 'All',
+        };
+    }
+
     if (!isKD2Module()) {
         return {
             keyLabel: 'vehicle',
@@ -2460,6 +3789,45 @@ function getChartGrouping(data) {
         labels: categories,
         valueFor: row => getModuleCategory(row.process_station, row) || 'Other',
     };
+}
+
+/* ── Chart card expand (centered modal overlay) ─────────────────── */
+function _resizeAllCharts() {
+    setTimeout(() => {
+        [barChartInst, lineChartInst, _f100ChartStatus, _f100ChartStep, _f100ChartVtype]
+            .forEach(c => { try { c?.resize(); } catch {} });
+    }, 60);
+}
+
+function _closeChartExpand(card, btn) {
+    card.classList.remove('chart-fullscreen');
+    btn.setAttribute('aria-pressed', 'false');
+    btn.title = 'Expand chart';
+    document.getElementById('_chartExpandBackdrop')?.remove();
+    _resizeAllCharts();
+}
+
+function toggleChartFullscreen(btn) {
+    const card = btn.closest('.chart-card');
+    if (!card) return;
+    const isFs = card.classList.toggle('chart-fullscreen');
+    btn.setAttribute('aria-pressed', String(isFs));
+    btn.title = isFs ? 'Close' : 'Expand chart';
+
+    if (isFs) {
+        const backdrop = document.createElement('div');
+        backdrop.id = '_chartExpandBackdrop';
+        backdrop.className = 'chart-expand-backdrop';
+        backdrop.addEventListener('click', () => _closeChartExpand(card, btn));
+        document.body.appendChild(backdrop);
+        const onKey = e => {
+            if (e.key === 'Escape') { _closeChartExpand(card, btn); document.removeEventListener('keydown', onKey); }
+        };
+        document.addEventListener('keydown', onKey);
+        _resizeAllCharts();
+    } else {
+        _closeChartExpand(card, btn);
+    }
 }
 
 function updateChartHeadings(grouping) {
@@ -2566,7 +3934,8 @@ function renderLineChart(data) {
     const actualCum = timeline.map(d =>
         data.filter(r => {
             const s = calculateStatus(r);
-            const cd = r.progress?.completion_date;
+            // F100 rows store completion date directly; F200 uses progress sub-object
+            const cd = (r.module === 'gun' || r.module === 'vehicle') ? r.actual_end_date : r.progress?.completion_date;
             return (s === 'Completed' || s === 'Late Completion') && cd && cd <= d;
         }).length
     );
@@ -2695,19 +4064,30 @@ async function saveActualStart(planId, dateValue) {
 
     // F100: actual dates live directly in f100_plans, no separate progress table
     if (isF100KD2Module()) {
+        markLocalSave();
         try {
+            const row = currentData.find(t => String(t.id) === String(planId));
+            // Compute new status: setting a start date moves Planned → In Progress
+            // Clearing a start date with no end date reverts to Planned
+            let newStatus = row?.status || 'Planned';
+            if (valueToSave) {
+                if (newStatus === 'Planned') newStatus = 'In Progress';
+            } else {
+                if (newStatus === 'In Progress') newStatus = 'Planned';
+            }
             const { error } = await db
                 .from('f100_plans')
-                .update({ actual_start_date: valueToSave, updated_at: new Date().toISOString() })
+                .update({ actual_start_date: valueToSave, status: newStatus, updated_at: new Date().toISOString() })
                 .eq('id', planId);
             if (error) throw error;
-            await auditLog('UPDATE', 'f100_plans', planId, null, { actual_start_date: valueToSave });
+            await auditLog('UPDATE', 'f100_plans', planId, null, { actual_start_date: valueToSave, status: newStatus });
             showToast(valueToSave ? 'Start date saved.' : 'Start date cleared.', 'success');
-            const row = currentData.find(t => t.id === planId);
             if (row) {
                 row.actual_start_date = valueToSave;
-                row.start_date = valueToSave || row.planned_start_date;
-                refreshAllViews();
+                row.status = newStatus;
+                const updated = updateF100TableRowInPlace(planId);
+                if (!updated) renderF100Table(currentData);
+                renderF100VPX(currentData);
             } else { await loadData(); }
         } catch (err) {
             showToast('Error saving start date: ' + err.message, 'error');
@@ -2778,6 +4158,7 @@ async function saveCompletionDate(planId, dateValue, silent = false) {
 
     // F100: actual dates live directly in f100_plans
     if (isF100KD2Module()) {
+        markLocalSave();
         try {
             const row = currentData.find(t => t.id === planId);
             const newStatus = valueToSave ? 'Completed' : (row?.actual_start_date ? 'In Progress' : 'Planned');
@@ -2791,8 +4172,9 @@ async function saveCompletionDate(planId, dateValue, silent = false) {
             if (row) {
                 row.actual_end_date = valueToSave;
                 row.status = newStatus;
-                row.end_date = valueToSave || row.planned_end_date;
-                refreshAllViews();
+                const updated = updateF100TableRowInPlace(planId);
+                if (!updated) renderF100Table(currentData);
+                renderF100VPX(currentData);
             } else { await loadData(); }
         } catch (err) {
             showToast('Error saving completion date: ' + err.message, 'error');
@@ -2856,8 +4238,24 @@ async function saveCompletionDate(planId, dateValue, silent = false) {
  * Does NOT touch completed / completion_date.
  */
 async function saveNoteOnly(planId, noteText) {
-    // F100 plans have no separate notes field — skip silently
-    if (isF100KD2Module()) { showToast('Notes are not supported for F100 plan entries.', 'info'); return; }
+    if (isF100KD2Module()) {
+        const valueToSave = noteText.trim() || null;
+        try {
+            const { error } = await db
+                .from('f100_plans')
+                .update({ notes: valueToSave, updated_at: new Date().toISOString() })
+                .eq('id', planId);
+            if (error) throw error;
+            await auditLog('UPDATE', 'f100_plans', planId, null, { notes: valueToSave });
+            const row = currentData.find(t => String(t.id) === String(planId));
+            if (row) row.notes = valueToSave || '';
+            showToast(valueToSave ? 'Note saved.' : 'Note deleted.', 'success');
+        } catch (err) {
+            showToast('Error saving note: ' + err.message, 'error');
+            console.error(err);
+        }
+        return;
+    }
     const valueToSave = noteText.trim() || null;
     try {
         const progressTable = getModuleProgressTable();
@@ -2886,20 +4284,308 @@ async function saveNoteOnly(planId, noteText) {
     }
 }
 
+async function saveF100Comment(planId, text) {
+    markLocalSave();
+    const user = getCurrentUser();
+    const userName = user?.name || user?.email || 'Unknown';
+    const newComment = { user: userName, text: text.trim(), at: new Date().toISOString() };
+    const row = currentData.find(t => String(t.id) === String(planId));
+    const current = Array.isArray(row?.comments) ? row.comments : [];
+    const updated = [...current, newComment];
+    const { error } = await db
+        .from('f100_plans')
+        .update({ comments: updated, updated_at: new Date().toISOString() })
+        .eq('id', planId);
+    if (error) throw error;
+    if (row) row.comments = updated;
+    saveNotifSnapshot();
+    return updated;
+}
+
+async function saveKd2Comment(planId, text) {
+    markLocalSave();
+    const user = getCurrentUser();
+    const userName = user?.name || user?.email || 'Unknown';
+    const newComment = { user: userName, text: text.trim(), at: new Date().toISOString() };
+    const row = currentData.find(t => String(t.id) === String(planId));
+    const current = Array.isArray(row?.comments) ? row.comments : [];
+    const updated = [...current, newComment];
+    const { error } = await db
+        .from('kd2_plan')
+        .update({ comments: updated })
+        .eq('id', planId);
+    if (error) throw error;
+    if (row) row.comments = updated;
+    saveNotifSnapshot();
+    return updated;
+}
+
+// ── F100 Comment Notifications (localStorage-backed) ──────────────────────────
+
+function _notifStorageKey() {
+    const user = getCurrentUser();
+    return `f100_notif_read_${user?.email || user?.id || 'anon'}`;
+}
+
+function _notifSnapKey(moduleId) {
+    const user = getCurrentUser();
+    return `ppms_notif_snap_${moduleId}_${user?.email || user?.id || 'anon'}`;
+}
+
+function _getReadSet() {
+    try { return new Set(JSON.parse(localStorage.getItem(_notifStorageKey()) || '[]')); }
+    catch { return new Set(); }
+}
+
+function _saveReadSet(set) {
+    try { localStorage.setItem(_notifStorageKey(), JSON.stringify([...set])); } catch {}
+}
+
+function _notifKey(planId, comment) {
+    return `${planId}::${comment.at}`;
+}
+
+function _moduleLabel(moduleId) {
+    if (moduleId === 'f100kd2') return 'F100-KD2';
+    if (moduleId === 'kd2')    return 'F200-KD2';
+    return 'F200-KD1';
+}
+
+// Save a snapshot of current module's notification-eligible comments to localStorage
+// so they remain visible when the user switches to another module.
+function saveNotifSnapshot() {
+    const moduleId = getActiveModuleId();
+    if (!currentData?.length) return;
+    const user = getCurrentUser();
+    const myName = user?.name || user?.email || '';
+    const snap = [];
+    currentData.forEach(row => {
+        (Array.isArray(row.comments) ? row.comments : []).forEach(c => {
+            if (c.user === myName) return;
+            snap.push({
+                key:        _notifKey(row.id, c),
+                planId:     row.id,
+                comment:    c,
+                moduleId,
+                rowInfo: {
+                    vehicle:         row.vehicle      || row.vehicle_type  || '',
+                    unit:            row.vehicle_no   || row.unit_code     || '',
+                    process:         row.process_station || row.process_name || '',
+                },
+            });
+        });
+    });
+    try { localStorage.setItem(_notifSnapKey(moduleId), JSON.stringify(snap)); } catch {}
+}
+
+function getUnreadNotifications() {
+    const readSet = _getReadSet();
+    const allSnap = [];
+    ['f100kd2', 'kd2', 'kd1'].forEach(modId => {
+        try {
+            const raw = localStorage.getItem(_notifSnapKey(modId));
+            if (raw) JSON.parse(raw).forEach(n => allSnap.push(n));
+        } catch {}
+    });
+    return allSnap.filter(n => !readSet.has(n.key));
+}
+
+function updateNotifBadge() {
+    const wrap = document.getElementById('f100NotifWrap');
+    const badge = document.getElementById('f100NotifBadge');
+    if (!wrap || !badge) return;
+    const activeId = getActiveModuleId();
+    if (activeId !== 'f100kd2' && activeId !== 'kd2') { wrap.style.display = 'none'; return; }
+    wrap.style.display = '';
+    const unread = getUnreadNotifications();
+    if (unread.length > 0) {
+        badge.textContent = unread.length > 99 ? '99+' : unread.length;
+        badge.style.display = '';
+    } else {
+        badge.style.display = 'none';
+    }
+}
+
+function openNotifDropdown() {
+    document.querySelectorAll('.f100-notif-dropdown').forEach(d => d.remove());
+    const bell = document.getElementById('f100NotifBell');
+    if (!bell) return;
+
+    const currentModuleId = getActiveModuleId();
+    const unread = getUnreadNotifications();
+    const dropdown = document.createElement('div');
+    dropdown.className = 'f100-notif-dropdown';
+
+    function formatCommentTime(iso) {
+        try {
+            const d = new Date(iso);
+            return d.toLocaleDateString(undefined, { day: '2-digit', month: 'short' })
+                + ' ' + d.toLocaleTimeString(undefined, { hour: '2-digit', minute: '2-digit' });
+        } catch { return iso || ''; }
+    }
+
+    if (unread.length === 0) {
+        dropdown.innerHTML = `
+            <div class="f100-notif-header">Notifications <button class="f100-notif-close">✕</button></div>
+            <div class="f100-notif-empty">No unread notifications</div>`;
+    } else {
+        const items = unread.map(n => {
+            const isCrossModule = n.moduleId && n.moduleId !== currentModuleId;
+            const modLabel = _moduleLabel(n.moduleId || currentModuleId);
+            const ctx = [n.rowInfo?.vehicle, n.rowInfo?.unit, n.rowInfo?.process].filter(Boolean).join(' · ');
+            return `
+            <div class="f100-notif-item${isCrossModule ? ' f100-notif-item-cross' : ''}" data-plan-id="${n.planId}" data-key="${esc(n.key)}" data-module-id="${esc(n.moduleId || currentModuleId)}">
+                <div class="f100-notif-item-meta">
+                    <strong>${esc(n.comment.user || '?')}</strong>
+                    <span class="f100-notif-module-badge">${esc(modLabel)}</span>
+                    <span class="f100-notif-item-time">${formatCommentTime(n.comment.at)}</span>
+                </div>
+                <div class="f100-notif-item-context">${esc(ctx)}</div>
+                <div class="f100-notif-item-text">${esc(n.comment.text)}</div>
+                ${isCrossModule ? `<div class="f100-notif-item-switch">Click to switch to ${esc(modLabel)} →</div>` : ''}
+            </div>`;
+        }).join('');
+        dropdown.innerHTML = `
+            <div class="f100-notif-header">
+                Unread (${unread.length})
+                <button class="f100-notif-mark-all">Mark all read</button>
+                <button class="f100-notif-close">✕</button>
+            </div>
+            <div class="f100-notif-list">${items}</div>`;
+    }
+
+    document.body.appendChild(dropdown);
+    const rect = bell.getBoundingClientRect();
+    const dw = 340;
+    let left = rect.right + window.scrollX - dw;
+    if (left < 8) left = 8;
+    dropdown.style.left = left + 'px';
+    dropdown.style.top = (rect.bottom + window.scrollY + 6) + 'px';
+
+    dropdown.querySelector('.f100-notif-close')?.addEventListener('click', () => dropdown.remove());
+    dropdown.querySelector('.f100-notif-mark-all')?.addEventListener('click', () => {
+        const readSet = _getReadSet();
+        unread.forEach(n => readSet.add(n.key));
+        _saveReadSet(readSet);
+        dropdown.remove();
+        updateNotifBadge();
+    });
+
+    // Click a notification: mark read, then navigate (same or cross module)
+    dropdown.querySelectorAll('.f100-notif-item').forEach(item => {
+        item.addEventListener('click', () => {
+            const planId = item.dataset.planId;
+            const key = item.dataset.key;
+            const targetModuleId = item.dataset.moduleId || currentModuleId;
+            const isCross = targetModuleId !== currentModuleId;
+
+            const readSet = _getReadSet();
+            readSet.add(key);
+            _saveReadSet(readSet);
+            dropdown.remove();
+            updateNotifBadge();
+
+            if (isCross) {
+                // Cross-module: show confirmation dialog then switch
+                const currentLabel = _moduleLabel(currentModuleId);
+                const targetLabel  = _moduleLabel(targetModuleId);
+                const confirmed = window.confirm(
+                    `You are currently in ${currentLabel}.\n\nThis comment is from ${targetLabel}.\n\nSwitch to ${targetLabel} to view it?`
+                );
+                if (!confirmed) return;
+                // Persist planId so we can open the comment popover after reload
+                try { sessionStorage.setItem('ppms_notif_jump', planId); } catch {}
+                getModuleRuntime()?.setActiveModule?.(targetModuleId);
+                window.location.reload();
+                return;
+            }
+
+            // Same module: scroll to row and open comment popover
+            const tableSection = document.getElementById('tableSection');
+            if (tableSection) tableSection.scrollIntoView({ behavior: 'smooth', block: 'start' });
+            setTimeout(() => {
+                const tr = document.querySelector(`tr[data-plan-id="${planId}"]`);
+                if (tr) {
+                    tr.scrollIntoView({ behavior: 'smooth', block: 'center' });
+                    tr.classList.add('f100-row-highlight');
+                    setTimeout(() => tr.classList.remove('f100-row-highlight'), 2000);
+                }
+                const commentBtn = document.querySelector(`.btn-f100-comment[data-plan-id="${planId}"]`);
+                if (commentBtn) commentBtn.click();
+            }, 400);
+        });
+    });
+
+    setTimeout(() => document.addEventListener('click', function handler(ev) {
+        if (!dropdown.contains(ev.target) && ev.target !== bell) {
+            dropdown.remove();
+            document.removeEventListener('click', handler);
+        }
+    }), 0);
+}
+
+// After a cross-module notification jump, open the target comment popover
+function checkNotifJump() {
+    let planId;
+    try {
+        planId = sessionStorage.getItem('ppms_notif_jump');
+        if (!planId) return;
+        sessionStorage.removeItem('ppms_notif_jump');
+    } catch { return; }
+
+    setTimeout(() => {
+        const tableSection = document.getElementById('tableSection');
+        if (tableSection) tableSection.scrollIntoView({ behavior: 'smooth', block: 'start' });
+        setTimeout(() => {
+            const tr = document.querySelector(`tr[data-plan-id="${planId}"]`);
+            if (tr) {
+                tr.scrollIntoView({ behavior: 'smooth', block: 'center' });
+                tr.classList.add('f100-row-highlight');
+                setTimeout(() => tr.classList.remove('f100-row-highlight'), 2000);
+            }
+            const commentBtn = document.querySelector(`.btn-f100-comment[data-plan-id="${planId}"]`);
+            if (commentBtn) commentBtn.click();
+        }, 500);
+    }, 800);
+}
+
+function wireNotifBell() {
+    const bell = document.getElementById('f100NotifBell');
+    if (!bell) return;
+    bell.addEventListener('click', (e) => {
+        e.stopPropagation();
+        const existing = document.querySelector('.f100-notif-dropdown');
+        if (existing) { existing.remove(); return; }
+        openNotifDropdown();
+    });
+}
+
 function openCompleteModal(planId, idx) {
     activePlanId = planId;
-    // Always look up by planId — idx can drift after in-place re-renders
-    const row = currentData.find(t => t.id === planId) || currentData[idx];
-    const actualStart = row.progress?.actual_start_date;
+    const row = currentData.find(t => String(t.id) === String(planId)) || currentData[idx];
 
-    document.getElementById('modalInfo').innerHTML = `
-    <strong>${esc(row.vehicle)} · ${esc(row.vehicle_no)}${getUnitCode(row.vehicle, row.vehicle_no) ? ' <span style="font-weight:400;opacity:.7;font-size:.85em">(' + esc(getUnitCode(row.vehicle, row.vehicle_no)) + ')</span>' : ''}</strong><br>
-    ${esc(row.process_station)}<br>
-    <small>Planned: ${formatDate(row.start_date)} → ${formatDate(row.end_date)}</small>
-    ${actualStart ? `<br><small>Actual start: ${formatDate(actualStart)}</small>` : ''}
-  `;
-    document.getElementById('modalDate').value = todayStr();
-    document.getElementById('modalNotes').value = row.progress?.notes || '';
+    if (isF100KD2Module()) {
+        const unitMeta = [row.unit_label, row.unit_code ? `[${row.unit_code}]` : '', row.unit_name].filter(Boolean).join(' · ');
+        const unitStr = unitMeta
+            ? ` · <span style="font-weight:400;opacity:.7;font-size:.85em">${esc(unitMeta)}</span>`
+            : '';
+        document.getElementById('modalInfo').innerHTML = `
+        <strong>${esc(row.vehicle_type || '—')} · #${row.serial_number ?? '?'}${unitStr}</strong><br>
+        ${esc(row.part_name || '—')} &middot; Step #${row.step_number} ${esc(row.process_name || '—')}<br>
+        <small>Planned: ${formatDate(row.planned_start_date)} → ${formatDate(row.planned_end_date)}</small>
+        ${row.actual_start_date ? `<br><small>Actual start: ${formatDate(row.actual_start_date)}</small>` : ''}`;
+        document.getElementById('modalDate').value = row.actual_end_date || todayStr();
+        document.getElementById('modalNotes').value = row.notes || '';
+    } else {
+        const actualStart = row.progress?.actual_start_date;
+        document.getElementById('modalInfo').innerHTML = `
+        <strong>${esc(row.vehicle)} · ${esc(row.vehicle_no)}${getUnitCode(row.vehicle, row.vehicle_no) ? ' <span style="font-weight:400;opacity:.7;font-size:.85em">(' + esc(getUnitCode(row.vehicle, row.vehicle_no)) + ')</span>' : ''}</strong><br>
+        ${esc(row.process_station)}<br>
+        <small>Planned: ${formatDate(row.start_date)} → ${formatDate(row.end_date)}</small>
+        ${actualStart ? `<br><small>Actual start: ${formatDate(actualStart)}</small>` : ''}`;
+        document.getElementById('modalDate').value = todayStr();
+        document.getElementById('modalNotes').value = row.progress?.notes || '';
+    }
 
     document.getElementById('modalOverlay').style.display = 'flex';
 }
@@ -2921,21 +4607,20 @@ async function markComplete() {
 
     closeModal();
 
-    // F100: update actual_end_date and status directly in f100_plans
+    // F100: update actual_end_date, status, and notes directly in f100_plans
     if (isF100KD2Module()) {
         try {
-            const { error } = await db
-                .from('f100_plans')
-                .update({ actual_end_date: compDate, status: 'Completed', updated_at: new Date().toISOString() })
-                .eq('id', planId);
+            const payload = { actual_end_date: compDate, status: 'Completed', notes: notes || null, updated_at: new Date().toISOString() };
+            const { error } = await db.from('f100_plans').update(payload).eq('id', planId);
             if (error) throw error;
-            await auditLog('UPDATE', 'f100_plans', planId, null, { actual_end_date: compDate, status: 'Completed' });
+            await auditLog('UPDATE', 'f100_plans', planId, null, payload);
             showToast('Progress saved successfully.', 'success');
-            const mRow = currentData.find(t => t.id === planId);
+            const mRow = currentData.find(t => String(t.id) === String(planId));
             if (mRow) {
                 mRow.actual_end_date = compDate;
                 mRow.status = 'Completed';
                 mRow.end_date = compDate;
+                mRow.notes = notes || '';
                 refreshAllViews();
             } else { await loadData(); }
         } catch (err) {
@@ -3074,6 +4759,7 @@ function wireEvents() {
     document.getElementById('f100GunPart')?.addEventListener('change', loadData);
     document.getElementById('f100Manufacturer')?.addEventListener('change', loadData);
     document.getElementById('f100VehicleType')?.addEventListener('change', loadData);
+    document.getElementById('f100Serial')?.addEventListener('change', loadData);
     document.getElementById('filterTimeFrame').addEventListener('change', function () {
         const isCustom = this.value === 'custom';
         document.getElementById('customDateStart').style.display = isCustom ? '' : 'none';
@@ -3104,6 +4790,15 @@ function wireEvents() {
 
     // Report modal
     wireReportModal();
+
+    // Notification bell (F100-KD2 and F200-KD2)
+    wireNotifBell();
+    updateNotifBadge();
+    wireActiveUsersBtn();
+    if (isMasterAdmin()) {
+        const wrap = document.getElementById('activeUsersWrap');
+        if (wrap) wrap.style.display = 'flex';
+    }
 
     // ── Auth controls ────────────────────────────────────────────────
     document.getElementById('btnLogout')?.addEventListener('click', doLogout);
@@ -3141,28 +4836,13 @@ function wireEvents() {
     document.getElementById('btnAlApply')?.addEventListener('click', () => loadAuditLog(true));
     document.getElementById('btnAlReset')?.addEventListener('click', resetAuditFilters);
 
-    // ── Live table search (wire ONCE here, not inside resetFilters) ────
-    document.getElementById('tableSearch')?.addEventListener('input', function () {
-        const q = this.value.trim().toLowerCase();
-        const cat = getVal('filterCategory');
-        const base = cat ? currentData.filter(r => getModuleCategory(r.process_station, r) === cat) : currentData;
-        const filtered = q ? base.filter(r =>
-            (r.vehicle || '').toLowerCase().includes(q) ||
-            (r.vehicle_no || '').toLowerCase().includes(q) ||
-            (r.process_station || '').toLowerCase().includes(q) ||
-            (r.remark || '').toLowerCase().includes(q) ||
-            (r.week || '').toLowerCase().includes(q)
-        ) : base;
-        const pos = saveScrollPos();
-        renderTable(filtered);
-        document.getElementById('rowCount').textContent =
-            filtered.length + ' record' + (filtered.length !== 1 ? 's' : '') + (q ? ' (filtered)' : '');
-        restoreScrollPos(pos);
-    });
 
     // VPX PDF export
     document.getElementById('btnVpxPdf')?.addEventListener('click', exportVpxPDF);
     document.getElementById('btnVpxExcel')?.addEventListener('click', exportVpxExcel);
+
+    // Table fullscreen
+    document.getElementById('btnTableFullscreen')?.addEventListener('click', toggleTableFullscreen);
 }
 
 function resetFilters() {
@@ -3173,7 +4853,7 @@ function resetFilters() {
     // F100 filters
     const f100Mode = document.getElementById('f100Mode');
     if (f100Mode) f100Mode.value = 'gun';
-    ['f100Battalion', 'f100GunPart', 'f100Manufacturer', 'f100VehicleType'].forEach(id => {
+    ['f100Battalion', 'f100GunPart', 'f100Manufacturer', 'f100VehicleType', 'f100Serial'].forEach(id => {
         const el = document.getElementById(id);
         if (el) el.value = '';
     });
@@ -3183,8 +4863,9 @@ function resetFilters() {
     document.getElementById('filterEndDate').value = '';
     document.getElementById('customDateStart').style.display = 'none';
     document.getElementById('customDateEnd').style.display = 'none';
-    const srch = document.getElementById('tableSearch');
-    if (srch) srch.value = '';
+    _tableFilters = [];
+    const _inlineBar = document.getElementById('tblFilterBarInline');
+    if (_inlineBar) _inlineBar.innerHTML = '';
     // Restore full unit list with no vehicle scope
     populateUnitFilter(null);
     loadData();
@@ -3205,7 +4886,7 @@ function setTableLoading(loading) {
     if (loading) {
         tbody.innerHTML = `
       <tr>
-        <td colspan="13" class="table-empty">
+        <td colspan="12" class="table-empty">
           <div class="empty-state">
             <span class="spinner"></span>
             <p>Loading data…</p>
@@ -3411,16 +5092,26 @@ function esc(str) {
 
 /* ================================================================
    THEME ENGINE  — dark (default) / light
-   Preference stored in localStorage so it survives page reloads.
-   Applied on <html> via data-theme attribute to leverage CSS vars.
-   Must run synchronously before DOMContentLoaded to prevent flash.
+   Stored per-user so different accounts on the same browser each
+   keep their own preference.  A shared "last" key is written so
+   the anti-flash IIFE can restore the most-recent theme before
+   the user object is known.
    ================================================================ */
-const THEME_KEY = 'kd1_theme';
+const THEME_KEY_BASE = 'ppms_theme';
 
 (function applyStoredTheme() {
-    const stored = localStorage.getItem(THEME_KEY);
+    // Before login we don't know the user; use the last-set theme
+    // to prevent a flash.  Falls back to old 'kd1_theme' key.
+    const stored = localStorage.getItem(THEME_KEY_BASE + '_last')
+                || localStorage.getItem('kd1_theme');
     if (stored === 'light') document.documentElement.setAttribute('data-theme', 'light');
+    else document.documentElement.removeAttribute('data-theme');
 })();
+
+function _userThemeKey() {
+    const u = getCurrentUser();
+    return u ? THEME_KEY_BASE + '_u_' + (u.id || u.email) : THEME_KEY_BASE + '_anon';
+}
 
 function getCurrentTheme() {
     return document.documentElement.getAttribute('data-theme') || 'dark';
@@ -3432,13 +5123,24 @@ function setTheme(theme) {
     } else {
         document.documentElement.removeAttribute('data-theme');
     }
-    localStorage.setItem(THEME_KEY, theme);
+    localStorage.setItem(_userThemeKey(), theme);
+    localStorage.setItem(THEME_KEY_BASE + '_last', theme); // anti-flash fallback
     // Re-render charts with correct palette for new theme
     if (currentData.length) refreshAllViews();
 }
 
 function toggleTheme() {
     setTheme(getCurrentTheme() === 'dark' ? 'light' : 'dark');
+}
+
+/** Called after login — restores this user's saved theme preference. */
+function applyUserTheme() {
+    const saved = localStorage.getItem(_userThemeKey());
+    if (saved && saved !== getCurrentTheme()) {
+        if (saved === 'light') document.documentElement.setAttribute('data-theme', 'light');
+        else document.documentElement.removeAttribute('data-theme');
+        // Don't call setTheme() to avoid refreshAllViews before data is loaded
+    }
 }
 
 /** Return the correct colour set for charts based on current theme */
@@ -3474,7 +5176,8 @@ const GANTT_DAY_W = 36;    // px — width of each day column
 const GANTT_ROW_H = 40;    // px — unit row height
 const GANTT_GRP_H = 30;    // px — vehicle group header row height
 
-// Colour palette for process stations (cycles if > 10 unique stations)
+
+
 const GANTT_PALETTE = [
     '#3b82f6', '#8b5cf6', '#ec4899', '#f59e0b', '#10b981',
     '#06b6d4', '#f97316', '#84cc16', '#6366f1', '#e11d48',
@@ -3583,6 +5286,7 @@ function wireGanttControls() {
         renderGantt(currentData, gsEl?.value, geEl?.value);
     });
     syncGanttLegendUi();
+    wireGanttExportMenu();
 }
 
 function setGanttRangeFromData(data) {
@@ -3598,7 +5302,7 @@ function setGanttRangeFromData(data) {
     const gsEl = document.getElementById('ganttStart');
     const geEl = document.getElementById('ganttEnd');
     if (gsEl) gsEl.value = minDate;
-    if (geEl) geEl.value = maxDate;
+    if (geEl) geEl.value = addDays(maxDate, 2);
 }
 
 /* ──────────────────────────────────────────────────────────────────
@@ -3652,7 +5356,8 @@ function renderGantt(plans, startDate, endDate) {
     // Fast lookup: date string → column index (Fridays have no entry)
     const dayIndex = Object.fromEntries(days.map((d, i) => [d, i]));
     const specialZones = getModuleGanttZones(startDate, endDate);
-    const isKd2ProcessView = isKD2Module() && getModuleRuntime()?.currentTimelineViewMode?.() === 'process';
+    const isKd2ProcessView  = isKD2Module()    && getModuleRuntime()?.currentTimelineViewMode?.() === 'process';
+    const isF100ProcessView = isF100KD2Module() && getModuleRuntime()?.currentTimelineViewMode?.() === 'process';
     const holidayStatusByDay = new Map();
     const holidayLabelsByDay = new Map();
     specialZones
@@ -3695,12 +5400,11 @@ function renderGantt(plans, startDate, endDate) {
     // ── 2. Group plans ─────────────────────────────────────────────
     // Pre-process F100 data to use Gantt-compatible vehicle/vehicle_no/process_station fields
     if (isF100KD2Module()) {
-        const f100mode = document.getElementById('f100Mode')?.value || 'gun';
         plans = plans.map(r => ({
             ...r,
-            vehicle:         f100mode === 'gun' ? (r.part_name || '—') : (r.vehicle_type || '—'),
-            vehicle_no:      `#${r.step_number} ${r.process_name}`,
-            process_station: `#${r.step_number} ${r.process_name}`,
+            vehicle:         r.vehicle_type  || '—',
+            vehicle_no:      String(r.serial_number ?? '—'),
+            process_station: r.process_name  || '—',
         }));
     }
 
@@ -3719,7 +5423,7 @@ function renderGantt(plans, startDate, endDate) {
     const laneMetaKey = (groupKey, laneKey) => `${groupKey}|||${laneKey}`;
     const vehicleFilter = getVal('filterVehicle');
     const unitFilter = getVal('filterUnit');
-    const battalionFilter = isKD2Module() ? getVal('filterBattalion') : '';
+    const battalionFilter = isKD2Module() ? getVal('filterBattalion') : isF100KD2Module() ? getVal('f100Battalion') : '';
     const _unitSelG = document.getElementById('filterUnit');
     const _unitVehicleG = _unitSelG?.options[_unitSelG?.selectedIndex]?.dataset?.vehicle || '';
     const effectiveVehicleFilter = vehicleFilter || _unitVehicleG;
@@ -3745,30 +5449,54 @@ function renderGantt(plans, startDate, endDate) {
             });
     }
     visible.forEach(p => {
-        const groupKey = isKd2ProcessView
-            ? (p.vehicle || '—')
-            : (isKD2Module() || isF100KD2Module() ? (p.battalion_code || '—') : p.vehicle);
-        const laneKey = isKd2ProcessView
-            ? (p.process_station || '—')
-            : (isKD2Module() || isF100KD2Module() ? `${p.vehicle}||${p.vehicle_no}` : p.vehicle_no);
+        const groupKey = isF100ProcessView
+            ? (p.part_name || '—')
+            : isKd2ProcessView
+                ? (p.vehicle || '—')
+                : (isKD2Module() || isF100KD2Module() ? (p.battalion_code || '—') : p.vehicle);
+        const laneKey = isF100ProcessView
+            ? `${p.step_number != null ? p.step_number + ' ' : ''}${p.process_name || '—'}`
+            : isKd2ProcessView
+                ? (p.process_station || '—')
+                : isF100KD2Module()
+                    ? `${p.vehicle_type}||${p.serial_number}`
+                    : (isKD2Module() ? `${p.vehicle}||${p.vehicle_no}` : p.vehicle_no);
         ensureGroupLane(groupKey, laneKey);
         groups[groupKey][laneKey].push(p);
         laneMetaMap[laneMetaKey(groupKey, laneKey)] = {
             battalion_id: p.battalion_id ?? null,
             battalion_code: p.battalion_code || '',
             vehicle_type: p.vehicle_type || p.vehicle || '',
-            unit_serial: p.unit_serial ?? null,
+            unit_serial: isF100KD2Module() ? (p.serial_number ?? null) : (p.unit_serial ?? null),
             unit_label: p.unit_label || p.vehicle_no || '',
         };
     });
 
-    const groupKeys = Object.keys(groups).sort((a, b) =>
-        isKd2ProcessView
-            ? vehicleSort(a, b)
-            : (isKD2Module() || isF100KD2Module())
-                ? a.localeCompare(b, undefined, { numeric: true })
-                : vehicleSort(a, b)
-    );
+    const groupKeys = Object.keys(groups).sort((a, b) => {
+        if (isF100ProcessView) {
+            const aSort = Object.values(groups[a])?.[0]?.[0]?.part_sort ?? 9999;
+            const bSort = Object.values(groups[b])?.[0]?.[0]?.part_sort ?? 9999;
+            if (aSort !== bSort) return aSort - bSort;
+            return a.localeCompare(b, undefined, { numeric: true });
+        }
+        if (isKd2ProcessView) return vehicleSort(a, b);
+        if (isKD2Module() || isF100KD2Module()) return a.localeCompare(b, undefined, { numeric: true });
+        return vehicleSort(a, b);
+    });
+
+    // Build unit completion map for F100 unit view
+    const unitCompMap = {};
+    if (isF100KD2Module() && !isF100ProcessView) {
+        visible.forEach(p => {
+            const key = `${p.battalion_code}||${p.vehicle_type}||${p.serial_number}`;
+            if (!unitCompMap[key]) unitCompMap[key] = { done: 0, total: 0 };
+            unitCompMap[key].total++;
+            if (p.status === 'Completed' || p.status === 'Late Completion') unitCompMap[key].done++;
+        });
+        Object.values(unitCompMap).forEach(v => {
+            v.pct = v.total > 0 ? Math.round((v.done / v.total) * 100) : 0;
+        });
+    }
 
     if (!groupKeys.length) {
         clearGanttHoverGuide();
@@ -3792,7 +5520,7 @@ function renderGantt(plans, startDate, endDate) {
     // ── 3. Header HTML ─────────────────────────────────────────────
     let mHtml = `<div class="gh-corner" style="width:${GANTT_LABEL_W}px;height:28px"></div>`;
     let wHtml = `<div class="gh-corner" style="width:${GANTT_LABEL_W}px;height:22px"></div>`;
-    let dHtml = `<div class="gh-corner gh-corner-label" style="width:${GANTT_LABEL_W}px;height:28px">${isF100KD2Module() ? 'Battalion / Part / Process' : isKd2ProcessView ? 'Vehicle / Station' : isKD2Module() ? 'Battalion / Vehicle / Unit' : 'Vehicle / Unit'}</div>`;
+    let dHtml = `<div class="gh-corner gh-corner-label" style="width:${GANTT_LABEL_W}px;height:28px">${isF100ProcessView ? 'Part / Process' : isF100KD2Module() ? 'Battalion / Vehicle / Unit' : isKd2ProcessView ? 'Vehicle / Station' : isKD2Module() ? 'Battalion / Vehicle / Unit' : 'Vehicle / Unit'}</div>`;
 
     let runMonth = '', runMonthSpan = 0;
     let runWeek = -1, runWeekSpan = 0;
@@ -3870,6 +5598,7 @@ function renderGantt(plans, startDate, endDate) {
 
     groupKeys.forEach(groupKey => {
         const unitKeys = Object.keys(groups[groupKey]).sort((a, b) => {
+            if (isF100ProcessView) return naturalSort(a, b);
             if (isKd2ProcessView) {
                 const routeOrder = getModuleRuntime()?.getStationRouteOrder?.(groupKey) || new Map();
                 const seqA = routeOrder.get(a) ?? 9999;
@@ -3898,7 +5627,7 @@ function renderGantt(plans, startDate, endDate) {
         <div class="gr-track gr-track-group" style="width:${totalW}px">${bgCells}</div>
       </div>`;
 
-        const vehicleSections = (!isKd2ProcessView && (isKD2Module() || isF100KD2Module()))
+        const vehicleSections = (!isKd2ProcessView && !isF100ProcessView && (isKD2Module() || isF100KD2Module()))
             ? [...new Set(unitKeys.map(unit => unit.split('||')[0]).filter(Boolean))]
                 .sort((a, b) => isF100KD2Module() ? a.localeCompare(b, undefined, { numeric: true }) : vehicleSort(a, b))
                 .map(vehicle => ({
@@ -3907,8 +5636,13 @@ function renderGantt(plans, startDate, endDate) {
                 }))
             : [{ vehicle: groupKey, units: unitKeys }];
 
+        // For KD2 process view: build a station→category map for this vehicle (groupKey)
+        const _kd2CatMap = isKd2ProcessView
+            ? (getModuleRuntime()?.getStationCategoryMap?.(groupKey) || new Map())
+            : null;
+
         vehicleSections.forEach(section => {
-            if (!isKd2ProcessView && (isKD2Module() || isF100KD2Module()) && section.units.length) {
+            if (!isKd2ProcessView && !isF100ProcessView && (isKD2Module() || isF100KD2Module()) && section.units.length) {
                 bodyHtml += `
       <div class="gr gr-subgroup" style="height:${Math.max(30, GANTT_GRP_H - 8)}px">
         <div class="gr-label gr-subgroup-label" style="width:${GANTT_LABEL_W}px">
@@ -3918,10 +5652,40 @@ function renderGantt(plans, startDate, endDate) {
       </div>`;
             }
 
+            let _prevComponentLabel = null;
             section.units.forEach(unit => {
+            // ── KD2 process view: inject component separator when group changes ──
+            if (isKd2ProcessView && _kd2CatMap) {
+                const catInfo = _kd2CatMap.get(unit);
+                if (catInfo) {
+                    const compLabel = catInfo.component_group;
+                    if (compLabel && compLabel !== _prevComponentLabel) {
+                        _prevComponentLabel = compLabel;
+                        bodyHtml += `
+      <div class="gr gr-process-cat-sep" style="height:22px">
+        <div class="gr-label gr-process-cat-label" style="width:${GANTT_LABEL_W}px">
+          <svg viewBox="0 0 14 14" fill="none" stroke="currentColor" stroke-width="1.6" style="width:10px;height:10px;flex-shrink:0;opacity:.7">
+            <path d="M3 4h8M3 7h8M3 10h8" stroke-dasharray="2 1.5"/>
+          </svg>
+          ${esc(compLabel)}
+        </div>
+        <div class="gr-track gr-process-cat-track" style="width:${totalW}px">${bgCells}</div>
+      </div>`;
+                    }
+                }
+            }
             const tasks = groups[groupKey][unit] || [];
-            const laneVehicle = isKd2ProcessView ? groupKey : ((isKD2Module() || isF100KD2Module()) ? unit.split('||')[0] : groupKey);
-            const laneUnit = isKd2ProcessView ? unit : ((isKD2Module() || isF100KD2Module()) ? unit.split('||').slice(1).join('||') : unit);
+            const laneVehicle = isF100ProcessView ? groupKey : isKd2ProcessView ? groupKey : ((isKD2Module() || isF100KD2Module()) ? unit.split('||')[0] : groupKey);
+            const laneUnit    = isF100ProcessView ? unit    : isKd2ProcessView ? unit    : ((isKD2Module() || isF100KD2Module()) ? unit.split('||').slice(1).join('||') : unit);
+            // Work centers for this station (process view only — shown in label).
+            // Uses task data when available, falls back to station config for empty lanes.
+            const _stationWC = isKd2ProcessView
+                ? (() => {
+                    const fromTasks = [...new Set(tasks.map(t => t.work_center).filter(Boolean))];
+                    if (fromTasks.length) return fromTasks.join(', ');
+                    return _kd2CatMap?.get(unit)?.work_centers_combined || '';
+                })()
+                : '';
             const laneMeta = laneMetaMap[laneMetaKey(groupKey, unit)] || {};
 
             // ── Lane assignment for overlapping bars ─────────────────────
@@ -3957,16 +5721,24 @@ function renderGantt(plans, startDate, endDate) {
                     actualStartMarker = `<div class="gc-actual-start-tick" style="left:${tickLeft}px;border-color:${tickColor}" title="Actual start: ${formatDate(actualStart)}"></div>`;
                 }
 
+                const _tipUnitComp = isF100KD2Module() && !isF100ProcessView
+                    ? unitCompMap[`${task.battalion_code}||${task.vehicle_type}||${task.serial_number}`] || null
+                    : null;
                 const tip = isF100KD2Module()
                     ? [
-                        `${task.battalion_code || '—'}  ·  ${task.part_name || task.vehicle}`,
-                        `Process      : ${task.process_name || task.process_station}`,
-                        `Step         : #${task.step_number}`,
+                        `${task.battalion_code || '—'}`,
+                        task.vehicle_type ? `Vehicle      : ${task.vehicle_type} #${task.serial_number ?? '?'}` : '',
+                        task.unit_label ? `Unit Label   : ${task.unit_label}` : '',
+                        task.unit_code  ? `Unit Code    : ${task.unit_code}` : '',
+                        task.unit_name  ? `Unit Name    : ${task.unit_name}` : '',
+                        `Part         : ${task.part_name || '—'}`,
+                        `Process      : #${task.step_number} ${task.process_name || task.process_station}`,
                         task.manufacturer ? `Manufacturer : ${task.manufacturer}` : '',
-                        task.vehicle_type ? `Vehicle      : ${task.vehicle_type}` : '',
                         `Planned      : ${formatDate(task.planned_start_date)} → ${formatDate(task.planned_end_date)}`,
                         task.actual_start_date ? `Actual Start : ${formatDate(task.actual_start_date)}` : '',
                         task.actual_end_date   ? `Actual End   : ${formatDate(task.actual_end_date)}` : '',
+                        _tipUnitComp ? `Progress     : ${_tipUnitComp.done}/${_tipUnitComp.total} steps (${_tipUnitComp.pct}%)` : '',
+                        Array.isArray(task.comments) && task.comments.length ? `Comments     : ${task.comments.length}` : '',
                         `Status       : ${status}`,
                     ].filter(Boolean).join('\n')
                     : [
@@ -3981,7 +5753,7 @@ function renderGantt(plans, startDate, endDate) {
                     ].filter(Boolean).join('\n');
 
                 const menuIsOpen = _openGanttBlockMenuPlanId === task.id;
-                const isSelected = _selectedGanttPlanIds.has(task.id);
+                const isSelected = _selectedGanttPlanIds.has(String(task.id));
                 const blockMenu = _ganttEditMode ? `
           <button type="button" class="gc-bar-select${isSelected ? ' gc-bar-select-active' : ''}" data-plan-id="${task.id}" title="Select block" aria-label="Select block" aria-pressed="${isSelected ? 'true' : 'false'}"></button>
           <button type="button" class="gc-bar-menu-trigger" data-plan-id="${task.id}" title="Block options" aria-label="Block options" aria-expanded="${menuIsOpen ? 'true' : 'false'}">
@@ -3991,66 +5763,19 @@ function renderGantt(plans, startDate, endDate) {
               <span class="gc-bar-menu-trigger-dot"></span>
             </span>
           </button>
-          <div class="gc-bar-menu" role="menu" aria-label="Block options">
-            <div class="gc-bar-menu-head">
-              <div class="gc-bar-menu-title-wrap">
-                <span class="gc-bar-menu-title">Block Actions</span>
-                <span class="gc-bar-menu-subtitle">Move or update this block</span>
-              </div>
-              <button type="button" class="gc-bar-menu-close" data-plan-id="${task.id}" aria-label="Close block options">&times;</button>
-            </div>
-            <div class="gc-bar-menu-body">
-              <button type="button" class="gc-bar-menu-item gc-bar-menu-item-move gc-bar-lane-up" data-plan-id="${task.id}" role="menuitem">
-                <span class="gc-bar-menu-icon" aria-hidden="true">
-                  <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round">
-                    <path d="M8 12V4"/>
-                    <path d="M4.75 7.25 8 4l3.25 3.25"/>
-                  </svg>
-                </span>
-                <span class="gc-bar-menu-copy">
-                  <span class="gc-bar-menu-label">Move up</span>
-                  <span class="gc-bar-menu-hint">Swap with the block above</span>
-                </span>
+          <div class="gc-bar-menu gc-bar-menu-compact" role="menu" aria-label="Block options">
+            <div class="gc-bmc-grid">
+              <button type="button" class="gc-bmc-btn gc-bmc-up gc-bar-lane-up" data-plan-id="${task.id}" title="Move up" role="menuitem">
+                <svg viewBox="0 0 14 14" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><path d="M7 11V3"/><path d="M3.5 6.5 7 3l3.5 3.5"/></svg>
               </button>
-              <button type="button" class="gc-bar-menu-item gc-bar-menu-item-move gc-bar-lane-dn" data-plan-id="${task.id}" role="menuitem">
-                <span class="gc-bar-menu-icon" aria-hidden="true">
-                  <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round">
-                    <path d="M8 4v8"/>
-                    <path d="m4.75 8.75 3.25 3.25 3.25-3.25"/>
-                  </svg>
-                </span>
-                <span class="gc-bar-menu-copy">
-                  <span class="gc-bar-menu-label">Move down</span>
-                  <span class="gc-bar-menu-hint">Swap with the block below</span>
-                </span>
+              <button type="button" class="gc-bmc-btn gc-bmc-dn gc-bar-lane-dn" data-plan-id="${task.id}" title="Move down" role="menuitem">
+                <svg viewBox="0 0 14 14" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><path d="M7 3v8"/><path d="m3.5 7.5 3.5 3.5 3.5-3.5"/></svg>
               </button>
-              <button type="button" class="gc-bar-menu-item gc-bar-menu-edit" data-plan-id="${task.id}" role="menuitem">
-                <span class="gc-bar-menu-icon" aria-hidden="true">
-                  <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round">
-                    <path d="M3.25 12.75h2.2l6.05-6.05-2.2-2.2-6.05 6.05v2.2Z"/>
-                    <path d="m8.55 4.5 2.2 2.2"/>
-                  </svg>
-                </span>
-                <span class="gc-bar-menu-copy">
-                  <span class="gc-bar-menu-label">Edit</span>
-                  <span class="gc-bar-menu-hint">Change dates and details</span>
-                </span>
+              <button type="button" class="gc-bmc-btn gc-bmc-edit gc-bar-menu-edit" data-plan-id="${task.id}" title="Edit" role="menuitem">
+                <svg viewBox="0 0 14 14" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M2.5 11h1.8L10 5.3l-1.8-1.8L2.5 9.2V11Z"/><path d="m8.2 3.5 1.8 1.8"/></svg>
               </button>
-              <button type="button" class="gc-bar-menu-item gc-bar-menu-delete gc-bar-menu-danger" data-plan-id="${task.id}" role="menuitem">
-                <span class="gc-bar-menu-icon" aria-hidden="true">
-                  <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round">
-                    <path d="M3.75 4.75h8.5"/>
-                    <path d="M6.25 4.75V3.5h3.5v1.25"/>
-                    <path d="M5 6.25v5.25"/>
-                    <path d="M8 6.25v5.25"/>
-                    <path d="M11 6.25v5.25"/>
-                    <path d="M4.5 4.75l.55 7.1a1 1 0 0 0 1 .9h3.9a1 1 0 0 0 1-.9l.55-7.1"/>
-                  </svg>
-                </span>
-                <span class="gc-bar-menu-copy">
-                  <span class="gc-bar-menu-label">Delete</span>
-                  <span class="gc-bar-menu-hint">Remove this block from the plan</span>
-                </span>
+              <button type="button" class="gc-bmc-btn gc-bmc-del gc-bar-menu-delete" data-plan-id="${task.id}" title="Delete" role="menuitem">
+                <svg viewBox="0 0 14 14" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M2.5 4h9"/><path d="M5.5 4V3h3v1"/><path d="M4.5 5.5v5a.75.75 0 0 0 .75.75h3.5A.75.75 0 0 0 9.5 10.5v-5"/></svg>
               </button>
             </div>
           </div>` : '';
@@ -4059,21 +5784,31 @@ function renderGantt(plans, startDate, endDate) {
           style="left:${left}px;width:${width}px;height:${BAR_H}px;top:${topPx}px;transform:none;background:${color}"
           title="${esc(tip)}">
           ${actualStartMarker}
-          <span class="gc-bar-text">${esc(isF100KD2Module() ? task.process_station : isKd2ProcessView ? `${task.battalion_code || '—'} · ${task.vehicle_no}` : isKD2Module() ? `${getRowCode(task)} · ${task.process_station}` : task.process_station)}</span>
+          <span class="gc-bar-text">${esc(isF100ProcessView ? `${task.vehicle_type || '—'} #${task.serial_number ?? task.vehicle_no}` : isF100KD2Module() ? `${task.part_name || ''} · ${task.process_station}` : isKd2ProcessView ? `${task.battalion_code || '—'} · ${task.vehicle_no}` : isKD2Module() ? `${getRowCode(task)} · ${task.process_station}` : task.process_station)}</span>
           ${blockMenu}
         </div>`;
             }).join('');
 
-            const rowMenuOpen = _ganttEditMode && positioned.some(item => item.task.id === _openGanttBlockMenuPlanId);
+            const rowMenuOpen = _ganttEditMode && positioned.some(item => String(item.task.id) === _openGanttBlockMenuPlanId);
             const anchorTask = positioned[0]?.task || null;
             const laneSelected = anchorTask
-                ? currentData.filter(row => samePlanLane(row, anchorTask)).every(row => _selectedGanttPlanIds.has(row.id))
+                ? currentData.filter(row => samePlanLane(row, anchorTask)).every(row => _selectedGanttPlanIds.has(String(row.id)))
                 : false;
+            const _f100UnitComp = (isF100KD2Module() && !isF100ProcessView)
+                ? unitCompMap[`${tasks[0]?.battalion_code || groupKey}||${laneVehicle}||${laneUnit}`] || null
+                : null;
+            const _f100PctHtml = _f100UnitComp
+                ? `<div class="gr-unit-pct-row"><div class="gr-unit-pct-bar-wrap"><div class="gr-unit-pct-bar-fill" style="width:${_f100UnitComp.pct}%"></div></div><span class="gr-unit-pct-text">${_f100UnitComp.done}/${_f100UnitComp.total} (${_f100UnitComp.pct}%)</span></div>`
+                : '';
             bodyHtml += `
         <div class="gr${rowMenuOpen ? ' gc-row-menu-open' : ''}" style="height:${rowH}px">
           <div class="gr-label gr-unit-label" style="width:${GANTT_LABEL_W}px">
             <span class="gr-unit-dot"></span>
-            <span class="gr-unit-name">${esc(isF100KD2Module() ? laneUnit : isKd2ProcessView ? laneUnit : isKD2Module() ? `${laneVehicle} · ${unitLabel(laneVehicle, laneUnit)}` : unitLabel(laneVehicle, laneUnit))}</span>
+            <div class="gr-unit-info">
+              <span class="gr-unit-name">${esc(isF100ProcessView ? laneUnit : isF100KD2Module() ? (() => { const t0 = tasks[0]; const uCode = t0?.unit_code || ''; const uName = t0?.unit_name || ''; return uCode && uName ? `${uCode} · ${uName}` : uCode || uName || `${laneVehicle} #${laneUnit}`; })() : isKd2ProcessView ? laneUnit : isKD2Module() ? `${laneVehicle} · ${unitLabel(laneVehicle, laneUnit)}` : unitLabel(laneVehicle, laneUnit))}</span>
+              ${_stationWC ? `<span class="gr-unit-wc">${esc(_stationWC)}</span>` : ''}
+              ${_f100PctHtml}
+            </div>
             ${(isKD2Module() || isF100KD2Module()) && _ganttEditMode && _ganttSelectLaneMode && anchorTask ? `<button type="button" class="gantt-lane-select-btn" data-gantt-lane-select="${anchorTask.id}" aria-pressed="${laneSelected ? 'true' : 'false'}">${laneSelected ? 'Clear lane' : 'Select lane'}</button>` : ''}
           </div>
           <div class="gr-track" style="width:${totalW}px;height:${rowH}px"
@@ -4147,6 +5882,617 @@ function renderGantt(plans, startDate, endDate) {
 }
 
 /* ================================================================
+   GANTT SCHEDULE EXCEL EXPORT
+   Produces a visual Gantt chart in Excel — one column per day,
+   one row per lane, task bars rendered as filled cells.
+   Supports Process View (vehicle → station lanes) and
+   Unit View (battalion → vehicle → unit lanes).
+   ================================================================ */
+let _ganttExportMenuBound = false;
+
+function wireGanttExportMenu() {
+    if (_ganttExportMenuBound) return;
+    _ganttExportMenuBound = true;
+
+    document.getElementById('btnGanttExportSchedule')?.addEventListener('click', e => {
+        const menu = document.getElementById('ganttExportMenu');
+        if (!menu) return;
+        const open = menu.style.display !== 'none';
+        menu.style.display = open ? 'none' : '';
+        e.currentTarget.setAttribute('aria-expanded', open ? 'false' : 'true');
+        e.stopPropagation();
+    });
+
+    document.getElementById('ganttExportMenu')?.addEventListener('click', async e => {
+        const opt = e.target.closest('[data-export-view]');
+        if (!opt) return;
+        const view = opt.dataset.exportView;
+        const menu = document.getElementById('ganttExportMenu');
+        if (menu) menu.style.display = 'none';
+        document.getElementById('btnGanttExportSchedule')?.setAttribute('aria-expanded', 'false');
+        await exportGanttSchedule(view);
+    });
+
+    document.addEventListener('click', e => {
+        const menu = document.getElementById('ganttExportMenu');
+        const btn  = document.getElementById('btnGanttExportSchedule');
+        if (!menu || menu.style.display === 'none') return;
+        if (!menu.contains(e.target) && !btn?.contains(e.target)) {
+            menu.style.display = 'none';
+            btn?.setAttribute('aria-expanded', 'false');
+        }
+    });
+}
+
+async function exportGanttSchedule(exportView = 'process') {
+    try {
+        if (typeof ExcelJS === 'undefined') {
+            showToast('ExcelJS not loaded — please wait and try again.', 'error'); return;
+        }
+        const gsEl = document.getElementById('ganttStart');
+        const geEl = document.getElementById('ganttEnd');
+        const startDate = gsEl?.value;
+        const endDate   = geEl?.value;
+        if (!startDate || !endDate || startDate > endDate) {
+            showToast('Set a valid Gantt date range first.', 'error'); return;
+        }
+        if (!currentData?.length) { showToast('No data loaded.', 'error'); return; }
+
+        showToast('Building Gantt schedule…', 'info');
+
+        // ── 1. Day list (strip Fridays) ───────────────────────────
+        const days    = buildVisibleGanttDays(startDate, endDate);
+        const numDays = days.length;
+        if (!numDays) { showToast('No days in range.', 'error'); return; }
+        const today = todayStr();
+
+        const dayMeta = days.map(d => {
+            const dt = new Date(d + 'T00:00:00');
+            return {
+                date:    d,
+                dayNum:  dt.getDate(),
+                month:   dt.toLocaleDateString('en-GB', { month: 'short', year: 'numeric' }),
+                isoWeek: getISOWeek(d),
+                isSat:   dt.getDay() === 6,
+                isToday: d === today,
+            };
+        });
+
+        // ── 2. No-work days ───────────────────────────────────────
+        const specialZones = getModuleGanttZones(startDate, endDate);
+        const holidayStatusByDay = new Map();
+        const _dIdx = Object.fromEntries(days.map((d, i) => [d, i]));
+        specialZones
+            .filter(z => (z?.type === 'holiday' || z?.type === 'holiday-inactive') && z.start && z.end)
+            .forEach(zone => {
+                const isInactive = zone.type === 'holiday-inactive';
+                let cursor = zone.start; let guard = 0;
+                while (cursor <= zone.end && guard++ < 400) {
+                    if (_dIdx[cursor] !== undefined) holidayStatusByDay.set(cursor, isInactive ? 'inactive' : 'active');
+                    cursor = addDays(cursor, 1);
+                }
+            });
+
+        // ── 3. Normalize & filter plans ──────────────────────────
+        let plans = currentData;
+        if (isF100KD2Module()) {
+            plans = plans.map(r => ({
+                ...r,
+                vehicle:         r.vehicle_type  || '—',
+                vehicle_no:      String(r.serial_number ?? '—'),
+                process_station: r.process_name  || '—',
+            }));
+        }
+        const visible = plans.filter(p =>
+            p.start_date && p.end_date &&
+            p.start_date <= endDate && p.end_date >= startDate
+        );
+        if (!visible.length) { showToast('No tasks fall in the selected date range.', 'error'); return; }
+
+        // ── 4. Build groups (same logic as renderGantt) ───────────
+        const isProcessView = exportView === 'process';
+        const groups = {};
+        visible.forEach(p => {
+            const groupKey = isProcessView
+                ? (p.vehicle || '—')
+                : (isKD2Module() || isF100KD2Module() ? (p.battalion_code || '—') : p.vehicle);
+            const laneKey = isProcessView
+                ? (p.process_station || '—')
+                : (isKD2Module()
+                    ? `${p.vehicle}||${p.vehicle_no}`
+                    : isF100KD2Module()
+                        ? `${p.vehicle_type}||${p.serial_number}`
+                        : p.vehicle_no);
+            if (!groups[groupKey]) groups[groupKey] = {};
+            if (!groups[groupKey][laneKey]) groups[groupKey][laneKey] = [];
+            groups[groupKey][laneKey].push(p);
+        });
+
+        const groupKeys = Object.keys(groups).sort((a, b) => {
+            if (isProcessView) return vehicleSort(a, b);
+            if (isKD2Module() || isF100KD2Module()) return a.localeCompare(b, undefined, { numeric: true });
+            return vehicleSort(a, b);
+        });
+
+        // ── 5. ExcelJS workbook ───────────────────────────────────
+        const wb = new ExcelJS.Workbook();
+        const ws = wb.addWorksheet('Gantt Schedule');
+
+        // LC = number of label columns (col1=station name, col2=work center)
+        const LC = 2;
+
+        // Freeze: label cols + first 5 header rows
+        ws.views = [{ state: 'frozen', xSplit: LC, ySplit: 5, activeCell: 'C6' }];
+
+        // Column widths: station name col=32, work center col=10, each day col=3.6
+        ws.getColumn(1).width = 32;
+        ws.getColumn(2).width = 10;
+        for (let i = 0; i < numDays; i++) ws.getColumn(i + LC + 1).width = 3.6;
+
+        // ── Color palette ─────────────────────────────────────────
+        const C = {
+            NAV:      'FF1e293b',
+            WHITE:    'FFFFFFFF',
+            MUTE:     'FF94a3b8',
+            MONTH_BG: 'FF334155',
+            WEEK_BG:  'FF475569',
+            GRP_BG:   'FF1e293b',
+            SUBGRP_BG:'FF1e3a5f',
+            SAT_BG:   'FF64748b',
+            HOL_BG:   'FFdc2626',
+            INACT_BG: 'FF94a3b8',
+            TODAY_BG: 'FF3b82f6',
+            ROW_ALT:  'FFf8fafc',
+            ROW_BASE: 'FFFFFFFF',
+        };
+
+        const mkFill = argb => ({ type: 'pattern', pattern: 'solid', fgColor: { argb } });
+        const toArgb = hex  => 'FF' + hex.replace('#', '').toUpperCase();
+        const thinBdr = () => {
+            const s = { style: 'thin', color: { argb: 'FFe2e8f0' } };
+            return { left: s, right: s, top: s, bottom: s };
+        };
+        function lightenArgb(cssHex, amount = 0.3) {
+            const h = cssHex.replace('#', '');
+            const r = parseInt(h.slice(0, 2), 16), g = parseInt(h.slice(2, 4), 16), b = parseInt(h.slice(4, 6), 16);
+            const lr = Math.round(r + (255 - r) * amount), lg = Math.round(g + (255 - g) * amount), lb = Math.round(b + (255 - b) * amount);
+            return 'FF' + [lr, lg, lb].map(v => v.toString(16).padStart(2, '0').toUpperCase()).join('');
+        }
+
+        let r = 1;
+
+        // ── Row 1: Title ──────────────────────────────────────────
+        const viewLabel   = isProcessView ? 'Process View' : 'Unit View';
+        const moduleLabel = isKD2Module() ? 'KD2' : isF100KD2Module() ? 'F100-KD2' : 'Assembly';
+        ws.getRow(r).height = 24;
+        ws.mergeCells(r, 1, r, numDays + LC);
+        const t1 = ws.getCell(r, 1);
+        t1.value     = `${moduleLabel} Gantt Schedule — ${viewLabel}`;
+        t1.font      = { name: 'Calibri', size: 14, bold: true, color: { argb: C.WHITE } };
+        t1.fill      = mkFill(C.NAV);
+        t1.alignment = { vertical: 'middle', indent: 1 };
+        r++;
+
+        // ── Row 2: Subtitle ───────────────────────────────────────
+        ws.getRow(r).height = 14;
+        ws.mergeCells(r, 1, r, numDays + LC);
+        const t2 = ws.getCell(r, 1);
+        t2.value     = `${formatDate(startDate)} → ${formatDate(endDate)}   ·   Generated: ${new Date().toLocaleString('en-GB')}`;
+        t2.font      = { name: 'Calibri', size: 8, italic: true, color: { argb: C.MUTE } };
+        t2.fill      = mkFill('FFf8fafc');
+        t2.alignment = { vertical: 'middle', indent: 1 };
+        r++;
+
+        // ── Row 3: Month row ──────────────────────────────────────
+        ws.getRow(r).height = 18;
+        ws.getCell(r, 1).fill = mkFill(C.MONTH_BG);
+        ws.getCell(r, 2).fill = mkFill(C.MONTH_BG);
+        {
+            let runMonth = '', runStart = 0;
+            const flushMonth = (endIdx) => {
+                if (!runMonth) return;
+                const cs = runStart + LC + 1, ce = endIdx + LC + 1; // day idx i → col i+LC+1
+                if (cs < ce) ws.mergeCells(r, cs, r, ce);
+                const c = ws.getCell(r, cs);
+                c.value     = runMonth;
+                c.font      = { name: 'Calibri', size: 9, bold: true, color: { argb: C.WHITE } };
+                c.fill      = mkFill(C.MONTH_BG);
+                c.alignment = { horizontal: 'center', vertical: 'middle' };
+            };
+            dayMeta.forEach((dm, i) => {
+                if (dm.month !== runMonth) { flushMonth(i - 1); runMonth = dm.month; runStart = i; }
+            });
+            flushMonth(numDays - 1);
+        }
+        r++;
+
+        // ── Row 4: FW Week row ────────────────────────────────────
+        ws.getRow(r).height = 16;
+        ws.getCell(r, 1).fill = mkFill(C.WEEK_BG);
+        ws.getCell(r, 2).fill = mkFill(C.WEEK_BG);
+        {
+            let runWeek = -1, runStart = 0;
+            const flushWeek = (endIdx) => {
+                if (runWeek === -1) return;
+                const cs = runStart + LC + 1, ce = endIdx + LC + 1;
+                if (cs < ce) ws.mergeCells(r, cs, r, ce);
+                const c = ws.getCell(r, cs);
+                c.value     = `FW${runWeek}`;
+                c.font      = { name: 'Calibri', size: 8, bold: true, color: { argb: C.WHITE } };
+                c.fill      = mkFill(C.WEEK_BG);
+                c.alignment = { horizontal: 'center', vertical: 'middle' };
+            };
+            dayMeta.forEach((dm, i) => {
+                if (dm.isoWeek !== runWeek) { flushWeek(i - 1); runWeek = dm.isoWeek; runStart = i; }
+            });
+            flushWeek(numDays - 1);
+        }
+        r++;
+
+        // ── Row 5: Day numbers ────────────────────────────────────
+        ws.getRow(r).height = 20;
+        const dayHdrLabel = isProcessView
+            ? 'Vehicle / Station'
+            : (isKD2Module() ? 'Battalion / Vehicle / Unit' : 'Group / Unit');
+        const dh = ws.getCell(r, 1);
+        dh.value     = dayHdrLabel;
+        dh.font      = { name: 'Calibri', size: 8, bold: true, color: { argb: C.WHITE } };
+        dh.fill      = mkFill(C.NAV);
+        dh.alignment = { horizontal: 'center', vertical: 'middle' };
+        const dhWC = ws.getCell(r, 2);
+        dhWC.value     = 'W/C';
+        dhWC.font      = { name: 'Calibri', size: 8, bold: true, color: { argb: C.WHITE } };
+        dhWC.fill      = mkFill(C.NAV);
+        dhWC.alignment = { horizontal: 'center', vertical: 'middle' };
+
+        dayMeta.forEach((dm, i) => {
+            const c = ws.getCell(r, i + LC + 1);
+            c.value = dm.dayNum;
+            const hStat = holidayStatusByDay.get(dm.date) || '';
+            const bg = hStat === 'active'   ? C.HOL_BG
+                     : hStat === 'inactive' ? C.INACT_BG
+                     : dm.isToday           ? C.TODAY_BG
+                     : dm.isSat             ? C.SAT_BG
+                                            : C.WEEK_BG;
+            const txtColor = (dm.isToday && !hStat) ? C.NAV : C.WHITE;
+            c.font      = { name: 'Calibri', size: 7, bold: dm.isToday, color: { argb: txtColor } };
+            c.fill      = mkFill(bg);
+            c.alignment = { horizontal: 'center', vertical: 'middle' };
+        });
+        r++;
+
+        // ── Status → text color for bar labels ───────────────────
+        // Green=Completed, Orange=InProgress, LightBlue=LateCompletion, Red=Overdue, Black=Planned
+        function statusTextArgb(task) {
+            const st = calculateStatus(task);
+            if (st === 'Completed')       return 'FF16a34a'; // green
+            if (st === 'In Progress')     return 'FFea580c'; // orange
+            if (st === 'Late Completion') return 'FF2563eb'; // blue
+            if (st === 'Overdue')         return 'FFdc2626'; // red
+            return 'FF1e293b'; // dark navy (Planned/default)
+        }
+
+        // ── Thick outer bar border, NO inner borders ─────────────
+        // Omitting left/right keys entirely for inner cells removes those borders in Excel.
+        // Using NONE (transparent) still renders a thin line — so we simply don't set those keys.
+        const THICK = { style: 'medium', color: { argb: 'FF000000' } };
+        function barBorder(pos) {
+            // pos: 'only' | 'first' | 'middle' | 'last'
+            const bdr = { top: THICK, bottom: THICK };
+            if (pos === 'only' || pos === 'first') bdr.left  = THICK;
+            if (pos === 'only' || pos === 'last')  bdr.right = THICK;
+            return bdr;
+        }
+
+        // ── 6. Helper: write one station/unit lane (one or more Excel rows) ──
+        function writeLaneRows(laneLabel, tasks, rowStart) {
+            const positioned = buildPositionedGanttLaneTasks(tasks, startDate, endDate);
+            const numLanes   = positioned.length ? Math.max(...positioned.map(it => it.lane)) + 1 : 1;
+
+            for (let lane = 0; lane < numLanes; lane++) {
+                const excelRow = rowStart + lane;
+                ws.getRow(excelRow).height = 16;
+
+                // Col A — station / unit label (value only written in first lane; merged later)
+                const lc = ws.getCell(excelRow, 1);
+                lc.fill      = mkFill(C.ROW_BASE);
+                lc.border    = thinBdr();
+                lc.alignment = { vertical: 'middle', wrapText: true, indent: 2 };
+                if (lane === 0) {
+                    lc.value = laneLabel;
+                    lc.font  = { name: 'Calibri', size: 8, bold: false, color: { argb: C.NAV } };
+                } else {
+                    lc.font = { name: 'Calibri', size: 8, color: { argb: C.MUTE } };
+                }
+
+                // Col B — work center for this lane (derived from the first task in the lane)
+                const laneItems = positioned.filter(it => it.lane === lane);
+                const laneWC    = laneItems.length ? (laneItems[0].task.work_center || '') : '';
+                const wc = ws.getCell(excelRow, 2);
+                wc.fill      = mkFill(lane % 2 === 0 ? C.ROW_BASE : C.ROW_ALT);
+                wc.border    = thinBdr();
+                wc.alignment = { vertical: 'middle', horizontal: 'center' };
+                wc.font      = { name: 'Calibri', size: 7, color: { argb: C.MUTE } };
+                if (laneWC) wc.value = laneWC;
+
+                // Day background cells (columns LC+1 … numDays+LC)
+                dayMeta.forEach((dm, di) => {
+                    const c = ws.getCell(excelRow, di + LC + 1);
+                    const hStat = holidayStatusByDay.get(dm.date) || '';
+                    c.fill   = mkFill(hStat === 'active' ? 'FFfee2e2' : hStat === 'inactive' ? 'FFf1f5f9' : dm.isSat ? 'FFf8fafc' : C.ROW_BASE);
+                    c.border = { right: { style: 'thin', color: { argb: 'FFe8edf2' } } };
+                });
+
+                // Task bars — white fill, thick outer border, no inner borders
+                positioned
+                    .filter(item => item.lane === lane)
+                    .forEach(({ task, si, ei }) => {
+                        const txtArgb = statusTextArgb(task);
+                        const barLen  = ei - si + 1;
+                        const barText = isProcessView
+                            ? `#${task.unit_serial ?? '?'}`
+                            : (task.process_station || '');
+
+                        for (let di = si; di <= ei; di++) {
+                            const c   = ws.getCell(excelRow, di + LC + 1);
+                            const pos = barLen === 1 ? 'only' : di === si ? 'first' : di === ei ? 'last' : 'middle';
+                            c.fill   = mkFill('FFFFFFFF');
+                            c.border = barBorder(pos);
+                        }
+                        // Text label in the first bar cell
+                        const fc = ws.getCell(excelRow, si + LC + 1);
+                        fc.value     = barText;
+                        fc.font      = { name: 'Calibri', size: 6, bold: false, color: { argb: txtArgb } };
+                        fc.alignment = { vertical: 'middle', horizontal: 'left' };
+                    });
+            }
+
+            // Merge col A vertically across all lanes so station name reads as one cell
+            if (numLanes > 1) {
+                ws.mergeCells(rowStart, 1, rowStart + numLanes - 1, 1);
+                const mc = ws.getCell(rowStart, 1);
+                mc.alignment = { vertical: 'middle', wrapText: true, indent: 2 };
+            }
+
+            return numLanes;
+        }
+
+        // ── Helper: write a thin separator row between stations ───
+        function writeStationSepRow() {
+            ws.getRow(r).height = 3;
+            ws.mergeCells(r, 1, r, numDays + LC);
+            ws.getCell(r, 1).fill = mkFill('FFe2e8f0');
+            r++;
+        }
+
+        // ── Helper: write a category separator row ────────────────
+        function writeCatSepRow(catName) {
+            ws.getRow(r).height = 14;
+            ws.mergeCells(r, 1, r, numDays + LC);
+            const c = ws.getCell(r, 1);
+            c.value     = catName.toUpperCase();
+            c.font      = { name: 'Calibri', size: 7, bold: true, italic: true, color: { argb: 'FF1d4ed8' } };
+            c.fill      = mkFill('FFdbeafe');
+            c.alignment = { vertical: 'middle', indent: 2 };
+            r++;
+        }
+
+        // ── 7. Data rows ──────────────────────────────────────────
+        groupKeys.forEach(groupKey => {
+            // Category map per vehicle for KD2 process view
+            const _exportCatMap = (isProcessView && isKD2Module())
+                ? (getModuleRuntime()?.getStationCategoryMap?.(groupKey) || new Map())
+                : null;
+            // Group header row
+            ws.getRow(r).height = 18;
+            ws.mergeCells(r, 1, r, numDays + LC);
+            const gc = ws.getCell(r, 1);
+            gc.value     = groupKey;
+            gc.font      = { name: 'Calibri', size: 9, bold: true, color: { argb: C.WHITE } };
+            gc.fill      = mkFill(C.GRP_BG);
+            gc.alignment = { vertical: 'middle', indent: 1 };
+            r++;
+
+            const unitKeys = Object.keys(groups[groupKey]).sort((a, b) => {
+                if (isProcessView) {
+                    const routeOrder = getModuleRuntime()?.getStationRouteOrder?.(groupKey) || new Map();
+                    const seqA = routeOrder.get(a) ?? 9999;
+                    const seqB = routeOrder.get(b) ?? 9999;
+                    if (seqA !== seqB) return seqA - seqB;
+                }
+                return a.localeCompare(b, undefined, { numeric: true });
+            });
+
+            if (!isProcessView && (isKD2Module() || isF100KD2Module())) {
+                // Unit view — vehicle sub-sections
+                const vehicles = [...new Set(unitKeys.map(u => u.split('||')[0]).filter(Boolean))]
+                    .sort((a, b) => isF100KD2Module()
+                        ? a.localeCompare(b, undefined, { numeric: true })
+                        : vehicleSort(a, b));
+
+                vehicles.forEach(vehicle => {
+                    const vUnits = unitKeys.filter(u => u.startsWith(vehicle + '||'));
+                    if (!vUnits.length) return;
+
+                    // Vehicle sub-header
+                    ws.getRow(r).height = 14;
+                    ws.mergeCells(r, 1, r, numDays + LC);
+                    const vc = ws.getCell(r, 1);
+                    vc.value     = `  ${vehicle}`;
+                    vc.font      = { name: 'Calibri', size: 8, bold: true, color: { argb: 'FFbfdbfe' } };
+                    vc.fill      = mkFill(C.SUBGRP_BG);
+                    vc.alignment = { vertical: 'middle' };
+                    r++;
+
+                    vUnits.forEach(unit => {
+                        const unitLabel = unit.split('||').slice(1).join('||');
+                        const laneCount = writeLaneRows(unitLabel, groups[groupKey][unit], r);
+                        r += laneCount;
+                        writeStationSepRow();
+                    });
+                });
+            } else {
+                // Process view (or non-KD2 unit view) — with component separators for KD2
+                let prevCompLabel = null;
+                unitKeys.forEach(unit => {
+                    if (_exportCatMap) {
+                        const catInfo = _exportCatMap.get(unit);
+                        if (catInfo) {
+                            const compLabel = catInfo.component_group;
+                            if (compLabel && compLabel !== prevCompLabel) {
+                                prevCompLabel = compLabel;
+                                writeCatSepRow(compLabel);
+                            }
+                        }
+                    }
+                    const laneCount = writeLaneRows(unit, groups[groupKey][unit], r);
+                    r += laneCount;
+                    writeStationSepRow();
+                });
+            }
+        });
+
+        // ── 8. Legend sheet ──────────────────────────────────────
+        const wl = wb.addWorksheet('Legend');
+        wl.getColumn(1).width = 28;
+        wl.getColumn(2).width = 48;
+
+        const legendRows = [
+            { type: 'title',    text: 'Gantt Schedule — How to Read This File' },
+            { type: 'subtitle', text: `${moduleLabel} · ${viewLabel} · ${formatDate(startDate)} → ${formatDate(endDate)}` },
+            { type: 'gap' },
+            { type: 'section', text: 'SHEET STRUCTURE' },
+            { type: 'item',    label: 'Row 1',         desc: 'Title — module name, view mode, date range' },
+            { type: 'item',    label: 'Row 2',         desc: 'Generated timestamp' },
+            { type: 'item',    label: 'Row 3',         desc: 'Month groupings (merged cells)' },
+            { type: 'item',    label: 'Row 4',         desc: 'Fiscal Week (FW) groupings (merged cells)' },
+            { type: 'item',    label: 'Row 5',         desc: 'Day numbers — each column = one working day (Fridays excluded)' },
+            { type: 'item',    label: 'Column A',      desc: 'Station / unit label. Merged vertically when a station runs on parallel work centers.' },
+            { type: 'item',    label: 'Column B (W/C)',desc: 'Work center code for each lane (e.g. W11 / W12 for parallel lines)' },
+            { type: 'item',    label: 'Columns C+',    desc: 'Timeline: one column per non-Friday day in the selected range' },
+            { type: 'item',    label: 'Frozen pane',   desc: 'Columns A–B and rows 1–5 stay fixed while scrolling' },
+            { type: 'gap' },
+            { type: 'section', text: 'ROW TYPES' },
+            { type: 'swatch',  label: 'Group header',   desc: 'Dark navy row — vehicle (process view) or battalion (unit view)', argb: C.GRP_BG, txt: C.WHITE },
+            { type: 'swatch',  label: 'Vehicle sub-row',desc: 'Dark blue row — vehicle type within a battalion (unit view)', argb: C.SUBGRP_BG, txt: 'FFbfdbfe' },
+            { type: 'swatch',  label: 'Component divider',desc: 'Light blue row — component group separator (process view, KD2): Hull | Turret | Hull-Assembly | Turret Assembly | Processing and Testing', argb: 'FFdbeafe', txt: 'FF1d4ed8' },
+            { type: 'swatch',  label: 'Data row',        desc: 'White row — one row per station/unit lane. Multiple rows appear when tasks overlap.', argb: C.ROW_BASE, txt: C.NAV },
+            { type: 'gap' },
+            { type: 'section', text: 'DAY COLUMN COLOURS' },
+            { type: 'swatch',  label: 'Normal day',     desc: 'Standard working day', argb: C.WEEK_BG, txt: C.WHITE },
+            { type: 'swatch',  label: 'Saturday',       desc: 'Saturday (reduced working day)', argb: C.SAT_BG, txt: C.WHITE },
+            { type: 'swatch',  label: 'No-work day',    desc: 'Active holiday / no-work day — work is NOT planned on this day', argb: C.HOL_BG, txt: C.WHITE },
+            { type: 'swatch',  label: 'Inactive holiday',desc: 'Inactive/historical no-work marker', argb: C.INACT_BG, txt: C.WHITE },
+            { type: 'swatch',  label: 'Today',          desc: 'Current date', argb: C.TODAY_BG, txt: C.NAV },
+            { type: 'gap' },
+            { type: 'section', text: 'TASK BAR TEXT COLOURS (status indicator)' },
+            { type: 'swatch',  label: 'Completed',      desc: 'Task finished on time', argb: 'FF dcfce7', txt: 'FF16a34a' },
+            { type: 'swatch',  label: 'In Progress',    desc: 'Task currently being worked on', argb: 'FFfff7ed', txt: 'FFea580c' },
+            { type: 'swatch',  label: 'Late Completion',desc: 'Task finished but after the planned end date', argb: 'FFeff6ff', txt: 'FF2563eb' },
+            { type: 'swatch',  label: 'Overdue',        desc: 'Task not yet complete and past its planned end date — requires attention', argb: 'FFfef2f2', txt: 'FFdc2626' },
+            { type: 'swatch',  label: 'Planned',        desc: 'Task not yet started, within schedule', argb: C.ROW_BASE, txt: C.NAV },
+            { type: 'gap' },
+            { type: 'section', text: 'TASK BARS' },
+            { type: 'item',    label: 'Bar fill',       desc: 'White — no station color in the export; status is shown via text color only' },
+            { type: 'item',    label: 'Bar text',       desc: isProcessView ? 'Shows vehicle number (#1, #2 …) — unit serial in the current battalion' : 'Shows process station name (unit view)' },
+            { type: 'item',    label: 'Bar border',     desc: 'Thick black outer border marks the full span of the task (start → end). No inner lines.' },
+            { type: 'item',    label: 'Multiple rows',  desc: 'When two tasks overlap on the same station/unit, each gets its own sub-row (lane)' },
+            { type: 'gap' },
+            { type: 'section', text: 'PROCESS VIEW (KD2 only)' },
+            { type: 'item',    label: 'Group',          desc: 'Vehicle type (K9, K10, etc.)' },
+            { type: 'item',    label: 'Component divider',desc: 'Component group in order: Hull → Turret → Assembly & Processing and Testing' },
+            { type: 'item',    label: 'Lane label',     desc: 'Station name · Work Center code (e.g. "Hull - Floor  ·  W05, W06")' },
+            { type: 'item',    label: 'Lane',           desc: 'One row per process station. Bars show which units (#1, #2 …) are at that station and when.' },
+            { type: 'gap' },
+            { type: 'section', text: 'UNIT VIEW' },
+            { type: 'item',    label: 'Group',          desc: 'Battalion' },
+            { type: 'item',    label: 'Sub-group',      desc: 'Vehicle type' },
+            { type: 'item',    label: 'Lane',           desc: 'One row per unit. Bars show the planned process steps for that unit.' },
+        ];
+
+        let lr = 1;
+        legendRows.forEach(row => {
+            if (row.type === 'gap') { wl.getRow(lr).height = 8; lr++; return; }
+
+            if (row.type === 'title') {
+                wl.getRow(lr).height = 26;
+                wl.mergeCells(lr, 1, lr, 2);
+                const c = wl.getCell(lr, 1);
+                c.value = row.text;
+                c.font  = { name: 'Calibri', size: 14, bold: true, color: { argb: C.WHITE } };
+                c.fill  = mkFill(C.NAV);
+                c.alignment = { vertical: 'middle', indent: 1 };
+                lr++; return;
+            }
+            if (row.type === 'subtitle') {
+                wl.getRow(lr).height = 14;
+                wl.mergeCells(lr, 1, lr, 2);
+                const c = wl.getCell(lr, 1);
+                c.value = row.text;
+                c.font  = { name: 'Calibri', size: 8, italic: true, color: { argb: C.MUTE } };
+                c.fill  = mkFill('FFf8fafc');
+                c.alignment = { vertical: 'middle', indent: 1 };
+                lr++; return;
+            }
+            if (row.type === 'section') {
+                wl.getRow(lr).height = 16;
+                wl.mergeCells(lr, 1, lr, 2);
+                const c = wl.getCell(lr, 1);
+                c.value = row.text;
+                c.font  = { name: 'Calibri', size: 9, bold: true, color: { argb: C.WHITE } };
+                c.fill  = mkFill(C.MONTH_BG);
+                c.alignment = { vertical: 'middle', indent: 1 };
+                lr++; return;
+            }
+            if (row.type === 'item') {
+                wl.getRow(lr).height = 15;
+                const l = wl.getCell(lr, 1);
+                l.value = row.label;
+                l.font  = { name: 'Calibri', size: 8, bold: true, color: { argb: C.NAV } };
+                l.fill  = mkFill('FFf8fafc');
+                l.alignment = { vertical: 'middle', indent: 1 };
+                const d = wl.getCell(lr, 2);
+                d.value = row.desc;
+                d.font  = { name: 'Calibri', size: 8, color: { argb: C.NAV } };
+                d.fill  = mkFill(C.ROW_BASE);
+                d.alignment = { vertical: 'middle', indent: 1, wrapText: true };
+                lr++; return;
+            }
+            if (row.type === 'swatch') {
+                wl.getRow(lr).height = 15;
+                const l = wl.getCell(lr, 1);
+                l.value = row.label;
+                l.font  = { name: 'Calibri', size: 8, bold: true, color: { argb: row.txt } };
+                l.fill  = mkFill(row.argb.replace(/\s/g, ''));
+                l.alignment = { vertical: 'middle', indent: 1 };
+                const d = wl.getCell(lr, 2);
+                d.value = row.desc;
+                d.font  = { name: 'Calibri', size: 8, color: { argb: C.NAV } };
+                d.fill  = mkFill(C.ROW_BASE);
+                d.alignment = { vertical: 'middle', indent: 1, wrapText: true };
+                lr++; return;
+            }
+        });
+
+        // ── 9. Save ───────────────────────────────────────────────
+        const buffer = await wb.xlsx.writeBuffer();
+        const blob   = new Blob([buffer], { type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' });
+        const url    = URL.createObjectURL(blob);
+        const anchor = document.createElement('a');
+        const prefix = isKD2Module() ? 'KD2' : isF100KD2Module() ? 'F100KD2' : 'Gantt';
+        anchor.href     = url;
+        anchor.download = `${prefix}_Gantt_${exportView}_${startDate}_to_${endDate}.xlsx`;
+        document.body.appendChild(anchor); anchor.click();
+        document.body.removeChild(anchor); URL.revokeObjectURL(url);
+        showToast('Gantt schedule exported!', 'success');
+
+    } catch (err) {
+        console.error('[exportGanttSchedule]', err);
+        showToast('Export failed: ' + (err.message || err), 'error');
+    }
+}
+
+/* ================================================================
    REPORT ENGINE
    PDF  → jsPDF + jsPDF-AutoTable
    Excel→ SheetJS (XLSX)
@@ -4176,9 +6522,11 @@ function buildReportRows(typeKey, fromDate, toDate, category) {
 
     let rows = currentData.filter(def.filter);
 
-    if (fromDate) rows = rows.filter(r => r.start_date >= fromDate);
-    if (toDate) rows = rows.filter(r => r.start_date <= toDate);
-    if (category) rows = rows.filter(r => getModuleCategory(r.process_station, r) === category);
+    const startField = isF100KD2Module() ? 'planned_start_date' : 'start_date';
+    if (fromDate) rows = rows.filter(r => (r[startField] || r.start_date) >= fromDate);
+    if (toDate)   rows = rows.filter(r => (r[startField] || r.start_date) <= toDate);
+    // Category filter only applies to F200 modules (F100 has no station categories)
+    if (category && !isF100KD2Module()) rows = rows.filter(r => getModuleCategory(r.process_station, r) === category);
 
     return rows;
 }
@@ -4207,6 +6555,30 @@ const REPORT_COLUMNS = [
     { header: 'Completion Note', key: r => r.progress?.notes || '' },
 ];
 
+/* ─── F100 report column config (indices: Status=13, Delay=14) ── */
+const F100_REPORT_COLUMNS = [
+    { header: '#',            key: (r, i) => i + 1 },
+    { header: 'Battalion',    key: r => r.battalion_code || '—' },
+    { header: 'Part',         key: r => r.part_name || '—' },
+    { header: 'Part No.',     key: r => r.part_number || '—' },
+    { header: 'Vehicle',      key: r => r.vehicle_type || '—' },
+    { header: 'Unit Code',    key: r => r.unit_code  || '—' },
+    { header: 'Unit Name',    key: r => r.unit_name  || '—' },
+    { header: 'Step',         key: r => r.step_number ? `#${r.step_number}` : '—' },
+    { header: 'Process',      key: r => r.process_name || '—' },
+    { header: 'Planned Start',key: r => formatDate(r.planned_start_date) },
+    { header: 'Planned End',  key: r => formatDate(r.planned_end_date) },
+    { header: 'Actual Start', key: r => formatDate(r.actual_start_date) },
+    { header: 'Actual End',   key: r => formatDate(r.actual_end_date) },
+    { header: 'Status',       key: r => r.status || 'Planned' },
+    {
+        header: 'Delay (days)', key: r => {
+            const d = delayDays(r);
+            return d > 0 ? `+${d}d` : (r.status === 'Completed' || r.status === 'Late Completion') ? 'On Time' : '—';
+        }
+    },
+];
+
 /* ─── Status → colour map for PDF ──────────────────────────────── */
 const STATUS_COLORS = {
     'Completed': [34, 197, 94],
@@ -4232,6 +6604,7 @@ function buildSummaryStats(rows) {
    PDF EXPORT  — white / print-friendly theme
    ══════════════════════════════════════════════════════════════════ */
 function exportPDF(typeKey, fromDate, toDate, category) {
+    try {
     const def = REPORT_TYPES[typeKey];
     const rows = buildReportRows(typeKey, fromDate, toDate, category);
 
@@ -4240,6 +6613,10 @@ function exportPDF(typeKey, fromDate, toDate, category) {
         return;
     }
 
+    if (!window.jspdf) {
+        showToast('PDF library not loaded — please refresh and try again.', 'error');
+        return;
+    }
     const { jsPDF } = window.jspdf;
     const doc = new jsPDF({ orientation: 'landscape', unit: 'mm', format: 'a4' });
 
@@ -4350,8 +6727,11 @@ function exportPDF(typeKey, fromDate, toDate, category) {
 
     // ── Data table ────────────────────────────────────────────────────
     const tableTop = stats_y + 18;
-    const headers = REPORT_COLUMNS.map(c => c.header);
-    const body = rows.map((r, i) => REPORT_COLUMNS.map(c => String(c.key(r, i) ?? '')));
+    const activeCols = isF100KD2Module() ? F100_REPORT_COLUMNS : REPORT_COLUMNS;
+    const statusColIdx = isF100KD2Module() ? 13 : 11;
+    const delayColIdx  = isF100KD2Module() ? 14 : 12;
+    const headers = activeCols.map(c => c.header);
+    const body = rows.map((r, i) => activeCols.map(c => String(c.key(r, i) ?? '')));
 
     // Status badge colours for white background (darker shades)
     const STATUS_COLORS_LIGHT = {
@@ -4404,7 +6784,7 @@ function exportPDF(typeKey, fromDate, toDate, category) {
             13: { cellWidth: 40, overflow: 'linebreak', valign: 'top' },
         },
         didDrawCell(data) {
-            if (data.section === 'body' && data.column.index === 10) {
+            if (data.section === 'body' && data.column.index === statusColIdx) {
                 const status = data.cell.raw;
                 const clr = STATUS_COLORS_LIGHT[status];
                 if (clr) {
@@ -4424,7 +6804,7 @@ function exportPDF(typeKey, fromDate, toDate, category) {
                 }
             }
             // Delay cell — erase autoTable text then redraw in red
-            if (data.section === 'body' && data.column.index === 11) {
+            if (data.section === 'body' && data.column.index === delayColIdx) {
                 const val = String(data.cell.raw || '');
                 if (val.startsWith('+')) {
                     // Cover the black text autoTable already drew
@@ -4474,12 +6854,17 @@ function exportPDF(typeKey, fromDate, toDate, category) {
     const dateSuffix = new Date().toISOString().slice(0, 10);
     doc.save(`${moduleBadge}_${def.label.replace(/\s+/g, '_')}${catSuffix}_${dateSuffix}.pdf`);
     showToast(`PDF exported — ${rows.length} rows`, 'success');
+    } catch (err) {
+        console.error('[exportPDF]', err);
+        showToast('PDF export failed: ' + (err.message || err), 'error');
+    }
 }
 
 /* ══════════════════════════════════════════════════════════════════
    EXCEL EXPORT
    ══════════════════════════════════════════════════════════════════ */
 async function exportExcel(typeKey, fromDate, toDate, category) {
+    try {
     if (typeof ExcelJS === 'undefined') {
         showToast('ExcelJS not loaded — please wait and try again.', 'error'); return;
     }
@@ -4561,8 +6946,24 @@ async function exportExcel(typeKey, fromDate, toDate, category) {
         views: [{ state: 'frozen', xSplit: 0, ySplit: 4 }],
     });
 
-    // Column config — add Unit Code after Unit
-    const COLS = [
+    // Column config — F100 or F200 depending on active module
+    const COLS = isF100KD2Module() ? [
+        { header: '#',            width: 5,  key: (r, i) => i + 1 },
+        { header: 'Battalion',    width: 16, key: r => r.battalion_code || '—' },
+        { header: 'Part',         width: 24, key: r => r.part_name || '—' },
+        { header: 'Part No.',     width: 14, key: r => r.part_number || '—' },
+        { header: 'Vehicle',      width: 10, key: r => r.vehicle_type || '—' },
+        { header: 'Unit Code',    width: 16, key: r => r.unit_code  || '—' },
+        { header: 'Unit Name',    width: 20, key: r => r.unit_name  || '—' },
+        { header: 'Step',         width: 8,  key: r => r.step_number ? `#${r.step_number}` : '—' },
+        { header: 'Process',      width: 24, key: r => r.process_name || '—' },
+        { header: 'Planned Start',width: 14, key: r => r.planned_start_date || '—' },
+        { header: 'Planned End',  width: 14, key: r => r.planned_end_date || '—' },
+        { header: 'Actual Start', width: 14, key: r => r.actual_start_date || '—' },
+        { header: 'Actual End',   width: 14, key: r => r.actual_end_date || '—' },
+        { header: 'Status',       width: 18, key: r => r.status || 'Planned' },
+        { header: 'Delay (days)', width: 13, key: r => { const d = delayDays(r); return d > 0 ? `+${d}d` : (r.status === 'Completed' || r.status === 'Late Completion') ? 'On Time' : '—'; } },
+    ] : [
         { header: '#', width: 5, key: (r, i) => i + 1 },
         { header: 'Vehicle', width: 10, key: r => r.vehicle },
         { header: 'Unit', width: 10, key: r => r.vehicle_no },
@@ -4803,6 +7204,10 @@ async function exportExcel(typeKey, fromDate, toDate, category) {
     document.body.appendChild(a); a.click();
     document.body.removeChild(a); URL.revokeObjectURL(url);
     showToast(`Excel exported — ${rows.length} rows`, 'success');
+    } catch (err) {
+        console.error('[exportExcel]', err);
+        showToast('Excel export failed: ' + (err.message || err), 'error');
+    }
 }
 
 
@@ -4810,7 +7215,365 @@ async function exportExcel(typeKey, fromDate, toDate, category) {
 /* ================================================================
    VPX — PDF EXPORT  (light mode, landscape A4)
    ================================================================ */
+/* ================================================================
+   F100 VPX EXPORTS  (PDF + Excel)
+   ================================================================ */
+
+function _f100VpxStatusColor(status) {
+    if (status === 'Completed')       return { r: 34,  g: 197, b: 94  };
+    if (status === 'In Progress')     return { r: 245, g: 158, b: 11  };
+    if (status === 'Late Completion') return { r: 59,  g: 130, b: 246 };
+    if (status === 'Overdue')         return { r: 220, g: 38,  b: 38  };
+    return                                   { r: 148, g: 163, b: 184 };
+}
+
+function exportF100VpxPDF() {
+    try {
+    if (!currentData?.length) { showToast('No data to export.', 'error'); return; }
+    if (!window.jspdf) { showToast('PDF library not loaded — please refresh.', 'error'); return; }
+
+    const cols = buildF100VpxColumns(currentData);
+    const rows = buildF100VpxRows(currentData);
+
+    if (!cols.length) { showToast('No process steps found for the current filters.', 'error'); return; }
+    if (!rows.length) { showToast('No vehicle units found in the current data.', 'error'); return; }
+
+    const meta = getVpxDisplayMeta();
+    const { jsPDF } = window.jspdf;
+    const doc = new jsPDF({ orientation: 'landscape', unit: 'mm', format: 'a4' });
+    const PAGE_W = doc.internal.pageSize.getWidth();
+    const PAGE_H = doc.internal.pageSize.getHeight();
+    const MARGIN = 12;
+    const now = new Date().toLocaleString('en-GB');
+    const mainTitle = getVpxTitleParts().join(' ');
+
+    // ── White background ─────────────────────────────────────────
+    doc.setFillColor(255, 255, 255);
+    doc.rect(0, 0, PAGE_W, PAGE_H, 'F');
+
+    // ── Header ───────────────────────────────────────────────────
+    doc.setDrawColor(30, 41, 59); doc.setLineWidth(0.6);
+    doc.line(MARGIN, 8, PAGE_W - MARGIN, 8);
+    doc.setFont('helvetica', 'bold'); doc.setFontSize(12); doc.setTextColor(30, 41, 59);
+    doc.text(mainTitle, MARGIN, 15);
+    doc.setFont('helvetica', 'normal'); doc.setFontSize(7); doc.setTextColor(100, 116, 139);
+    doc.text(meta.exportSubtitle, PAGE_W - MARGIN, 12, { align: 'right' });
+    doc.text('Generated: ' + now, PAGE_W - MARGIN, 17, { align: 'right' });
+    doc.setDrawColor(203, 213, 225); doc.setLineWidth(0.3);
+    doc.line(MARGIN, 20, PAGE_W - MARGIN, 20);
+
+    // ── Legend ───────────────────────────────────────────────────
+    const legend = [
+        { label: 'Completed', r: 34, g: 197, b: 94 }, { label: 'In Progress', r: 245, g: 158, b: 11 },
+        { label: 'Late Completion', r: 59, g: 130, b: 246 }, { label: 'Overdue', r: 220, g: 38, b: 38 },
+        { label: 'Planned', r: 148, g: 163, b: 184 },
+    ];
+    let legX = MARGIN; const legY = 25;
+    legend.forEach(l => {
+        doc.setFillColor(l.r, l.g, l.b);
+        doc.circle(legX + 1.5, legY, 1.5, 'F');
+        doc.setTextColor(30, 41, 59); doc.setFont('helvetica', 'normal'); doc.setFontSize(6.5);
+        doc.text(l.label, legX + 4.5, legY + 0.8);
+        legX += doc.getTextWidth(l.label) + 9;
+    });
+
+    // ── Part color palette ────────────────────────────────────────
+    const partColors = [
+        [30, 58, 138], [107, 33, 168], [153, 27, 27], [15, 118, 110],
+        [120, 53, 15], [6, 95, 70],   [51, 65, 85],  [71, 85, 105],
+    ];
+    const uniqueParts = [...new Set(cols.map(c => c.group))];
+    const partColorIdx = {};
+    uniqueParts.forEach((p, i) => { partColorIdx[p] = i % partColors.length; });
+
+    // ── Build table ───────────────────────────────────────────────
+    const groupHeader = ['Unit'];
+    const codeHeader  = ['Battalion / Vehicle'];
+    const colsByGroup = {};
+    cols.forEach(col => {
+        groupHeader.push(col.group);
+        codeHeader.push(col.code + '\n' + col.name.substring(0, 18));
+        if (!colsByGroup[col.group]) colsByGroup[col.group] = [];
+        colsByGroup[col.group].push(col);
+    });
+
+    const body = rows.map(row => {
+        const unitLbl = row.unit_label || `S/N ${row.serial_number ?? '—'}`;
+        const rowKey  = [row.battalion_code, row.vehicle_type].filter(Boolean).join(' · ');
+        const cells = [unitLbl + '\n' + rowKey];
+        cols.forEach(col => {
+            const planKey = `${col.part_id}||${col.process_sort}`;
+            const task = row.plans[planKey];
+            if (!task) { cells.push('—'); return; }
+            const ps = task.planned_start_date?.slice(5) || '?';
+            const pe = task.planned_end_date?.slice(5) || '?';
+            const as = task.actual_start_date?.slice(5) || '';
+            const ae = task.actual_end_date?.slice(5) || '';
+            const actLine = (as || ae) ? (as || '?') + ' > ' + (ae || '?') : '';
+            cells.push(`${ps} > ${pe}` + (actLine ? `\n${actLine}` : ''));
+        });
+        return cells;
+    });
+
+    const vehicleColW = 28;
+    const stationColW = Math.max(10, Math.min(18, (PAGE_W - MARGIN * 2 - vehicleColW) / cols.length));
+
+    doc.autoTable({
+        startY: legY + 8,
+        margin: { left: MARGIN, right: MARGIN },
+        head: [groupHeader, codeHeader],
+        body: body,
+        columnStyles: {
+            0: { cellWidth: vehicleColW, fontStyle: 'bold', halign: 'left' },
+            ...Object.fromEntries(cols.map((_, i) => [i + 1, { cellWidth: stationColW, halign: 'center' }])),
+        },
+        styles: { fontSize: 5.5, cellPadding: 1.5, overflow: 'linebreak', lineColor: [226, 232, 240], lineWidth: 0.2, textColor: [30, 41, 59] },
+        headStyles: { fontSize: 5.5, cellPadding: 1.5, halign: 'center', lineColor: [148, 163, 184], lineWidth: 0.3 },
+        alternateRowStyles: { fillColor: [248, 250, 252] },
+        bodyStyles: { fillColor: [255, 255, 255] },
+        didParseCell(data) {
+            if (data.section === 'head') {
+                if (data.row.index === 0 && data.column.index > 0) {
+                    const col = cols[data.column.index - 1];
+                    if (col) {
+                        const [r, g, b] = partColors[partColorIdx[col.group]];
+                        data.cell.styles.fillColor = [r, g, b];
+                        data.cell.styles.textColor = [255, 255, 255];
+                        data.cell.styles.fontStyle = 'bold';
+                    }
+                }
+                if (data.row.index === 1) {
+                    data.cell.styles.fillColor = [241, 245, 249];
+                    data.cell.styles.textColor = [30, 41, 59];
+                    data.cell.styles.fontStyle = 'bold';
+                }
+            }
+            // Hide autoTable's own text for body station cells — we redraw manually in didDrawCell
+            if (data.section === 'body' && data.column.index > 0) {
+                data.cell.styles.textColor = [255, 255, 255];
+            }
+        },
+        didDrawCell(data) {
+            if (data.section !== 'body' || data.column.index === 0) return;
+            const col = cols[data.column.index - 1];
+            const rowData = rows[data.row.index];
+            if (!col || !rowData) return;
+            const planKey = `${col.part_id}||${col.process_sort}`;
+            const task = rowData.plans[planKey];
+            if (!task) return;
+            const status = calculateStatus(task);
+            const { r, g, b } = _f100VpxStatusColor(status);
+            const alpha = 0.12;
+            doc.setFillColor(Math.round(255-(255-r)*alpha), Math.round(255-(255-g)*alpha), Math.round(255-(255-b)*alpha));
+            doc.rect(data.cell.x, data.cell.y, data.cell.width, data.cell.height, 'F');
+            doc.setFillColor(r, g, b);
+            doc.circle(data.cell.x + data.cell.width / 2, data.cell.y + 2, 1.2, 'F');
+            const txt = data.cell.raw || '';
+            doc.setFont('helvetica', 'normal'); doc.setFontSize(5.5); doc.setTextColor(30, 41, 59);
+            String(txt).split('\n').forEach((line, li) => {
+                doc.text(line, data.cell.x + data.cell.width / 2, data.cell.y + 4.5 + li * 3.2, { align: 'center' });
+            });
+        },
+    });
+
+    // ── Footer ───────────────────────────────────────────────────
+    const fY = PAGE_H - 5;
+    doc.setDrawColor(203, 213, 225); doc.setLineWidth(0.3);
+    doc.line(MARGIN, fY - 3, PAGE_W - MARGIN, fY - 3);
+    doc.setFont('helvetica', 'normal'); doc.setFontSize(6); doc.setTextColor(100, 116, 139);
+    doc.text(meta.footerApp + ' · ' + mainTitle, MARGIN, fY);
+    doc.text('Page 1 of ' + doc.internal.getNumberOfPages(), PAGE_W - MARGIN, fY, { align: 'right' });
+
+    doc.save(meta.filenamePrefix + '_' + new Date().toISOString().slice(0, 10) + '.pdf');
+    showToast('PDF exported — ' + rows.length + ' units × ' + cols.length + ' steps', 'success');
+    } catch (err) {
+        console.error('[exportF100VpxPDF]', err);
+        showToast('PDF export failed: ' + (err.message || err), 'error');
+    }
+}
+
+async function exportF100VpxExcel() {
+    try {
+    if (!currentData?.length) { showToast('No data to export.', 'error'); return; }
+    if (typeof ExcelJS === 'undefined') { showToast('ExcelJS not loaded — please wait and try again.', 'error'); return; }
+
+    const cols = buildF100VpxColumns(currentData);
+    const rows = buildF100VpxRows(currentData);
+    if (!cols.length || !rows.length) { showToast('No data to export.', 'error'); return; }
+
+    const meta = getVpxDisplayMeta();
+    const sheetTitle = getVpxTitleParts().join(' ');
+
+    const ST = {
+        'Completed':       { bg: 'FFdcfce7', fg: 'FF15803d' },
+        'In Progress':     { bg: 'FFfef9c3', fg: 'FF854d0e' },
+        'Late Completion': { bg: 'FFdbeafe', fg: 'FF1d4ed8' },
+        'Overdue':         { bg: 'FFfee2e2', fg: 'FF991b1b' },
+        'Planned':         { bg: 'FFf8fafc', fg: 'FF475569' },
+    };
+
+    const PART_COLORS_HEX = [
+        { bg: 'FF1e3a8a', fg: 'FFffffff' }, { bg: 'FF6b21a8', fg: 'FFffffff' },
+        { bg: 'FF991b1b', fg: 'FFffffff' }, { bg: 'FF0f766e', fg: 'FFffffff' },
+        { bg: 'FF78350f', fg: 'FFffffff' }, { bg: 'FF064e3b', fg: 'FFffffff' },
+        { bg: 'FF334155', fg: 'FFffffff' }, { bg: 'FF475569', fg: 'FFffffff' },
+    ];
+    const uniqueParts = [...new Set(cols.map(c => c.group))];
+    const partClrIdx = {};
+    uniqueParts.forEach((p, i) => { partClrIdx[p] = i % PART_COLORS_HEX.length; });
+
+    function bord() {
+        const s = { style: 'thin', color: { argb: 'FFe2e8f0' } };
+        return { top: s, bottom: s, left: s, right: s };
+    }
+
+    const wb = new ExcelJS.Workbook();
+    wb.creator = meta.workbookCreator;
+    wb.created = new Date();
+
+    const ws = wb.addWorksheet('VPX Matrix', {
+        pageSetup: { orientation: 'landscape', fitToPage: true, fitToWidth: 1 },
+        views: [{ state: 'frozen', xSplit: 1, ySplit: 5 }],
+    });
+
+    const totalCols = 1 + cols.length;
+
+    // Row 1: title
+    ws.addRow([sheetTitle]);
+    ws.getRow(1).height = 22;
+    Object.assign(ws.getCell('A1'), {
+        font: { name: 'Calibri', size: 15, bold: true, color: { argb: 'FF1e293b' } },
+        fill: { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFffffff' } },
+        alignment: { vertical: 'middle', horizontal: 'left' },
+    });
+    ws.mergeCells(1, 1, 1, totalCols);
+
+    // Row 2: subtitle
+    ws.addRow([meta.exportSubtitle + '  |  Generated: ' + new Date().toLocaleString('en-GB')]);
+    ws.getRow(2).height = 14;
+    Object.assign(ws.getCell('A2'), {
+        font: { name: 'Calibri', size: 8, italic: true, color: { argb: 'FF64748b' } },
+        fill: { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFffffff' } },
+        alignment: { vertical: 'middle', horizontal: 'left' },
+    });
+    ws.mergeCells(2, 1, 2, totalCols);
+
+    // Row 3: blank
+    ws.addRow([]); ws.getRow(3).height = 5;
+
+    // Row 4: part group headers (merged per group)
+    ws.addRow([]); ws.getRow(4).height = 18;
+    // Unit header cell
+    const u4 = ws.getCell(4, 1);
+    Object.assign(u4, {
+        value: meta.headerLabel,
+        font: { name: 'Calibri', size: 9, bold: true, color: { argb: 'FFffffff' } },
+        fill: { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FF1e293b' } },
+        alignment: { horizontal: 'center', vertical: 'middle' },
+        border: bord(),
+    });
+    // Group merge tracking
+    let grpStart4 = 2, grpLabel4 = cols[0]?.group;
+    const applyGrp4 = (start, end, label) => {
+        if (start < end) ws.mergeCells(4, start, 4, end);
+        const clr = PART_COLORS_HEX[partClrIdx[label]] || PART_COLORS_HEX[0];
+        const gc = ws.getCell(4, start);
+        gc.value = label;
+        gc.font = { name: 'Calibri', size: 9, bold: true, color: { argb: clr.fg } };
+        gc.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: clr.bg } };
+        gc.alignment = { horizontal: 'center', vertical: 'middle' };
+        gc.border = bord();
+    };
+    cols.forEach((col, i) => {
+        const colN = i + 2;
+        if (col.group !== grpLabel4) {
+            applyGrp4(grpStart4, colN - 1, grpLabel4);
+            grpStart4 = colN; grpLabel4 = col.group;
+        }
+        if (i === cols.length - 1) applyGrp4(grpStart4, colN, grpLabel4);
+    });
+
+    // Row 5: step code + name headers
+    ws.addRow([]); ws.getRow(5).height = 30;
+    const hdr5 = ws.getCell(5, 1);
+    Object.assign(hdr5, {
+        value: 'Battalion · Vehicle · Unit',
+        font: { name: 'Calibri', size: 8, bold: true, color: { argb: 'FF1e293b' } },
+        fill: { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFf1f5f9' } },
+        alignment: { horizontal: 'center', vertical: 'middle', wrapText: true },
+        border: bord(),
+    });
+    cols.forEach((col, i) => {
+        const colN = i + 2;
+        const cell = ws.getCell(5, colN);
+        cell.value = col.code + '\n' + col.name;
+        cell.font = { name: 'Calibri', size: 7.5, bold: true, color: { argb: 'FF1e293b' } };
+        cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFf1f5f9' } };
+        cell.alignment = { horizontal: 'center', vertical: 'middle', wrapText: true };
+        cell.border = bord();
+    });
+
+    // Column widths
+    ws.getColumn(1).width = 26;
+    cols.forEach((_, i) => { ws.getColumn(i + 2).width = 14; });
+
+    // Data rows
+    rows.forEach((row, ri) => {
+        const excelRow = ws.addRow([]);
+        excelRow.height = 28;
+        const unitLbl = row.unit_label || `S/N ${row.serial_number ?? '—'}`;
+        const unitSub = [row.battalion_code, row.vehicle_type].filter(Boolean).join(' · ');
+        const unitCell = ws.getCell(ri + 6, 1);
+        unitCell.value = unitLbl + '\n' + unitSub;
+        unitCell.font = { name: 'Calibri', size: 8.5, bold: true, color: { argb: 'FF1e293b' } };
+        unitCell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: ri % 2 === 0 ? 'FFffffff' : 'FFf8fafc' } };
+        unitCell.alignment = { vertical: 'middle', horizontal: 'left', wrapText: true };
+        unitCell.border = bord();
+
+        cols.forEach((col, ci) => {
+            const planKey = `${col.part_id}||${col.process_sort}`;
+            const task = row.plans[planKey];
+            const cell = ws.getCell(ri + 6, ci + 2);
+            if (!task) {
+                cell.value = '—';
+                cell.font = { name: 'Calibri', size: 8, color: { argb: 'FFcbd5e1' } };
+                cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFf8fafc' } };
+                cell.alignment = { horizontal: 'center', vertical: 'middle' };
+                cell.border = bord();
+                return;
+            }
+            const status = calculateStatus(task);
+            const st = ST[status] || ST['Planned'];
+            const ps = task.planned_start_date?.slice(5) || '?';
+            const pe = task.planned_end_date?.slice(5) || '?';
+            const as2 = task.actual_start_date?.slice(5) || '';
+            const ae2 = task.actual_end_date?.slice(5) || '';
+            const actLine2 = (as2 || ae2) ? (as2 || '?') + ' > ' + (ae2 || '?') : '';
+            cell.value = `${ps} > ${pe}` + (actLine2 ? '\n' + actLine2 : '');
+            cell.font = { name: 'Calibri', size: 7.5, bold: status !== 'Planned', color: { argb: st.fg } };
+            cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: st.bg } };
+            cell.alignment = { horizontal: 'center', vertical: 'middle', wrapText: true };
+            cell.border = bord();
+        });
+    });
+
+    // Save
+    const buffer = await wb.xlsx.writeBuffer();
+    const blob = new Blob([buffer], { type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url; a.download = meta.filenamePrefix + '_' + new Date().toISOString().slice(0, 10) + '.xlsx';
+    document.body.appendChild(a); a.click();
+    document.body.removeChild(a); URL.revokeObjectURL(url);
+    showToast('Excel exported — ' + rows.length + ' units × ' + cols.length + ' steps', 'success');
+    } catch (err) {
+        console.error('[exportF100VpxExcel]', err);
+        showToast('Excel export failed: ' + (err.message || err), 'error');
+    }
+}
+
 function exportVpxPDF() {
+    if (isF100KD2Module()) { exportF100VpxPDF(); return; }
     if (!currentData?.length) {
         showToast('No data to export.', 'error');
         return;
@@ -5055,6 +7818,7 @@ function exportVpxPDF() {
    VPX EXCEL EXPORT  (ExcelJS — full cell styling)
    ────────────────────────────────────────────────────────────────── */
 async function exportVpxExcel() {
+    if (isF100KD2Module()) { await exportF100VpxExcel(); return; }
     if (!currentData?.length) { showToast('No data to export.', 'error'); return; }
     if (typeof ExcelJS === 'undefined') {
         showToast('ExcelJS not loaded yet — please wait a moment and try again.', 'error'); return;
@@ -5510,9 +8274,48 @@ function closeUnitCodes() {
 
 async function loadUcTable() {
     const tbody = document.getElementById('ucTableBody');
-    const colSpan = isKD2Module() ? 5 : 4;
+    const colSpan = isF100KD2Module() ? 7 : (isKD2Module() ? 5 : 4);
     tbody.innerHTML = `<tr><td colspan="${colSpan}" class="table-empty"><span class="spinner"></span> Loading…</td></tr>`;
     try {
+        if (isF100KD2Module()) {
+            const [{ data: units, error: unitsError }, { data: battalions, error: battalionError }] = await Promise.all([
+                db.from('f100_vehicle_units').select('*'),
+                db.from('f100_battalions').select('id, battalion_code'),
+            ]);
+            if (unitsError) throw unitsError;
+            if (battalionError) throw battalionError;
+
+            const battalionMap = Object.fromEntries((battalions || []).map(row => [row.id, row.battalion_code]));
+            const sorted = (units || []).slice().sort((a, b) => {
+                const battalionCmp = String(battalionMap[a.battalion_id] || '').localeCompare(String(battalionMap[b.battalion_id] || ''), undefined, { numeric: true });
+                if (battalionCmp !== 0) return battalionCmp;
+                const vc = vehicleSort(a.vehicle_type, b.vehicle_type);
+                if (vc !== 0) return vc;
+                return (a.unit_serial || 0) - (b.unit_serial || 0);
+            });
+
+            document.getElementById('ucCount').textContent = sorted.length + ' units';
+            if (!sorted.length) {
+                tbody.innerHTML = '<tr><td colspan="7" class="table-empty">No F100 unit codes yet. Click "Add / Edit Code" to begin.</td></tr>';
+                return;
+            }
+
+            tbody.innerHTML = sorted.map(r => `
+      <tr>
+        <td>${esc(battalionMap[r.battalion_id] || '—')}</td>
+        <td>${esc(r.vehicle_type || '—')}</td>
+        <td>${esc(r.unit_label || `${r.vehicle_type}-${String(r.unit_serial).padStart(2, '0')}`)}</td>
+        <td class="mono">${esc(String(r.unit_serial))}</td>
+        <td class="mono">${esc(r.unit_code || '—')}</td>
+        <td>${esc(r.unit_name || '—')}</td>
+        <td>
+          <button class="btn btn-xs btn-ghost" onclick="openUcForm('${r.id}')">Edit</button>
+          <button class="btn btn-xs btn-danger" onclick="deleteUnitCode('${r.id}')">Delete</button>
+        </td>
+      </tr>`).join('');
+            return;
+        }
+
         if (isKD2Module()) {
             const [{ data: units, error: unitsError }, { data: battalions, error: battalionError }] = await Promise.all([
                 db.from('kd2_vehicle_units').select('*'),
@@ -5586,12 +8389,61 @@ async function openUcForm(id) {
     document.getElementById('ucTableBody').closest('.um-table-wrap').style.display = 'none';
     document.querySelector('#unitCodesOverlay .um-toolbar').style.display = 'none';
     document.getElementById('ucForm').style.display = 'block';
-    document.getElementById('ucFormTitle').textContent = id ? (isKD2Module() ? 'Edit KD2 Unit Code' : 'Edit Unit Code') : (isKD2Module() ? 'Add KD2 Unit Code' : 'Add Unit Code');
+    document.getElementById('ucFormTitle').textContent = id
+        ? (isF100KD2Module() ? 'Edit F100 Unit' : isKD2Module() ? 'Edit KD2 Unit Code' : 'Edit Unit Code')
+        : (isF100KD2Module() ? 'Add F100 Unit' : isKD2Module() ? 'Add KD2 Unit Code' : 'Add Unit Code');
     document.getElementById('ucFormError').textContent = '';
 
     const vSel = document.getElementById('ucVehicle');
     const bSel = document.getElementById('ucBattalion');
     const unitText = document.getElementById('ucUnitText');
+
+    if (isF100KD2Module()) {
+        // Show Unit Name field and relabel Unit field for F100
+        document.getElementById('ucNameGroup').style.display = '';
+        document.getElementById('ucUnitLabel').textContent = 'Unit Label';
+        document.getElementById('ucCodeLabel').textContent = 'Unit Code';
+
+        vSel.innerHTML = ['K9', 'K10', 'K11'].map(v => `<option value="${v}">${v}</option>`).join('');
+        let battalions = [];
+        try {
+            const { data, error } = await db.from('f100_battalions').select('id, battalion_code, battalion_name').order('battalion_code');
+            if (error) throw error;
+            battalions = data || [];
+        } catch (error) {
+            document.getElementById('ucFormError').textContent = error.message;
+            return;
+        }
+        bSel.innerHTML = battalions.map(row => `<option value="${row.id}">${esc(row.battalion_name ? `${row.battalion_code} – ${row.battalion_name}` : row.battalion_code)}</option>`).join('');
+
+        if (id) {
+            const { data } = await db.from('f100_vehicle_units').select('*').eq('id', id).maybeSingle();
+            if (data) {
+                document.getElementById('ucEditId').value = id;
+                bSel.value = String(data.battalion_id);
+                vSel.value = data.vehicle_type;
+                unitText.value = data.unit_label || '';
+                document.getElementById('ucName').value = data.unit_name || '';
+                document.getElementById('ucCode').value = data.unit_code || '';
+                return;
+            }
+        }
+
+        const currentBattalion = getVal('f100Battalion');
+        const currentBattalionRow = battalions.find(row => row.battalion_code === currentBattalion);
+        const battalionOption = currentBattalionRow ? [...bSel.options].find(opt => opt.value === String(currentBattalionRow.id)) : null;
+        if (battalionOption) bSel.value = battalionOption.value;
+        document.getElementById('ucEditId').value = '';
+        unitText.value = '';
+        document.getElementById('ucName').value = '';
+        document.getElementById('ucCode').value = '';
+        return;
+    }
+
+    // Reset F100-only fields when switching to non-F100
+    document.getElementById('ucNameGroup').style.display = 'none';
+    document.getElementById('ucUnitLabel').textContent = 'Unit';
+    document.getElementById('ucCodeLabel').textContent = 'Unit Code';
 
     if (isKD2Module()) {
         vSel.innerHTML = ['K9', 'K10', 'K11'].map(v => `<option value="${v}">${v}</option>`).join('');
@@ -5653,7 +8505,7 @@ async function populateUcUnits() {
     const uSel = document.getElementById('ucUnit');
     if (!uSel) return;
 
-    if (isKD2Module()) {
+    if (isKD2Module() || isF100KD2Module()) {
         uSel.innerHTML = '';
         return;
     }
@@ -5672,15 +8524,62 @@ function closeUcForm() {
 async function saveUnitCode() {
     const id = document.getElementById('ucEditId').value;
     const vehicle = document.getElementById('ucVehicle').value.trim();
-    const unit = isKD2Module()
+    const unit = (isKD2Module() || isF100KD2Module())
         ? document.getElementById('ucUnitText').value.trim()
         : document.getElementById('ucUnit').value.trim();
     const code = document.getElementById('ucCode').value.trim();
     const errEl = document.getElementById('ucFormError');
 
-    if (!vehicle || !unit || !code) { errEl.textContent = 'All fields are required.'; return; }
+    if (!vehicle) { errEl.textContent = 'Vehicle type is required.'; return; }
 
     try {
+        if (isF100KD2Module()) {
+            const battalionId = document.getElementById('ucBattalion').value;
+            const unitLabel = document.getElementById('ucUnitText').value.trim();
+            const unitName  = document.getElementById('ucName').value.trim();
+            const unitCode  = document.getElementById('ucCode').value.trim();
+            if (!battalionId) { errEl.textContent = 'Battalion is required.'; return; }
+            if (!unitLabel && !unitCode) { errEl.textContent = 'Unit Label or Unit Code is required.'; return; }
+
+            let error;
+            if (id) {
+                ({ error } = await db.from('f100_vehicle_units')
+                    .update({
+                        battalion_id: battalionId,
+                        vehicle_type: vehicle,
+                        unit_label:   unitLabel || null,
+                        unit_name:    unitName  || null,
+                        unit_code:    unitCode  || null,
+                    })
+                    .eq('id', id));
+            } else {
+                // Auto-assign next serial number for this battalion + vehicle type
+                const { data: existing } = await db
+                    .from('f100_vehicle_units')
+                    .select('unit_serial')
+                    .eq('battalion_id', battalionId)
+                    .eq('vehicle_type', vehicle)
+                    .order('unit_serial', { ascending: false })
+                    .limit(1);
+                const nextSerial = existing?.length ? (existing[0].unit_serial + 1) : 1;
+
+                ({ error } = await db.from('f100_vehicle_units').insert({
+                    battalion_id: battalionId,
+                    vehicle_type: vehicle,
+                    unit_serial:  nextSerial,
+                    unit_label:   unitLabel || null,
+                    unit_name:    unitName  || null,
+                    unit_code:    unitCode  || null,
+                }));
+            }
+            if (error) throw error;
+
+            closeUcForm();
+            loadUcTable();
+            showToast('F100 unit saved.', 'success');
+            return;
+        }
+
         if (isKD2Module()) {
             const battalionId = parseInt(document.getElementById('ucBattalion').value, 10);
             const unitEntry = normalizeKd2UnitName(document.getElementById('ucUnitText')?.value);
@@ -5752,15 +8651,18 @@ async function saveUnitCode() {
 }
 
 async function deleteUnitCode(id) {
-    if (!confirm('Delete this unit code?')) return;
+    if (!confirm('Delete this unit?')) return;
     try {
-        const { error } = await db.from(isKD2Module() ? 'kd2_vehicle_units' : 'vehicle_units').delete().eq('id', id);
+        const table = isF100KD2Module() ? 'f100_vehicle_units' : isKD2Module() ? 'kd2_vehicle_units' : 'vehicle_units';
+        const { error } = await db.from(table).delete().eq('id', id);
         if (error) throw error;
-        await loadUnitCodes();
-        populateUnitFilter(getVal('filterVehicle') || null);
-        refreshAllViews();
+        if (!isF100KD2Module()) {
+            await loadUnitCodes();
+            populateUnitFilter(getVal('filterVehicle') || null);
+            refreshAllViews();
+        }
         loadUcTable();
-        showToast(isKD2Module() ? 'KD2 unit code deleted.' : 'Unit code deleted.', 'success');
+        showToast(isF100KD2Module() ? 'F100 unit deleted.' : isKD2Module() ? 'KD2 unit code deleted.' : 'Unit code deleted.', 'success');
     } catch (e) {
         showToast('Delete failed: ' + e.message, 'error');
     }
@@ -6034,6 +8936,10 @@ let _openGanttBlockMenuPlanId = null;
 const _selectedGanttPlanIds = new Set();
 const _laneOrder = {};
 const _ganttVisualLane = {};
+let _f100PlacementActive = false;
+let _f100PlacementProcess = null;
+let _f100PlacementAllProcesses = [];   // cache for search re-filter
+let _f100PlacementPartMap = {};
 const _ganttManualLane = {}; // lanes set explicitly by the user via move-up/down buttons
 let _ganttLegendOpen = false;
 let _ganttFullscreenEventsBound = false;
@@ -6172,6 +9078,19 @@ function bindVpxFullscreenUi() {
         document.addEventListener('fullscreenchange', syncVpxFullscreenButtons);
     }
     syncVpxFullscreenButtons();
+}
+
+/* ── Table card fullscreen ──────────────────────────────────────── */
+function toggleTableFullscreen() {
+    const card = document.querySelector('.table-card');
+    if (!card) return;
+    const isFs = card.classList.toggle('is-fullscreen');
+    ['btnTableFullscreen', 'btnTableFullscreenLabel'].forEach(id => {
+        const el = document.getElementById(id);
+        if (!el) return;
+        if (id.endsWith('Label')) el.textContent = isFs ? 'Exit Full Screen' : 'Full Screen';
+        else el.setAttribute('aria-pressed', String(isFs));
+    });
 }
 
 function positionOpenGanttBlockMenu() {
@@ -6341,12 +9260,12 @@ function _clearUndoHistory() {
 }
 
 function _syncSelectedBlockUi() {
-    const validIds = new Set(currentData.map(row => row.id));
+    const validIds = new Set(currentData.map(row => String(row.id)));
     [..._selectedGanttPlanIds].forEach(id => {
-        if (!validIds.has(id)) _selectedGanttPlanIds.delete(id);
+        if (!validIds.has(String(id))) _selectedGanttPlanIds.delete(id);
     });
     document.querySelectorAll('.gc-bar[data-plan-id]').forEach(bar => {
-        const id = parseInt(bar.dataset.planId, 10);
+        const id = bar.dataset.planId;
         const selected = _selectedGanttPlanIds.has(id);
         bar.classList.toggle('gc-bar-selected', selected);
         const btn = bar.querySelector('.gc-bar-select');
@@ -6361,11 +9280,11 @@ function _syncSelectedBlockUi() {
     if (countEl) countEl.textContent = String(count);
     if (delBtn) delBtn.disabled = count === 0;
     document.querySelectorAll('[data-gantt-lane-select]').forEach(btn => {
-        const planId = parseInt(btn.dataset.ganttLaneSelect, 10);
-        const anchor = currentData.find(row => row.id === planId);
+        const planId = btn.dataset.ganttLaneSelect;
+        const anchor = currentData.find(row => String(row.id) === planId);
         if (!anchor) return;
         const laneRows = currentData.filter(row => samePlanLane(row, anchor));
-        const allSelected = laneRows.length > 0 && laneRows.every(row => _selectedGanttPlanIds.has(row.id));
+        const allSelected = laneRows.length > 0 && laneRows.every(row => _selectedGanttPlanIds.has(String(row.id)));
         btn.textContent = allSelected ? 'Clear lane' : 'Select lane';
         btn.setAttribute('aria-pressed', allSelected ? 'true' : 'false');
     });
@@ -6376,17 +9295,17 @@ function toggleGanttLaneSelection(task, forceSelect = null) {
     const laneRows = currentData.filter(row => samePlanLane(row, task));
     if (!laneRows.length) return;
     const shouldSelect = forceSelect === null
-        ? !laneRows.every(row => _selectedGanttPlanIds.has(row.id))
+        ? !laneRows.every(row => _selectedGanttPlanIds.has(String(row.id)))
         : !!forceSelect;
     laneRows.forEach(row => {
-        if (shouldSelect) _selectedGanttPlanIds.add(row.id);
-        else _selectedGanttPlanIds.delete(row.id);
+        if (shouldSelect) _selectedGanttPlanIds.add(String(row.id));
+        else _selectedGanttPlanIds.delete(String(row.id));
     });
     _syncSelectedBlockUi();
 }
 
 function setGanttLaneSelectMode(on) {
-    _ganttSelectLaneMode = !!on && isKD2Module();
+    _ganttSelectLaneMode = !!on && (isKD2Module() || isF100KD2Module());
     const btn = document.getElementById('gmtSelectLane');
     if (btn) {
         btn.classList.toggle('gmt-active', _ganttSelectLaneMode);
@@ -6399,14 +9318,17 @@ function setGanttLaneSelectMode(on) {
 
 function syncGanttModuleEditControls() {
     const isKd2 = isKD2Module() || isF100KD2Module();
+    const isF100 = isF100KD2Module();
     const kd2Tools = document.getElementById('ganttKd2EditTools');
     const planBtn = document.getElementById('gmtPlan');
     const fromBlockBtn = document.getElementById('gmtFromBlock');
     const satWrap = document.getElementById('ganttSatToggleWrap');
     const visualAddShell = document.getElementById('ganttVisualAddShell');
     const viewToggleWrap = document.getElementById('ganttViewToggleWrap');
+    const templateBtn = document.getElementById('btnF100AddTemplate');
     if (kd2Tools) kd2Tools.style.display = _ganttEditMode && isKd2 ? 'inline-flex' : 'none';
     if (visualAddShell) visualAddShell.style.display = _ganttEditMode && isKd2 ? 'inline-flex' : 'none';
+    if (templateBtn) templateBtn.style.display = _ganttEditMode && isF100 ? '' : 'none';
     if (planBtn) planBtn.style.display = isKd2 ? 'none' : '';
     if (fromBlockBtn) fromBlockBtn.style.display = isKd2 ? '' : 'none';
     if (satWrap) satWrap.style.display = isKd2 ? 'none' : '';
@@ -6437,6 +9359,7 @@ function setGanttEditMode(on) {
         _openGanttBlockMenuPlanId = null;
         _selectedGanttPlanIds.clear();
         _ganttSelectLaneMode = false;
+        if (isF100KD2Module()) cancelF100Placement();
     }
     document.getElementById('ganttEditBar').style.display = on ? 'flex' : 'none';
     document.getElementById('btnGanttEdit').style.display = on ? 'none' : '';
@@ -6667,13 +9590,17 @@ async function _applyDateChanges(changes) {
             row.start_date = ch.newStart;
             row.end_date = ch.newEnd;
             row.week = weekLabel(ch.newStart);
+            if (isF100KD2Module()) {
+                row.planned_start_date = ch.newStart;
+                row.planned_end_date   = ch.newEnd;
+            }
         }
     });
 }
 
 async function savePlanChanges(changes) {
     if (!changes.length) return;
-
+    markLocalSave();
     showToast(`Saving ${changes.length} block${changes.length > 1 ? 's' : ''}…`, 'info');
 
     try {
@@ -6806,21 +9733,21 @@ function wireGanttDragEdit(dayIndex, days) {
 
         e.preventDefault();
         const bar = e.currentTarget;
-        const planId = parseInt(bar.dataset.planId);
-        const task = currentData.find(t => t.id === planId);
+        const planId = bar.dataset.planId;
+        const task = currentData.find(t => String(t.id) === planId);
         if (!task) return;
 
         const previewMoveSet = _ganttMoveMode === 'lane'
             ? currentData.filter(row => samePlanLane(row, task))
             : _ganttMoveMode === 'from-block'
-                ? getKd2ForwardMoveRows(task, currentData)
+                ? (isF100KD2Module() ? getF100ForwardMoveRows(task, currentData) : getKd2ForwardMoveRows(task, currentData))
                 : _selectedGanttPlanIds.has(planId) && _selectedGanttPlanIds.size > 1 && _ganttMoveMode === 'single'
-                    ? currentData.filter(row => _selectedGanttPlanIds.has(row.id))
+                    ? currentData.filter(row => _selectedGanttPlanIds.has(String(row.id)))
                     : [task];
-        const selectedDragIds = previewMoveSet.map(row => row.id);
+        const selectedDragIds = new Set(previewMoveSet.map(row => String(row.id)));
         const dragBars = [...document.querySelectorAll('.gc-bar[data-plan-id]')]
-            .filter(item => selectedDragIds.includes(parseInt(item.dataset.planId, 10)));
-        const origLeftById = new Map(dragBars.map(item => [parseInt(item.dataset.planId, 10), parseInt(item.style.left)]));
+            .filter(item => selectedDragIds.has(item.dataset.planId));
+        const origLeftById = new Map(dragBars.map(item => [item.dataset.planId, parseInt(item.style.left)]));
 
         bar.setPointerCapture(e.pointerId);
         dragBars.forEach(item => {
@@ -6839,7 +9766,7 @@ function wireGanttDragEdit(dayIndex, days) {
             deltaPx = ev.clientX - startX;
             deltaDays = Math.round(deltaPx / GANTT_DAY_W);
             dragBars.forEach(item => {
-                const id = parseInt(item.dataset.planId, 10);
+                const id = item.dataset.planId;
                 item.style.left = ((origLeftById.get(id) ?? parseInt(item.style.left)) + deltaDays * GANTT_DAY_W) + 'px';
             });
         }
@@ -6871,7 +9798,7 @@ function wireGanttDragEdit(dayIndex, days) {
             });
 
             dragBars.forEach(item => {
-                const id = parseInt(item.dataset.planId, 10);
+                const id = item.dataset.planId;
                 item.style.left = (origLeftById.get(id) ?? parseInt(item.style.left)) + 'px';
             }); // reset; re-render fixes it
 
@@ -6928,7 +9855,7 @@ wireGanttControls = function () {
         setGanttLaneSelectMode(!_ganttSelectLaneMode);
     });
     document.getElementById('btnGanttNoWorkDays')?.addEventListener('click', () => {
-        if (!isKD2Module()) return;
+        if (!isKD2Module() && !isF100KD2Module()) return;
         getModuleRuntime()?.openNoWorkModal?.();
     });
 
@@ -7145,7 +10072,7 @@ async function restoreGanttTaskSnapshots(tasks, auditLabel = 'restore') {
 async function deleteGanttBlock(planId) {
     if (!canEditPlan()) { showToast('Only planners and admins can delete blocks.', 'error'); return; }
 
-    const task = currentData.find(t => t.id === planId);
+    const task = currentData.find(t => String(t.id) === String(planId));
     if (!task) return;
 
     const confirmed = await showGanttConfirmDialog({
@@ -7161,10 +10088,10 @@ async function deleteGanttBlock(planId) {
         await removeGanttTaskSnapshots(snapshots, 'delete-single');
 
         // Remove from in-memory data
-        currentData = currentData.filter(t => t.id !== planId);
+        currentData = currentData.filter(t => String(t.id) !== String(planId));
         delete _ganttVisualLane[planId];
         delete _ganttManualLane[planId];
-        _selectedGanttPlanIds.delete(planId);
+        _selectedGanttPlanIds.delete(String(planId));
         _pushUndoAction({
             label: 'block delete',
             undo: () => restoreGanttTaskSnapshots(snapshots, 'undo-delete'),
@@ -7185,7 +10112,7 @@ async function deleteGanttBlock(planId) {
 
 async function deleteSelectedGanttBlocks() {
     if (!canEditPlan()) { showToast('Only planners and admins can delete blocks.', 'error'); return; }
-    const selectedTasks = currentData.filter(task => _selectedGanttPlanIds.has(task.id));
+    const selectedTasks = currentData.filter(task => _selectedGanttPlanIds.has(String(task.id)));
     if (!selectedTasks.length) return;
     const confirmed = await showGanttConfirmDialog({
         title: 'Delete Selected Blocks',
@@ -7221,6 +10148,15 @@ async function deleteSelectedGanttBlocks() {
 }
 
 /* ── Wire bar action buttons via event delegation on ganttInner ── */
+function _closeAllBarMenus() {
+    document.querySelectorAll('.gc-bar-menu-open').forEach(bar => {
+        bar.classList.remove('gc-bar-menu-open', 'gc-bar-menu-below');
+    });
+    document.querySelectorAll('.gc-row-menu-open').forEach(row => row.classList.remove('gc-row-menu-open'));
+    document.querySelectorAll('.gc-bar-menu-trigger').forEach(btn => btn.setAttribute('aria-expanded', 'false'));
+    _openGanttBlockMenuPlanId = null;
+}
+
 function wireBarDeleteButtons() {
     // Use event delegation on the gantt body — avoids the timing race
     // where pointerdown captures before click fires on child buttons.
@@ -7230,40 +10166,55 @@ function wireBarDeleteButtons() {
     // Remove any existing delegated listener before re-adding (avoids duplicates)
     inner.removeEventListener('click', _ganttBarClickHandler);
     inner.addEventListener('click', _ganttBarClickHandler);
+
+    // Click-outside: close any open bar menu when clicking anywhere outside a bar
+    document.removeEventListener('click', _ganttClickOutsideHandler);
+    document.addEventListener('click', _ganttClickOutsideHandler);
+}
+
+function _ganttClickOutsideHandler(e) {
+    if (!_openGanttBlockMenuPlanId) return;
+    if (e.target.closest('.gc-bar-menu') || e.target.closest('.gc-bar-menu-trigger')) return;
+    _closeAllBarMenus();
 }
 
 function _ganttBarClickHandler(e) {
     const placementTrack = e.target.closest('.gr-track[data-kd2-track="true"]');
     const clickedBar = e.target.closest('.gc-bar');
-    if (placementTrack && !clickedBar && isKD2Module() && getModuleRuntime()?.isPlacementActive?.()) {
-        e.stopPropagation();
+    if (placementTrack && !clickedBar) {
         const days = String(placementTrack.dataset.ganttDays || '').split(',').filter(Boolean);
         if (days.length) {
             const rect = placementTrack.getBoundingClientRect();
             const offset = Math.max(0, Math.min(rect.width - 1, e.clientX - rect.left));
             const dayWidth = rect.width / Math.max(days.length, 1);
-            const dayIndex = Math.max(0, Math.min(days.length - 1, Math.floor(offset / Math.max(dayWidth, 1))));
-            const plannedStart = days[dayIndex] || '';
-            if (plannedStart) {
+            const di = Math.max(0, Math.min(days.length - 1, Math.floor(offset / Math.max(dayWidth, 1))));
+            const plannedStart = days[di] || '';
+            if (plannedStart && isF100KD2Module() && _f100PlacementActive) {
+                e.stopPropagation();
+                placeF100VisualBlock(placementTrack, plannedStart);
+                return;
+            }
+            if (plannedStart && isKD2Module() && getModuleRuntime()?.isPlacementActive?.()) {
+                e.stopPropagation();
                 getModuleRuntime()?.placePlanBlockFromGanttTrack?.(placementTrack, plannedStart);
+                return;
             }
         }
-        return;
     }
     const laneSelectBtn = e.target.closest('[data-gantt-lane-select]');
     if (laneSelectBtn) {
         e.stopPropagation();
-        const planId = parseInt(laneSelectBtn.dataset.ganttLaneSelect, 10);
-        const task = currentData.find(row => row.id === planId);
+        const planId = laneSelectBtn.dataset.ganttLaneSelect;
+        const task = currentData.find(row => String(row.id) === planId);
         if (task) toggleGanttLaneSelection(task);
         return;
     }
     const selectBtn = e.target.closest('.gc-bar-select');
     if (selectBtn) {
         e.stopPropagation();
-        const planId = parseInt(selectBtn.dataset.planId, 10);
-        const task = currentData.find(row => row.id === planId);
-        if (_ganttSelectLaneMode && isKD2Module() && task) {
+        const planId = selectBtn.dataset.planId;
+        const task = currentData.find(row => String(row.id) === planId);
+        if (_ganttSelectLaneMode && (isKD2Module() || isF100KD2Module()) && task) {
             toggleGanttLaneSelection(task);
             return;
         }
@@ -7275,7 +10226,7 @@ function _ganttBarClickHandler(e) {
     const menuTrigger = e.target.closest('.gc-bar-menu-trigger');
     if (menuTrigger) {
         e.stopPropagation();
-        _openGanttBlockMenuPlanId = parseInt(menuTrigger.dataset.planId);
+        _openGanttBlockMenuPlanId = menuTrigger.dataset.planId;
         document.querySelectorAll('.gc-bar-menu-open').forEach(bar => bar.classList.remove('gc-bar-menu-open', 'gc-bar-menu-below'));
         document.querySelectorAll('.gc-row-menu-open').forEach(row => row.classList.remove('gc-row-menu-open'));
         const bar = menuTrigger.closest('.gc-bar');
@@ -7289,7 +10240,7 @@ function _ganttBarClickHandler(e) {
     const menuClose = e.target.closest('.gc-bar-menu-close');
     if (menuClose) {
         e.stopPropagation();
-        const planId = parseInt(menuClose.dataset.planId);
+        const planId = menuClose.dataset.planId;
         if (_openGanttBlockMenuPlanId === planId) _openGanttBlockMenuPlanId = null;
         const bar = menuClose.closest('.gc-bar');
         if (bar) bar.classList.remove('gc-bar-menu-open', 'gc-bar-menu-below');
@@ -7301,7 +10252,7 @@ function _ganttBarClickHandler(e) {
     const delBtn = e.target.closest('.gc-bar-delete, .gc-bar-menu-delete');
     if (delBtn) {
         e.stopPropagation();
-        const planId = parseInt(delBtn.dataset.planId);
+        const planId = delBtn.dataset.planId;
         deleteGanttBlock(planId);
         return;
     }
@@ -7309,9 +10260,13 @@ function _ganttBarClickHandler(e) {
     const editBtn = e.target.closest('.gc-bar-edit, .gc-bar-menu-edit');
     if (editBtn) {
         e.stopPropagation();
-        const planId = parseInt(editBtn.dataset.planId);
+        const planId = editBtn.dataset.planId;
         if (isKD2Module()) {
-            getModuleRuntime()?.openPlanEdit?.(planId);
+            getModuleRuntime()?.openPlanEdit?.(parseInt(planId, 10));
+            return;
+        }
+        if (isF100KD2Module()) {
+            openF100EditBlockModal(planId);
             return;
         }
         openEditBlockModal(planId);
@@ -7321,7 +10276,7 @@ function _ganttBarClickHandler(e) {
     const laneUp = e.target.closest('.gc-bar-lane-up');
     if (laneUp) {
         e.stopPropagation();
-        const planId = parseInt(laneUp.dataset.planId);
+        const planId = laneUp.dataset.planId;
         const gsEl = document.getElementById('ganttStart');
         const geEl = document.getElementById('ganttEnd');
         moveGanttBlockOneLane(planId, -1, gsEl?.value, geEl?.value);
@@ -7332,7 +10287,7 @@ function _ganttBarClickHandler(e) {
     const laneDown = e.target.closest('.gc-bar-lane-dn');
     if (laneDown) {
         e.stopPropagation();
-        const planId = parseInt(laneDown.dataset.planId);
+        const planId = laneDown.dataset.planId;
         const gsEl = document.getElementById('ganttStart');
         const geEl = document.getElementById('ganttEnd');
         moveGanttBlockOneLane(planId, 1, gsEl?.value, geEl?.value);
@@ -7346,6 +10301,10 @@ function openAddBlockModal() {
     if (!canEditPlan()) { showToast('Only planners and admins can add blocks.', 'error'); return; }
     if (isKD2Module()) {
         getModuleRuntime()?.openPlanCreateModal?.();
+        return;
+    }
+    if (isF100KD2Module()) {
+        openF100AddBlockModal();
         return;
     }
 
@@ -7529,11 +10488,547 @@ async function saveAddBlock() {
     }
 }
 
+/* ── F100 Add Block modal ────────────────────────────────────────── */
+let _f100AbCurrentMode = 'block';  // 'block' | 'template'
+
+function _setF100AbMode(mode) {
+    _f100AbCurrentMode = mode;
+    document.querySelectorAll('#f100AbModeToggle [data-f100-mode]').forEach(btn => {
+        btn.classList.toggle('active', btn.dataset.f100Mode === mode);
+    });
+    const isTemplate = mode === 'template';
+    document.getElementById('f100AbTitle').textContent = isTemplate ? 'Add F100 Template Plan' : 'Add F100 Plan Block';
+    document.getElementById('btnF100AddBlockSave').textContent = isTemplate ? 'Create Plan' : 'Add to Plan';
+    document.getElementById('f100AbProcessGroup').style.display = isTemplate ? 'none' : '';
+    document.getElementById('f100AbStartGroup').style.display = isTemplate ? 'none' : '';
+    document.getElementById('f100AbEndGroup').style.display = isTemplate ? 'none' : '';
+    document.getElementById('f100AbTemplateWrap').style.display = isTemplate ? '' : 'none';
+    if (isTemplate) {
+        const startEl = document.getElementById('f100AbTplStart');
+        if (startEl && !startEl.value) startEl.value = todayStr();
+        f100AbLoadTemplateList();
+    }
+}
+
+async function openF100AddBlockModal() {
+    const overlay = document.getElementById('f100AddBlockOverlay');
+    if (!overlay) return;
+
+    // Populate battalion dropdown
+    const bSel = document.getElementById('f100AbBattalion');
+    try {
+        const { data: battalions, error } = await db.from('f100_battalions').select('id, battalion_code, battalion_name').order('battalion_code');
+        if (error) throw error;
+        bSel.innerHTML = (battalions || []).map(b =>
+            `<option value="${b.id}">${esc(b.battalion_name ? `${b.battalion_code} – ${b.battalion_name}` : b.battalion_code)}</option>`
+        ).join('');
+    } catch (e) {
+        showToast('Could not load battalions: ' + e.message, 'error');
+        return;
+    }
+
+    // Pre-select current battalion filter
+    const currentBattalionCode = getVal('f100Battalion');
+    if (currentBattalionCode) {
+        const { data: bRow } = await db.from('f100_battalions').select('id').eq('battalion_code', currentBattalionCode).maybeSingle();
+        if (bRow) bSel.value = String(bRow.id);
+    }
+
+    // Set mode from current filter
+    const mode = document.getElementById('f100Mode')?.value || 'gun';
+    document.getElementById('f100AbMode').value = mode;
+
+    // Populate part and process dropdowns
+    await f100AbUpdateParts();
+
+    // Reset other fields
+    document.getElementById('f100AbSerial').value = '';
+    document.getElementById('f100AbStart').value = todayStr();
+    document.getElementById('f100AbEnd').value = todayStr();
+    document.getElementById('f100AbError').style.display = 'none';
+    document.getElementById('f100AbTemplateList').innerHTML = '<p style="color:var(--clr-text-muted);font-size:.8rem">Select a part above to load the process sequence.</p>';
+
+    // Default to block mode
+    _setF100AbMode('block');
+
+    overlay.style.display = 'flex';
+}
+
+async function f100AbUpdateParts() {
+    const mode = document.getElementById('f100AbMode')?.value || 'gun';
+    const pSel = document.getElementById('f100AbPart');
+    if (!pSel) return;
+    try {
+        const { data: parts, error } = await db.from('f100_parts').select('id, part_name, part_number').eq('module', mode).order('sort_order');
+        if (error) throw error;
+        pSel.innerHTML = (parts || []).map(p => `<option value="${p.id}">${esc(p.part_name)} (${esc(p.part_number)})</option>`).join('');
+        if (!pSel.innerHTML) pSel.innerHTML = '<option value="">No parts found</option>';
+    } catch (e) {
+        pSel.innerHTML = '<option value="">Error loading parts</option>';
+    }
+    // Gun parts only apply to K9 — hide K10/K11 in vehicle type select
+    const vtSel = document.getElementById('f100AbVehicleType');
+    if (vtSel) {
+        [...vtSel.options].forEach(opt => { opt.hidden = mode === 'gun' && opt.value !== 'K9'; });
+        if (mode === 'gun') vtSel.value = 'K9';
+    }
+    await f100AbUpdateProcesses();
+}
+
+async function f100AbUpdateProcesses() {
+    const partId = document.getElementById('f100AbPart')?.value;
+    const procSel = document.getElementById('f100AbProcess');
+    if (!procSel) return;
+    if (!partId) { procSel.innerHTML = '<option value="">Select a part first</option>'; return; }
+    try {
+        const { data: procs, error } = await db.from('f100_processes').select('id, process_name, step_number').eq('part_id', partId).order('sort_order');
+        if (error) throw error;
+        procSel.innerHTML = (procs || []).map(p => `<option value="${p.id}">${esc(p.step_number ? `${p.step_number}. ` : '')}${esc(p.process_name)}</option>`).join('');
+        if (!procSel.innerHTML) procSel.innerHTML = '<option value="">No processes found</option>';
+    } catch (e) {
+        procSel.innerHTML = '<option value="">Error loading processes</option>';
+    }
+    if (_f100AbCurrentMode === 'template') f100AbLoadTemplateList();
+}
+
+async function f100AbLoadTemplateList() {
+    const partId = document.getElementById('f100AbPart')?.value;
+    const listEl = document.getElementById('f100AbTemplateList');
+    if (!listEl) return;
+    if (!partId) {
+        listEl.innerHTML = '<p style="color:var(--clr-text-muted);font-size:.8rem">Select a part above to load the process sequence.</p>';
+        return;
+    }
+    const { data: procs } = await db.from('f100_processes').select('*').eq('part_id', partId).order('sort_order');
+    if (!procs?.length) {
+        listEl.innerHTML = '<p style="color:var(--clr-text-muted);font-size:.8rem">No processes defined for this part.</p>';
+        return;
+    }
+    listEl.innerHTML = `<div class="f100-tpl-proc-list">
+        ${procs.map((p, i) => `
+        <div class="f100-tpl-proc-row" data-proc-id="${p.id}" data-step="${p.step_number || i + 1}">
+            <span class="f100-tpl-step">S${p.step_number || i + 1}</span>
+            <span class="f100-tpl-pname">${esc(p.process_name)}</span>
+            <label class="f100-tpl-dur-label">Days
+                <input type="number" class="f100-tpl-dur filter-control" value="${p.default_duration || 7}" min="1" max="365" style="width:60px">
+            </label>
+        </div>`).join('')}
+    </div>`;
+}
+
+function closeF100AddBlockModal() {
+    document.getElementById('f100AddBlockOverlay').style.display = 'none';
+}
+
+async function saveF100AddBlock() {
+    if (_f100AbCurrentMode === 'template') { await _saveF100Template(); return; }
+
+    const errEl = document.getElementById('f100AbError');
+    errEl.style.display = 'none';
+
+    const battalionId = document.getElementById('f100AbBattalion').value;
+    const vehicleType = document.getElementById('f100AbVehicleType').value;
+    const serialRaw = document.getElementById('f100AbSerial').value.trim();
+    const partId = document.getElementById('f100AbPart').value;
+    const processId = document.getElementById('f100AbProcess').value;
+    const startDate = document.getElementById('f100AbStart').value;
+    const endDate = document.getElementById('f100AbEnd').value;
+
+    if (!battalionId || !vehicleType || !serialRaw || !partId || !processId || !startDate || !endDate) {
+        errEl.textContent = 'All fields are required.';
+        errEl.style.display = 'flex';
+        return;
+    }
+    const serialNumber = parseInt(serialRaw, 10);
+    if (!Number.isFinite(serialNumber) || serialNumber <= 0) {
+        errEl.textContent = 'Serial No. must be a positive number.';
+        errEl.style.display = 'flex';
+        return;
+    }
+
+    // Resolve battalion_code from id
+    const { data: bRow, error: bErr } = await db.from('f100_battalions').select('battalion_code').eq('id', battalionId).maybeSingle();
+    if (bErr || !bRow) { errEl.textContent = 'Invalid battalion.'; errEl.style.display = 'flex'; return; }
+
+    const payload = {
+        battalion_code: bRow.battalion_code,
+        vehicle_type: vehicleType,
+        serial_number: serialNumber,
+        part_id: partId,
+        process_id: processId,
+        planned_start_date: startDate,
+        planned_end_date: endDate,
+        status: 'Planned',
+    };
+
+    try {
+        markLocalSave();
+        const { data: inserted, error } = await db.from('f100_plans').insert(payload).select().single();
+        if (error) throw error;
+        await auditLog('INSERT', 'f100_plans', inserted.id, null, payload);
+        showToast(`F100 plan block added.`, 'success');
+        closeF100AddBlockModal();
+        await loadData();
+    } catch (err) {
+        errEl.textContent = 'Save failed: ' + err.message;
+        errEl.style.display = 'flex';
+        console.error(err);
+    }
+}
+
+async function _saveF100Template() {
+    const errEl = document.getElementById('f100AbError');
+    errEl.style.display = 'none';
+
+    const battalionId = document.getElementById('f100AbBattalion').value;
+    const vehicleType = document.getElementById('f100AbVehicleType').value;
+    const serialRaw = document.getElementById('f100AbSerial').value.trim();
+    const partId = document.getElementById('f100AbPart').value;
+    const startDate = document.getElementById('f100AbTplStart').value;
+
+    if (!battalionId || !vehicleType || !serialRaw || !partId || !startDate) {
+        errEl.textContent = 'All fields (battalion, vehicle type, serial, part, start date) are required.';
+        errEl.style.display = 'flex';
+        return;
+    }
+    const serialNumber = parseInt(serialRaw, 10);
+    if (!Number.isFinite(serialNumber) || serialNumber <= 0) {
+        errEl.textContent = 'Serial No. must be a positive integer.';
+        errEl.style.display = 'flex';
+        return;
+    }
+    const rows = [...document.querySelectorAll('#f100AbTemplateList .f100-tpl-proc-row')];
+    if (!rows.length) {
+        errEl.textContent = 'Select a part first to load its process sequence.';
+        errEl.style.display = 'flex';
+        return;
+    }
+
+    const { data: bRow, error: bErr } = await db.from('f100_battalions').select('battalion_code').eq('id', battalionId).maybeSingle();
+    if (bErr || !bRow) { errEl.textContent = 'Invalid battalion.'; errEl.style.display = 'flex'; return; }
+
+    const payloads = [];
+    let cursor = startDate;
+    for (const row of rows) {
+        const procId = row.dataset.procId;
+        const dur = parseInt(row.querySelector('.f100-tpl-dur')?.value || '7', 10) || 7;
+        const endDate = addDays(cursor, dur - 1);
+        payloads.push({
+            battalion_code: bRow.battalion_code,
+            vehicle_type: vehicleType,
+            serial_number: serialNumber,
+            part_id: partId,
+            process_id: procId,
+            planned_start_date: cursor,
+            planned_end_date: endDate,
+            status: 'Planned',
+        });
+        cursor = addDays(endDate, 1);
+    }
+
+    try {
+        markLocalSave();
+        const { data: inserted, error } = await db.from('f100_plans').insert(payloads).select();
+        if (error) throw error;
+        for (const ins of (inserted || [])) {
+            await auditLog('INSERT', 'f100_plans', ins.id, null, payloads.find(p => p.process_id === ins.process_id));
+        }
+        showToast(`Template applied: ${payloads.length} process blocks created.`, 'success');
+        closeF100AddBlockModal();
+        await loadData();
+    } catch (err) {
+        errEl.textContent = 'Create failed: ' + err.message;
+        errEl.style.display = 'flex';
+    }
+}
+
+/* ── F100 Visual Placement ────────────────────────────────────────── */
+async function openF100VisualPlacement() {
+    const bar = document.getElementById('ganttVisualPlacementBar');
+    const palette = document.getElementById('ganttVisualPalette');
+    if (!bar || !palette) return;
+
+    // Hide KD2 vehicle filter; keep the text filter for search
+    const vehFilter = document.getElementById('ganttVisualPlacementVehicle')?.closest('.filter-item');
+    if (vehFilter) vehFilter.style.display = 'none';
+    const filterInput = document.getElementById('ganttVisualPlacementFilter');
+    if (filterInput) {
+        filterInput.placeholder = 'Search process or part...';
+        filterInput.value = '';
+    }
+
+    const mode = document.getElementById('f100Mode')?.value || 'gun';
+    try {
+        const { data: parts } = await db.from('f100_parts').select('id, part_name, part_number').eq('module', mode).order('sort_order');
+        const partIds = (parts || []).map(p => p.id);
+        if (!partIds.length) { showToast('No parts found for current mode.', 'error'); return; }
+        _f100PlacementPartMap = {};
+        (parts || []).forEach(p => { _f100PlacementPartMap[p.id] = p; });
+
+        const { data: processes } = await db.from('f100_processes').select('*').in('part_id', partIds).order('sort_order');
+        if (!processes?.length) { showToast('No processes found.', 'error'); return; }
+
+        _f100PlacementAllProcesses = processes;
+        _f100PlacementActive = false;
+        _f100PlacementProcess = null;
+
+        _renderF100PlacementPalette('');
+
+        if (filterInput) {
+            filterInput.oninput = () => _renderF100PlacementPalette(filterInput.value);
+        }
+
+        const summary = document.getElementById('ganttVisualPlacementSummary');
+        if (summary) summary.textContent = 'Select a process block, then click once on the target lane and date.';
+        const hint = document.getElementById('ganttVisualPlacementHint');
+        if (hint) hint.textContent = 'The selected process stays active until you change it or cancel.';
+        bar.style.display = '';
+    } catch (err) {
+        showToast('Failed to load processes: ' + err.message, 'error');
+    }
+}
+
+function _renderF100PlacementPalette(query) {
+    const palette = document.getElementById('ganttVisualPalette');
+    if (!palette) return;
+    const q = (query || '').trim().toLowerCase();
+
+    // Group by part
+    const byPart = {};
+    _f100PlacementAllProcesses.forEach(proc => {
+        if (q) {
+            const hay = [
+                (_f100PlacementPartMap[proc.part_id]?.part_name || ''),
+                (proc.process_name || ''),
+                String(proc.step_number || ''),
+            ].join(' ').toLowerCase();
+            if (!hay.includes(q)) return;
+        }
+        if (!byPart[proc.part_id]) byPart[proc.part_id] = [];
+        byPart[proc.part_id].push(proc);
+    });
+
+    const partIds = Object.keys(byPart);
+    if (!partIds.length) {
+        palette.innerHTML = `<div class="empty-state"><p>${q ? 'No processes match the search.' : 'No processes found.'}</p></div>`;
+        return;
+    }
+
+    palette.innerHTML = partIds.map(partId => {
+        const part = _f100PlacementPartMap[partId] || {};
+        const procs = byPart[partId];
+        return `
+        <div class="kd2-timeline-palette-group">
+            <div class="kd2-timeline-palette-group-title">${esc(part.part_name || partId)}</div>
+            <div class="kd2-timeline-palette-items">
+                ${procs.map(proc => {
+                    const isActive = _f100PlacementProcess?.id === proc.id;
+                    const color = ganttStationColor(proc.process_name);
+                    return `<button type="button"
+                        class="kd2-timeline-palette-item${isActive ? ' kd2-timeline-palette-item-active' : ''}"
+                        data-f100-proc-id="${proc.id}"
+                        data-f100-part-id="${proc.part_id}"
+                        data-f100-step="${proc.step_number || ''}"
+                        data-f100-duration="${proc.default_duration || 7}"
+                        data-f100-name="${esc(proc.process_name)}"
+                        style="--kd2-placement-color:${color}">
+                        <span class="kd2-placement-palette-bar" style="background:${color}">
+                            <span class="gc-bar-text">Step ${proc.step_number || '?'} · ${esc(proc.process_name)}</span>
+                        </span>
+                        <span class="kd2-placement-palette-meta">${esc(part.part_name || '')} · ${proc.default_duration || 7} days</span>
+                    </button>`;
+                }).join('')}
+            </div>
+        </div>`;
+    }).join('');
+
+    palette.querySelectorAll('[data-f100-proc-id]').forEach(btn => {
+        btn.addEventListener('click', () => {
+            _f100PlacementProcess = {
+                id: btn.dataset.f100ProcId,
+                part_id: btn.dataset.f100PartId,
+                step_number: btn.dataset.f100Step,
+                duration: parseInt(btn.dataset.f100Duration) || 7,
+                name: btn.dataset.f100Name,
+            };
+            _f100PlacementActive = true;
+            document.getElementById('ganttInner')?.classList.add('f100-placing');
+            // Re-render palette to show active state
+            _renderF100PlacementPalette(document.getElementById('ganttVisualPlacementFilter')?.value || '');
+            const summary = document.getElementById('ganttVisualPlacementSummary');
+            if (summary) summary.textContent = `Placing: Step ${_f100PlacementProcess.step_number} – ${_f100PlacementProcess.name}. Click a lane on the Gantt to place.`;
+        });
+    });
+}
+
+function cancelF100Placement() {
+    _f100PlacementActive = false;
+    _f100PlacementProcess = null;
+    document.getElementById('ganttInner')?.classList.remove('f100-placing');
+    const bar = document.getElementById('ganttVisualPlacementBar');
+    if (bar) bar.style.display = 'none';
+}
+
+async function placeF100VisualBlock(track, plannedStart) {
+    if (!_f100PlacementProcess) {
+        showToast('Select a process from the palette first.', 'error');
+        return;
+    }
+    const battalionCode = track.dataset.battalionCode || '';
+    const vehicleType = track.dataset.vehicleType || '';
+    const serialNumber = parseInt(track.dataset.unitSerial || '', 10);
+    if (!battalionCode || !vehicleType || !Number.isFinite(serialNumber)) {
+        showToast('Lane is missing vehicle unit details. Ensure the lane has existing data.', 'error');
+        return;
+    }
+    const endDate = addDays(plannedStart, (_f100PlacementProcess.duration || 7) - 1);
+    const payload = {
+        battalion_code: battalionCode,
+        vehicle_type: vehicleType,
+        serial_number: serialNumber,
+        part_id: _f100PlacementProcess.part_id,
+        process_id: _f100PlacementProcess.id,
+        planned_start_date: plannedStart,
+        planned_end_date: endDate,
+        status: 'Planned',
+    };
+    try {
+        markLocalSave();
+        const { data: inserted, error } = await db.from('f100_plans').insert(payload).select().single();
+        if (error) throw error;
+        await auditLog('INSERT', 'f100_plans', inserted.id, null, payload);
+        showToast(`Block placed: Step ${_f100PlacementProcess.step_number} – ${_f100PlacementProcess.name}`, 'success');
+        await loadData();
+    } catch (err) {
+        showToast('Placement failed: ' + err.message, 'error');
+    }
+}
+
+/* ── F100 Edit Block modal ────────────────────────────────────────── */
+function openF100EditBlockModal(planId) {
+    const task = currentData.find(t => String(t.id) === String(planId));
+    if (!task) return;
+    document.getElementById('f100EbPlanId').value = String(planId);
+    document.getElementById('f100EbBlockInfo').textContent =
+        `${task.battalion_code || '—'} · ${task.vehicle_type || '—'} #${task.serial_number ?? '—'} · ${task.part_name || '—'} · ${task.process_name || task.process_station || '—'}`;
+    document.getElementById('f100EbStart').value       = task.planned_start_date || '';
+    document.getElementById('f100EbEnd').value         = task.planned_end_date   || '';
+    document.getElementById('f100EbActualStart').value = task.actual_start_date  || '';
+    document.getElementById('f100EbActualEnd').value   = task.actual_end_date    || '';
+    document.getElementById('f100EbStatus').value      = task.status             || 'Planned';
+    document.getElementById('f100EbError').style.display = 'none';
+
+    const isViewer = getCurrentUser()?.role === 'viewer';
+    ['f100EbStart', 'f100EbEnd', 'f100EbActualStart', 'f100EbActualEnd', 'f100EbStatus'].forEach(id => {
+        const el = document.getElementById(id);
+        if (el) el.disabled = isViewer;
+    });
+    const saveBtn = document.getElementById('btnF100EditBlockSave');
+    if (saveBtn) saveBtn.style.display = isViewer ? 'none' : '';
+
+    document.getElementById('f100EditBlockOverlay').style.display = 'flex';
+}
+
+function closeF100EditBlockModal() {
+    document.getElementById('f100EditBlockOverlay').style.display = 'none';
+}
+
+async function saveF100EditBlock() {
+    const planId   = document.getElementById('f100EbPlanId').value;
+    const start    = document.getElementById('f100EbStart').value;
+    const end      = document.getElementById('f100EbEnd').value;
+    const actStart = document.getElementById('f100EbActualStart').value || null;
+    const actEnd   = document.getElementById('f100EbActualEnd').value   || null;
+    const status   = document.getElementById('f100EbStatus').value;
+    const errEl    = document.getElementById('f100EbError');
+    errEl.style.display = 'none';
+
+    if (!start || !end) { errEl.textContent = 'Planned start and end dates are required.'; errEl.style.display = 'flex'; return; }
+
+    const payload = {
+        planned_start_date: start,
+        planned_end_date:   end,
+        actual_start_date:  actStart,
+        actual_end_date:    actEnd,
+        status,
+        updated_at: new Date().toISOString(),
+    };
+
+    try {
+        const { error } = await db.from('f100_plans').update(payload).eq('id', planId);
+        if (error) throw error;
+        await auditLog('UPDATE', 'f100_plans', planId, null, payload);
+        const row = currentData.find(t => String(t.id) === planId);
+        if (row) {
+            Object.assign(row, {
+                planned_start_date: start,
+                planned_end_date:   end,
+                actual_start_date:  actStart,
+                actual_end_date:    actEnd,
+                status,
+                start_date: actStart || start,
+                end_date:   actEnd   || end,
+            });
+        }
+        showToast('F100 plan block updated.', 'success');
+        closeF100EditBlockModal();
+        refreshAllViews();
+    } catch (err) {
+        errEl.textContent = 'Save failed: ' + err.message;
+        errEl.style.display = 'flex';
+        console.error(err);
+    }
+}
+
 /* ── Extend wireGanttControls with add/delete wiring ────────────── */
 const _origWireGanttFull = wireGanttControls;
 wireGanttControls = function () {
     _origWireGanttFull();
     bindGanttFullscreenUi();
+
+    // F100 Add Block modal wiring
+    document.getElementById('f100AddBlockClose')?.addEventListener('click', closeF100AddBlockModal);
+    document.getElementById('btnF100AddBlockCancel')?.addEventListener('click', closeF100AddBlockModal);
+    document.getElementById('btnF100AddBlockSave')?.addEventListener('click', saveF100AddBlock);
+    document.getElementById('f100AddBlockOverlay')?.addEventListener('click', function (e) {
+        if (e.target === this) closeF100AddBlockModal();
+    });
+    document.getElementById('f100AbMode')?.addEventListener('change', f100AbUpdateParts);
+    document.getElementById('f100AbPart')?.addEventListener('change', f100AbUpdateProcesses);
+    // Block / Template mode toggle
+    document.getElementById('f100AbModeToggle')?.addEventListener('click', e => {
+        const btn = e.target.closest('[data-f100-mode]');
+        if (btn) _setF100AbMode(btn.dataset.f100Mode);
+    });
+
+    // F100 Edit Block modal wiring
+    document.getElementById('f100EditBlockClose')?.addEventListener('click', closeF100EditBlockModal);
+    document.getElementById('btnF100EditBlockCancel')?.addEventListener('click', closeF100EditBlockModal);
+    document.getElementById('btnF100EditBlockSave')?.addEventListener('click', saveF100EditBlock);
+    document.getElementById('f100EditBlockOverlay')?.addEventListener('click', function (e) {
+        if (e.target === this) closeF100EditBlockModal();
+    });
+
+    // Visual add button for F100 — opens visual process palette for click-to-place
+    ['btnGanttVisualAdd', 'btnKd2VisualAdd'].forEach(id => {
+        document.getElementById(id)?.addEventListener('click', event => {
+            if (!isF100KD2Module()) return;
+            event.stopPropagation();
+            getModuleRuntime()?.toggleTimelineVisualMenu?.(false);
+            openF100VisualPlacement();
+        });
+    });
+
+    // Cancel F100 visual placement
+    document.getElementById('btnGanttVisualPlacementCancel')?.addEventListener('click', () => {
+        if (isF100KD2Module()) cancelF100Placement();
+    });
+
+    // Add Template button (gantt toolbar) opens the unified add-block modal in template mode
+    document.getElementById('btnF100AddTemplate')?.addEventListener('click', async () => {
+        await openF100AddBlockModal();
+        _setF100AbMode('template');
+    });
 
     // Add Block modal
     document.getElementById('btnAddBlock')?.addEventListener('click', openAddBlockModal);

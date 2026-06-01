@@ -200,3 +200,6 @@ UI — GANTT (ADDITIONAL)
              the gantt-body (z-0) in the parent context.
 
 ========================================================
+
+- I want the mark as complete (actual end) to just be like the how we add the actual start, and just leave the action as comments, the comment will have the user who added it and multiple users can add
+  comments 

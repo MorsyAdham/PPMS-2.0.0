@@ -1,0 +1,19 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(Get-ChildItem -Path \"C:\\\\Users\\\\Victus 2\\\\Logistics and Programming\\\\3. Problem Solution Progrmming Projects\\\\F200 Plan\\\\F200 plan structure\\\\PPMS\" -Recurse)",
+      "Bash(Select-Object FullName, PSIsContainer)",
+      "Bash(Format-Table -AutoSize)",
+      "Bash(git commit -m ' *)",
+      "Bash(git add *)",
+      "Bash(grep -v \"^.*//.*\")",
+      "Bash(Get-ChildItem -Path \"C:\\\\Users\\\\Victus 2\\\\Logistics and Programming\\\\3. Problem Solution Progrmming Projects\\\\F200 Plan\\\\F200 plan structure\\\\PPMS\\\\scripts\" -Recurse -Filter \"*.js\")",
+      "Bash(Select-Object FullName)",
+      "Bash(Get-ChildItem -Recurse -Path \"C:\\\\Users\\\\Victus 2\\\\Logistics and Programming\\\\3. Problem Solution Progrmming Projects\\\\F200 Plan\\\\F200 plan structure\\\\PPMS\" -Directory)",
+      "Bash(Select-Object -First 20)",
+      "Bash(Format-Table FullName)",
+      "Bash(grep -E \"\\\\.js$\")",
+      "Bash(xargs grep -l \"renderTable\\\\|renderVPX\\\\|renderGantt\\\\|renderSchedule\")"
+    ]
+  }
+}

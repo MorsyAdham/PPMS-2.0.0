@@ -1,0 +1,214 @@
+This is instruction fr creating a new module for F100 plan so, in we have KD1, and KD2 module, those are currently for F200, 
+so first we must rename them to:
+- F200 - KD1, 
+- F200 - KD2, 
+so that we can have F100 - KD1 and F100 - KD2.
+Also we will use the same idea of Gantt from F200 - KD2, 
+but the vpx will be different and table data will contain different data,
+as they will have each process for each gun part,
+and each process for each vehicle part, 
+and the vpx will show the percenatge of completion and when I hover on the cell, 
+it will show all the process, and small summary at the end of the hover block to explain the percentage of completion,
+we will have the the same data in the cell as in F200 - KD2 (planned start and end, actual start end) added to it the percentage of completion.
+
+we will focus on F100 - KD2, we will skip the F100 - KD1 for now (it is much simpler and only has Gun, and only assembly)
+
+F100 will have two major things that will be introduced as a new filter:
+- Gun
+- Vehicle Parts
+
+The Gun and Vehicle parts are never shown together, the filter is either Gun, or Vehicle parts, and it applies to everything.
+we must have like in the F200 - KD2 a place to add and remove new parts and processes for each part.
+
+We track the progress based on the number of process finished for each part: gun consists of 6 parts that needs to be machined:
+- Breech Block, Part number: 20026528, number of process: 19, 
+#10	MATERIAL PROVISION
+#20	MILLING
+#30	GRINDING
+#40	MILLING
+#50	MILLING
+#60	MILLING
+#70	DE-BURR
+#80	INDUCTION HARDENING
+#90	MILLING
+#100	MILLING
+#110	MILLING
+#120	DE-BURR
+#130	MARKING
+#140	GRINDING
+#150	M.T
+#160	INSPECTION (final)
+#170	PHOSPHATE
+#180	INSPECTION
+#190	TO STOCK
+
+- Breech Ring, Part number: EGK955424, number of process: 21,
+#10	MATERIAL PROVISION
+#20	TURNING
+#30	TURNING
+#40	MILLING
+#50	TURNING
+#55	TURNING
+#60	MILLING
+#70	SLOTTING
+#80	SLOTTING
+#90	TURNING
+#100	MILLING
+#110	MILLING
+#120	MILLING
+#130	MILLING
+#140	SLOTTING
+#150	SLOTTING
+#160	DE-BURR
+#170	M.T
+#180	INSPECTION
+#190	PHOSPHATE
+#200	TO STOCK
+
+- Muzzle brake, Part number: EGK955308, number of process: 24,
+#10	MATERIAL PROVISION
+#20	TURNING
+#30	DEEP HOLE
+#40	TURNING
+#45	MPI
+#50	TURNING
+#60	TURNING
+#70	TURNING
+#80	TURNING
+#90	TURNING
+#100	BORING
+#110	DE-BURR
+#120	HEAT TRATMENT
+#130	SHOT BLAST
+#140	TURNING
+#150	TURNING
+#160	TURNING
+#170	MARKING
+#180	BORING
+#190	DE-BURR
+#200	MARKING
+#210	M.T
+#220	INSPECTION
+#230	TO STOCK
+
+- Evacuator, Part number: EGK955321, number of process: 12 ,
+#10	MATERIAL PROVISION
+#20	WELDING
+#30	HEAT TRATMENT
+#40	SHOT BLAST
+#50	TURNING
+#60	TURNING
+#70	BORING
+#80	Marking
+#90	DE-BURR
+#100	INSPECTION
+#110	MPI M/C
+#120	TO STOCK
+
+- CYLINDER,RECUPERATOR, part number: 20026661, number of process: 22,
+#10	MATERIAL PROVISION
+#15	WELDING
+#17	STRESS RELIEF
+#19	SHOT BLAST
+#20	TURNING
+#30	TURNING
+#40	DEEP HOLE
+#50	TURNING
+#53	TURNING
+#55	TURNING
+#60	TURNING
+#70	TURNING
+#80	BORING
+#90	DE-BURR
+#100	M.T
+#110	INSPECTION
+#120	PHOSPHATE
+#130	HONING
+#140	HONING
+#150	DE-BURR
+#160	INSPECTION
+#170	TO STOCK
+
+- Craddle Assy, Part number: EGK955741, number of process: 24, 
+#10	MATERIAL PROVISION
+#20	ASSEMBLY
+#30	TACK WELDING
+#40	LATOUT+AS109+H10+H108:AT108
+#50	WELDING
+#60	STRESS RELIEF
+#65	RE-TAP
+#70	WELDING
+#80	SHOT BLAST
+#90	MARKING
+#100	M.T
+#170	LATOUT MARKING
+#180	BORING
+#190	BORING
+#195	ASSEMBLY
+#200	BORING
+#210	BORING
+#220	BORING
+#230	BORING
+#240	DE-BURR
+#245	TEST
+#250	M.T
+#260	INSPECTION
+#270	TO STOCK
+
+after those gun parts are made comes the assembly of the gun which is made as follow:
+1 - Breech Mechanisim -> 1.1 - Breech Mechanisim TEST
+1 - Gun Mount assembly -> 1.1 - pressure TEST
+1 - Tibe assembly
+2 - Arnament Assembly (A) -> Gymna test -> Firing CYLINDER Test
+
+> same number means they work in parallel.
+
+as for the the vehicle parts we have to also introduce a new filter, manufacturer:
+- HAS
+- DOOWON
+- MOTROL (only starts in KD3 so we will skip for now)
+
+for vehicle parts we need to know the qty and which vehicles is it made for, 
+for each part per vehicle the battalion has 18 K9, 3 K10, and 4 K11, a total of 25 vehicles,
+so if the qty is 1/vehicle and it is used in k9 k10 and k11 we need to make a total of 25, if only for K9 we need a total of 18.
+
+
+HAS Vehicle Parts:
+> part number, part name/description, qty/vehicle, vehicles, processes
+- 60343861, Joystick bracket, 1, K9, 10	20	30	40	50	60	70	80	90	100
+INPUT Mat.	MARKING	FACE MILLING	DRILLING	DEBUR/INSERT	INSPECTION	CHROMATE	PAINTING	INSPECTION	DELIVERY
+- 60343684, Bracket, 1, K9, 10	20	30	40	50	60	70
+KITTING	WELDING	INSPECTION	PHOSPHATE COAT	PAINTING	INSPECTION	DELIVERY
+- 60343685, Bracket, 1, K9, 10	20	30	40	50	60	70	80	90	100
+INPUT Mat.	MARKING	FACE MILLING		DRILLING	BORING	FACE MILLING	FACE MILLING/DRILLING	DEBUR	INSPECTION
+- 60343686, Boss, 2, K9, # 10	# 20	# 30	# 40
+INPUT Mat.	CUTTING	TURNING	INSPECTION
+- 60348010, Driver seat support, 1, K9/K10/K11, 10	20	30	40	50	60	70	80	90
+INPUT Mat.	MARKING	FACE MILLING/BORING	DEBUR	INSPECTION	CHROMATE	PAINTING	INSPECTION	DELIVERY
+- 10910084, Driver seat base, 1, K9/K10/K11, 10	20	30	40	50	60	70	80
+KITTING	CLEANING	WELDING	INSPECTION	CHROMATE	PAINTING	INSPECTION	DELIVERY
+- EGK974242 - 60360242, Gun travel lock_Support, 1, K9, 10	20	30	40	50	60	70	80	90	100	110	120
+INPUT Mat.	MARKING	 FACE MILLING	FACE MILLING/DRILL/BORING	FACE MILLING/DRILLING	DRILLING/TAPPING	DEBUR/TAPPING	INSPECTION	PHOSPHATE COAT	PAINTING	INSPECTION	DELIVERY
+- EGK974246 - 60360246, Gun travel lock_Jaw, 1, K9, 10	20	30	30	40	50	60	70	80	90
+INPUT Mat.	MARKING	FACE MILLING	DRILLING	DEBUR/DRILLING/TAPPING	INSPECTION	PHOSPHATE COAT	PAINTING	INSPECTION	DELIVERY
+- EGK974250 - 60360250, Gun travel lock_Bracket, 1, K9, 10	20	30	40	50	60	70	80	90	100	110
+INPUT Mat.	MARKING	FACE MILLING/DRILLING	FACE MILLING/BORING	DEBUR/TAPPING	INSPECTION	PHOSPHATE COAT	PAINTING	INSPECTION	DELIVERY
+- EGK974257 - 60360257, Gun travel lock_Rod arm, 1, K9, 10	20	30	40	50	60	70	80	90	100
+INPUT Mat.	MARKING	FACE MILLING/DRILLING	TAPPING	DEBUR	INSPECTION	PHOSPHATE COAT	PAINTING	INSPECTION	DELIVERY
+- EGK921772, Idler housing Assembly, 2, K9/K1/K11, 10	20	30	40
+KITTING	ASSEMBLY	INSPECTION	DELIVERY
+- EGK921773 - 60349773, Idler housing, 2, K9/K10/K11, 10	20	30	40	50	60	70	80	90
+INPUT Mat.	MARKING	FACE MILLING/DRILL	FACE MILLING/BORING	DEBUR/TAPPING	INSPECTION	PHOSPHATE COAT	PAINTING	INSPECTION
+- Q25025211, (1,631x1346x827) Right charge rack_Machined, 1, K10, 10	20	30	40	50	60	70	80	90	100
+KITTING	MARKING	FACE MILLING/DRILLING/TAPPING1	FACE MILLING/BORING/TAPPING2	DEBUR/INSERTASSEMBLY	CLEANING	CHROMATE	PAINTING	INSPECTION	DELIVERY
+- Q25025212U, Right charge rack_Welded, 1, K10, 10	20	30	40	50
+KITTING	CLEANING	 WELDING	INSPECTION
+- Q25025301, (1,631x1346x827) Left charge rack_Machined, 1, K10, 10	20	30	40	50	60	70	80	90	100
+KITTING	MARKING	FACE MILLING/DRILLING/TAPPING1	FACE MILLING/BORING/TAPPING2	DEBUR/INSERTASSEMBLY	CLEANING	CHROMATE	PAINTING	INSPECTION	DELIVERY
+- Q25025302U, Left charge rack_Welded, 1, K10, 10	20	30	40	60
+KITTING	CLEANING	WELDING	INSPECTION
+
+
+
+
+
