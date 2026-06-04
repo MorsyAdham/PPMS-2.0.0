@@ -34,12 +34,12 @@ INSERT INTO public.kd2_process_stations
     (vehicle_type, category_code, station_code, station_name, work_center,
      station_sequence_in_category, route_sequence, component_group, is_active)
 VALUES
-    ('K9', 'welding',               'k9_turret_final_weld_2nd', 'FINAL 2ND WELDING (TURRET)', null, null, 32, 'Turret', true),
-    ('K9', 'shot_blasting_painting','k9_turret_deburring',       'DEBURRING (TURRET)',         null, null, 30, 'Turret', true),
-    ('K9', 'shot_blasting_painting','k9_turret_steam_cleaning',  'STEAM CLEANING (TURRET)',    null, null, 31, 'Turret', true),
-    ('K9', 'shot_blasting_painting','k9_turret_shot_blasting',   'SHOT BLASTING (TURRET)',     null, null, 33, 'Turret', true),
-    ('K9', 'shot_blasting_painting','k9_turret_painting',        'PAINTING (TURRET)',          null, null, 34, 'Turret', true),
-    ('K9', 'shot_blasting_painting','k9_turret_re_tapping',      'RE-TAPPING (TURRET)',        null, null, 35, 'Turret', true)
+    ('K9', 'welding',               'k9_turret_final_weld_2nd', 'FINAL 2ND WELDING (TURRET)', null, 51, 32, 'Turret', true),
+    ('K9', 'shot_blasting_painting','k9_turret_deburring',       'DEBURRING (TURRET)',         null, 52, 30, 'Turret', true),
+    ('K9', 'shot_blasting_painting','k9_turret_steam_cleaning',  'STEAM CLEANING (TURRET)',    null, 53, 31, 'Turret', true),
+    ('K9', 'shot_blasting_painting','k9_turret_shot_blasting',   'SHOT BLASTING (TURRET)',     null, 54, 33, 'Turret', true),
+    ('K9', 'shot_blasting_painting','k9_turret_painting',        'PAINTING (TURRET)',          null, 55, 34, 'Turret', true),
+    ('K9', 'shot_blasting_painting','k9_turret_re_tapping',      'RE-TAPPING (TURRET)',        null, 56, 35, 'Turret', true)
 ON CONFLICT (vehicle_type, station_code) DO UPDATE SET
     station_name    = excluded.station_name,
     component_group = excluded.component_group,
