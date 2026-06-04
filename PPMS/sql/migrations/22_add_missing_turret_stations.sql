@@ -13,7 +13,7 @@
 --
 -- Stations fixed:
 --   k9_turret_final_weld_2nd   welding              FINAL 2ND WELDING (TURRET)
---   k9_turret_deburring        machining            DEBURRING (TURRET)
+--   k9_turret_deburring        shot_blasting_painting  DEBURRING (TURRET)
 --   k9_turret_steam_cleaning   shot_blasting_painting  STEAM CLEANING (TURRET)
 --   k9_turret_shot_blasting    shot_blasting_painting  SHOT BLASTING (TURRET)
 --   k9_turret_painting         shot_blasting_painting  PAINTING (TURRET)
@@ -34,19 +34,18 @@ INSERT INTO public.kd2_process_stations
     (vehicle_type, category_code, station_code, station_name, work_center,
      station_sequence_in_category, route_sequence, component_group, is_active)
 VALUES
-    ('K9', 'welding',               'k9_turret_final_weld_2nd', 'FINAL 2ND WELDING (TURRET)', null, 21, 32, 'Turret', true),
-    ('K9', 'machining',             'k9_turret_deburring',       'DEBURRING (TURRET)',         null,  5, 30, 'Turret', true),
-    ('K9', 'shot_blasting_painting','k9_turret_steam_cleaning',  'STEAM CLEANING (TURRET)',    null,  6, 31, 'Turret', true),
-    ('K9', 'shot_blasting_painting','k9_turret_shot_blasting',   'SHOT BLASTING (TURRET)',     null,  7, 33, 'Turret', true),
-    ('K9', 'shot_blasting_painting','k9_turret_painting',        'PAINTING (TURRET)',          null,  8, 34, 'Turret', true),
-    ('K9', 'shot_blasting_painting','k9_turret_re_tapping',      'RE-TAPPING (TURRET)',        null,  9, 35, 'Turret', true)
+    ('K9', 'welding',               'k9_turret_final_weld_2nd', 'FINAL 2ND WELDING (TURRET)', null, null, 32, 'Turret', true),
+    ('K9', 'shot_blasting_painting','k9_turret_deburring',       'DEBURRING (TURRET)',         null, null, 30, 'Turret', true),
+    ('K9', 'shot_blasting_painting','k9_turret_steam_cleaning',  'STEAM CLEANING (TURRET)',    null, null, 31, 'Turret', true),
+    ('K9', 'shot_blasting_painting','k9_turret_shot_blasting',   'SHOT BLASTING (TURRET)',     null, null, 33, 'Turret', true),
+    ('K9', 'shot_blasting_painting','k9_turret_painting',        'PAINTING (TURRET)',          null, null, 34, 'Turret', true),
+    ('K9', 'shot_blasting_painting','k9_turret_re_tapping',      'RE-TAPPING (TURRET)',        null, null, 35, 'Turret', true)
 ON CONFLICT (vehicle_type, station_code) DO UPDATE SET
-    station_name                 = excluded.station_name,
-    component_group              = excluded.component_group,
-    category_code                = excluded.category_code,
-    station_sequence_in_category = excluded.station_sequence_in_category,
-    route_sequence               = excluded.route_sequence,
-    is_active                    = true;
+    station_name    = excluded.station_name,
+    component_group = excluded.component_group,
+    category_code   = excluded.category_code,
+    route_sequence  = excluded.route_sequence,
+    is_active       = true;
 
 -- ─── 2. Sync kd2_process_routes for these stations ─────────────────
 
