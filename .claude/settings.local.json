@@ -13,7 +13,15 @@
       "Bash(Select-Object -First 20)",
       "Bash(Format-Table FullName)",
       "Bash(grep -E \"\\\\.js$\")",
-      "Bash(xargs grep -l \"renderTable\\\\|renderVPX\\\\|renderGantt\\\\|renderSchedule\")"
+      "Bash(xargs grep -l \"renderTable\\\\|renderVPX\\\\|renderGantt\\\\|renderSchedule\")",
+      "Bash(git rm *)",
+      "Bash(git remote *)",
+      "Bash(git fetch *)",
+      "Bash(git push *)",
+      "Bash(git subtree *)",
+      "Bash(git branch *)",
+      "PowerShell(Get-ChildItem -Recurse \"C:\\\\Users\\\\Victus 2\\\\Logistics and Programming\\\\3. Problem Solution Progrmming Projects\\\\F200 Plan\\\\F200 plan structure\\\\PPMS\" | Where-Object { !$_.PSIsContainer -and $_.Extension -ne '.sql' } | Select-Object -ExpandProperty FullName | ForEach-Object { $_.Replace\\(\"C:\\\\Users\\\\Victus 2\\\\Logistics and Programming\\\\3. Problem Solution Progrmming Projects\\\\F200 Plan\\\\F200 plan structure\\\\PPMS\\\\\", \"\"\\) })",
+      "PowerShell(Copy-Item *)"
     ]
   }
 }
