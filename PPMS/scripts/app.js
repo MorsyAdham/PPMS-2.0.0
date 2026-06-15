@@ -934,7 +934,9 @@ function startRealtimeSync() {
                 // If a date input is focused, skip to avoid losing the user's input
                 const activeDateInput = document.activeElement?.matches?.('.inline-date-input, .inline-end-input');
                 if (activeDateInput) return;
+                const pos = saveScrollPos();
                 await loadData();
+                restoreScrollPos(pos);
                 showToast('Plan updated by another user.', 'info');
             }, 800);
         })
@@ -4467,7 +4469,9 @@ async function saveActualStart(planId, dateValue) {
             row.progress.actual_start_date = valueToSave;
             refreshAllViews();
         } else {
+            const pos = saveScrollPos();
             await loadData();
+            restoreScrollPos(pos);
         }
 
     } catch (err) {
@@ -4502,7 +4506,11 @@ async function saveCompletionDate(planId, dateValue, silent = false) {
                 const updated = updateF100TableRowInPlace(planId);
                 if (!updated) renderF100Table(currentData);
                 renderF100VPX(currentData);
-            } else { await loadData(); }
+            } else {
+                const pos = saveScrollPos();
+                await loadData();
+                restoreScrollPos(pos);
+            }
         } catch (err) {
             showToast('Error saving completion date: ' + err.message, 'error');
             console.error(err);
@@ -4551,7 +4559,9 @@ async function saveCompletionDate(planId, dateValue, silent = false) {
             row2.progress.completion_date = valueToSave;
             refreshAllViews();
         } else {
+            const pos = saveScrollPos();
             await loadData();
+            restoreScrollPos(pos);
         }
 
     } catch (err) {
@@ -10369,6 +10379,63 @@ async function loadIssues(reset = false) {
     }
 }
 
+// Surgical row helpers — update/insert/delete individual rows without full table reload.
+// This preserves scroll position on every data change.
+
+async function _refreshIssueRow(issueId) {
+    if (!issueId || !db) return;
+    const { data, error } = await db.from('production_issues').select('*').eq('id', issueId).single();
+    if (error || !data) return;
+    const tbody = document.getElementById('issuesTableBody');
+    if (!tbody) return;
+    const tr = tbody.querySelector(`tr[data-issue-id="${issueId}"]`);
+    if (!tr) return; // row not visible (filtered/paginated out)
+    const rows = Array.from(tbody.querySelectorAll('tr[data-issue-id]'));
+    const idx = rows.indexOf(tr);
+    tr.outerHTML = renderIssueRow(data, idx < 0 ? 0 : idx);
+}
+
+async function _appendNewIssueRow(issueId) {
+    if (!issueId || !db) return;
+    const tbody = document.getElementById('issuesTableBody');
+    if (!tbody) return;
+    // Deduplicate — sender also receives their own broadcast
+    if (tbody.querySelector(`tr[data-issue-id="${issueId}"]`)) return;
+    const { data, error } = await db.from('production_issues').select('*').eq('id', issueId).single();
+    if (error || !data) return;
+    // Don't append when filters are active — the row may not match, and count is already server-authoritative
+    const hasFilters = ['issueSearch','issueFilterCategory','issueFilterStatus','issueFilterPriority','issueFilterReporter','issueFilterFrom','issueFilterTo']
+        .some(id => document.getElementById(id)?.value?.trim());
+    if (hasFilters) return;
+    // Don't append when pagination is incomplete — row order would be wrong
+    const moreBtn = document.getElementById('btnIssuesMore');
+    if (moreBtn && moreBtn.style.display !== 'none') return;
+    // Remove empty-state placeholder if present
+    const emptyTr = tbody.querySelector('td.table-empty');
+    if (emptyTr) emptyTr.closest('tr').remove();
+    tbody.insertAdjacentHTML('beforeend', renderIssueRow(data, _issuesOffset));
+    _issuesOffset++;
+    _issuesTotalCount++;
+    const countEl = document.getElementById('issueCount');
+    if (countEl) countEl.textContent = `${_issuesTotalCount.toLocaleString()} issue${_issuesTotalCount !== 1 ? 's' : ''}`;
+}
+
+function _removeIssueRow(issueId) {
+    if (!issueId) return;
+    const tbody = document.getElementById('issuesTableBody');
+    if (!tbody) return;
+    const tr = tbody.querySelector(`tr[data-issue-id="${issueId}"]`);
+    if (!tr) return;
+    tr.remove();
+    _issuesTotalCount = Math.max(0, (_issuesTotalCount || 1) - 1);
+    _issuesOffset     = Math.max(0, (_issuesOffset     || 1) - 1);
+    const countEl = document.getElementById('issueCount');
+    if (countEl) countEl.textContent = `${_issuesTotalCount.toLocaleString()} issue${_issuesTotalCount !== 1 ? 's' : ''}`;
+    if (!tbody.querySelector('tr[data-issue-id]')) {
+        tbody.innerHTML = `<tr><td colspan="9" class="table-empty"><div class="empty-state"><p>No issues match the current filters.</p></div></td></tr>`;
+    }
+}
+
 function resetIssueFilters() {
     ['issueSearch', 'issueFilterCategory', 'issueFilterStatus', 'issueFilterPriority', 'issueFilterReporter', 'issueFilterFrom', 'issueFilterTo'].forEach(id => {
         const el = document.getElementById(id);
@@ -10525,10 +10592,15 @@ async function saveIssue() {
         }
 
         if (overlay) overlay.style.display = 'none';
-        const sel = document.getElementById('issueFilterReporter');
-        if (sel) { while (sel.options.length > 1) sel.remove(1); }
-        await _populateIssueReporterFilter();
-        await loadIssues(true);
+        if (editId) {
+            await _refreshIssueRow(editId);
+        } else {
+            // Refresh reporter filter (new reporter may have appeared) then append
+            const sel = document.getElementById('issueFilterReporter');
+            if (sel) { while (sel.options.length > 1) sel.remove(1); }
+            await _populateIssueReporterFilter();
+            await _appendNewIssueRow(insertedId);
+        }
     } catch (err) {
         console.error('saveIssue error:', err);
         const msg = err?.message || String(err);
@@ -10546,10 +10618,10 @@ async function deleteIssue(id) {
     const { error } = await db.from('production_issues').delete().eq('id', id);
     if (error) { showToast('Delete failed: ' + error.message, 'error'); return; }
     auditLog('DELETE', 'production_issues', id, beforeData, null);
-    _broadcastIssueDeleted(beforeData?.module || getActiveModuleId());
-    showToast('Issue deleted.', 'success');
     if (overlay) overlay.style.display = 'none';
-    await loadIssues(true);
+    _removeIssueRow(id);
+    _broadcastIssueDeleted(id, beforeData?.module || getActiveModuleId());
+    showToast('Issue deleted.', 'success');
 }
 
 async function openIssueView(id) {
@@ -11018,8 +11090,7 @@ function startIssueNotifSync() {
         .on('broadcast', { event: 'issue:new' }, ({ payload }) => {
             const sameModule = !payload?.module || payload.module === getActiveModuleId();
             if (!sameModule) return;
-            // Always reload the table
-            loadIssues(true).catch(() => {});
+            if (payload?.issueId) _appendNewIssueRow(payload.issueId).catch(() => {});
             // Only store notification for changes by others
             if (payload?.by === u.email) return;
             const reporter = payload?.reporter || 'Someone';
@@ -11033,7 +11104,7 @@ function startIssueNotifSync() {
         .on('broadcast', { event: 'issue:updated' }, ({ payload }) => {
             const sameModule = !payload?.module || payload.module === getActiveModuleId();
             if (!sameModule) return;
-            loadIssues(true).catch(() => {});
+            if (payload?.issueId) _refreshIssueRow(payload.issueId).catch(() => {});
             if (payload?.by !== u.email && payload?.issueId) {
                 _storeIssueNotification(payload.issueId, payload.module || getActiveModuleId(),
                     payload.title || '', payload.category || '', payload.reporter || 'Someone',
@@ -11044,8 +11115,7 @@ function startIssueNotifSync() {
         .on('broadcast', { event: 'issue:deleted' }, ({ payload }) => {
             const sameModule = !payload?.module || payload.module === getActiveModuleId();
             if (!sameModule) return;
-            // Silent table refresh — no notification stored
-            loadIssues(true).catch(() => {});
+            if (payload?.issueId) _removeIssueRow(payload.issueId);
         })
         .subscribe();
 }
@@ -11090,13 +11160,13 @@ async function _broadcastIssueUpdated(issueData) {
     } catch {}
 }
 
-async function _broadcastIssueDeleted(moduleId) {
+async function _broadcastIssueDeleted(issueId, moduleId) {
     if (!_issueNotifChannel) return;
     try {
         await _issueNotifChannel.send({
             type: 'broadcast',
             event: 'issue:deleted',
-            payload: { module: moduleId || getActiveModuleId() },
+            payload: { issueId: issueId || null, module: moduleId || getActiveModuleId() },
         });
     } catch {}
 }
@@ -11123,8 +11193,15 @@ async function _issuesPollCheck() {
         const { data, error } = await q.eq('module', getActiveModuleId());
         if (error || !data?.length) return;
 
-        // Reload the table for the current user no matter what changed
-        loadIssues(true).catch(() => {});
+        // Apply surgical row updates so scroll position is preserved
+        const tbody = document.getElementById('issuesTableBody');
+        data.forEach(row => {
+            if (tbody?.querySelector(`tr[data-issue-id="${row.id}"]`)) {
+                _refreshIssueRow(row.id).catch(() => {});
+            } else {
+                _appendNewIssueRow(row.id).catch(() => {});
+            }
+        });
 
         // Notify only for changes by others
         const byOthers = data.filter(r => r.reporter_email !== u.email);
