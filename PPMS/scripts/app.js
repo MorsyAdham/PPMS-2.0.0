@@ -3738,11 +3738,11 @@ function renderKD2BottleneckChart(data) {
     const stationMap = new Map();
     data.forEach(r => {
         const key = r.process_station || '(Unknown)';
-        if (!stationMap.has(key)) stationMap.set(key, { total: 0, delayed: 0, delaySum: 0 });
+        if (!stationMap.has(key)) stationMap.set(key, { total: 0, delayed: 0, delaySum: 0, maxDelay: 0 });
         const s = stationMap.get(key);
         s.total++;
         const d = delayDays(r);
-        if (d > 0) { s.delayed++; s.delaySum += d; }
+        if (d > 0) { s.delayed++; s.delaySum += d; if (d > s.maxDelay) s.maxDelay = d; }
     });
 
     const rt = getModuleRuntime();
@@ -3757,7 +3757,7 @@ function renderKD2BottleneckChart(data) {
         return merged;
     })();
     const stations = [...stationMap.entries()]
-        .map(([name, s]) => ({ name, ...s, avgDelay: s.delayed ? Math.round(s.delaySum / s.delayed) : 0 }))
+        .map(([name, s]) => ({ name, ...s }))
         .sort((a, b) => {
             const sa = routeOrder.get(a.name) ?? 9999;
             const sb = routeOrder.get(b.name) ?? 9999;
@@ -3767,8 +3767,8 @@ function renderKD2BottleneckChart(data) {
 
     const c      = themeChartColors();
     const labels = stations.map(s => s.name);
-    const avgs   = stations.map(s => s.avgDelay);
-    const colors = avgs.map(v => v >= 14 ? 'rgba(239,68,68,.82)' : v >= 7 ? 'rgba(245,158,11,.82)' : v >= 1 ? 'rgba(59,130,246,.75)' : 'rgba(148,163,184,.38)');
+    const maxs   = stations.map(s => s.maxDelay);
+    const colors = maxs.map(v => v >= 14 ? 'rgba(239,68,68,.82)' : v >= 7 ? 'rgba(245,158,11,.82)' : v >= 1 ? 'rgba(59,130,246,.75)' : 'rgba(148,163,184,.38)');
 
     const sub = document.getElementById('kd2BottleneckSubtitle');
     const withDelays = stations.filter(s => s.delayed > 0).length;
@@ -3779,8 +3779,8 @@ function renderKD2BottleneckChart(data) {
         data: {
             labels,
             datasets: [{
-                label: 'Avg Delay (days)',
-                data: avgs,
+                label: 'Max Delay (days)',
+                data: maxs,
                 backgroundColor: colors,
                 borderRadius: 4,
                 borderWidth: 0,
@@ -3797,8 +3797,8 @@ function renderKD2BottleneckChart(data) {
                         title: ctx => ctx[0].label,
                         label: ctx => {
                             const s = stations[ctx.dataIndex];
-                            if (s.avgDelay === 0) return `  No delays  ·  ${s.total} task${s.total !== 1 ? 's' : ''}`;
-                            return `  Avg ${s.avgDelay}d delay  ·  ${s.delayed} delayed / ${s.total} total`;
+                            if (s.maxDelay === 0) return `  No delays  ·  ${s.total} task${s.total !== 1 ? 's' : ''}`;
+                            return `  Max ${s.maxDelay}d delay  ·  ${s.delayed} delayed / ${s.total} total`;
                         },
                     },
                 },
@@ -3808,7 +3808,7 @@ function renderKD2BottleneckChart(data) {
                     beginAtZero: true,
                     ticks: { color: c.text, font: { family: 'Inter', size: 10 }, callback: v => v + 'd' },
                     grid: { color: c.grid },
-                    title: { display: true, text: 'Average Delay (days, among delayed tasks)', color: c.text, font: { family: 'Inter', size: 10 } },
+                    title: { display: true, text: 'Max Delay (days, worst delayed task per station)', color: c.text, font: { family: 'Inter', size: 10 } },
                 },
                 y: {
                     ticks: { color: c.text, font: { family: 'Inter', size: 10 } },
@@ -7263,7 +7263,8 @@ function buildKD2AnalyticsRows(rows) {
             const delays = sr.map(r => delayDays(r)).filter(d => d > 0);
             const avgDelay = delays.length ? Math.round(delays.reduce((a, b) => a + b, 0) / delays.length) : 0;
             const maxDelay = delays.length ? Math.max(...delays) : 0;
-            return { station, category, ...s, avgPlanned, avgActual, avgDelay, maxDelay };
+            const monthRatio = maxDelay ? Math.round((maxDelay / 22) * 10) / 10 : 0;
+            return { station, category, ...s, avgPlanned, avgActual, avgDelay, maxDelay, monthRatio };
         });
 }
 
@@ -8046,7 +8047,7 @@ function exportKD2AnalyticsPDF(fromDate, toDate, category) {
     });
 
     // Analytics table
-    const headers = ['Station / Process', 'Category', 'Total', 'Done', 'In Prog', 'Overdue', 'Late', '% Done', 'Avg Plan (d)', 'Avg Actual (d)', 'Avg Delay', 'Max Delay'];
+    const headers = ['Station / Process', 'Category', 'Total', 'Done', 'In Prog', 'Overdue', 'Late', '% Done', 'Avg Plan (d)', 'Avg Actual (d)', 'Avg Delay', 'Max Delay', 'Month Ratio'];
     const body = aRows.map(ar => [
         ar.station, ar.category,
         ar.total, ar.completed, ar.inProgress, ar.overdue, ar.late,
@@ -8055,6 +8056,7 @@ function exportKD2AnalyticsPDF(fromDate, toDate, category) {
         ar.avgActual  !== null ? `${ar.avgActual}d`  : '—',
         ar.avgDelay > 0 ? `+${ar.avgDelay}d` : '—',
         ar.maxDelay > 0 ? `+${ar.maxDelay}d` : '—',
+        ar.monthRatio > 0 ? ar.monthRatio.toFixed(1) : '—',
     ]);
 
     doc.autoTable({
@@ -8066,11 +8068,12 @@ function exportKD2AnalyticsPDF(fromDate, toDate, category) {
         alternateRowStyles: { fillColor: [248, 250, 252] },
         columnStyles: {
             0: { cellWidth: 44 }, 1: { cellWidth: 22 },
-            2: { halign: 'center', cellWidth: 13 }, 3: { halign: 'center', cellWidth: 16 },
-            4: { halign: 'center', cellWidth: 14 }, 5: { halign: 'center', cellWidth: 16 },
-            6: { halign: 'center', cellWidth: 16 }, 7: { halign: 'center', cellWidth: 14 },
-            8: { halign: 'center', cellWidth: 22 }, 9: { halign: 'center', cellWidth: 22 },
-            10: { halign: 'center', cellWidth: 20 }, 11: { halign: 'center', cellWidth: 20 },
+            2: { halign: 'center', cellWidth: 12 }, 3: { halign: 'center', cellWidth: 14 },
+            4: { halign: 'center', cellWidth: 13 }, 5: { halign: 'center', cellWidth: 14 },
+            6: { halign: 'center', cellWidth: 14 }, 7: { halign: 'center', cellWidth: 13 },
+            8: { halign: 'center', cellWidth: 20 }, 9: { halign: 'center', cellWidth: 20 },
+            10: { halign: 'center', cellWidth: 18 }, 11: { halign: 'center', cellWidth: 18 },
+            12: { halign: 'center', cellWidth: 18 },
         },
         didDrawCell(data) {
             if (data.section !== 'body') return;
@@ -8089,6 +8092,11 @@ function exportKD2AnalyticsPDF(fromDate, toDate, category) {
             }
             if ((data.column.index === 10 || data.column.index === 11) && val.startsWith('+')) {
                 redraw(rowBg, [153, 27, 27], true);
+            }
+            if (data.column.index === 12 && val !== '—') {
+                const ratio = parseFloat(val);
+                const fg = ratio >= 1 ? [153, 27, 27] : ratio >= 0.5 ? [146, 64, 14] : [30, 41, 59];
+                redraw(rowBg, fg, ratio >= 1);
             }
             if (data.column.index === 5 && parseInt(val) > 0) {
                 redraw(rowBg, [153, 27, 27], true);
@@ -8155,6 +8163,7 @@ async function exportKD2AnalyticsExcel(fromDate, toDate, category) {
         { h: 'Late Completion', w: 16 },   { h: '% Done', w: 10 },
         { h: 'Avg Plan (days)', w: 16 },   { h: 'Avg Actual (days)', w: 18 },
         { h: 'Avg Delay (days)', w: 16 },  { h: 'Max Delay (days)', w: 16 },
+        { h: 'Month Ratio', w: 14 },
     ];
     ws.columns = ACOLS.map(c => ({ width: c.w }));
 
@@ -8193,6 +8202,7 @@ async function exportKD2AnalyticsExcel(fromDate, toDate, category) {
             ar.avgActual  !== null ? `${ar.avgActual}d`  : '—',
             ar.avgDelay > 0 ? `+${ar.avgDelay}d` : '—',
             ar.maxDelay > 0 ? `+${ar.maxDelay}d` : '—',
+            ar.monthRatio > 0 ? ar.monthRatio.toFixed(1) : '—',
         ]);
         const row = ws.getRow(ri + 5); row.height = 16;
         ACOLS.forEach((col, ci) => {
@@ -8215,6 +8225,13 @@ async function exportKD2AnalyticsExcel(fromDate, toDate, category) {
                 const late = val.startsWith('+');
                 font = { name:'Calibri', size:8, bold:late, color:{argb: late ? 'FF991b1b' : 'FF475569'} };
                 fill = { type:'pattern', pattern:'solid', fgColor:{argb: late ? 'FFfee2e2' : rowBg} };
+            } else if (ci === 12) { // Month Ratio
+                const ratio = parseFloat(val);
+                if (!isNaN(ratio)) {
+                    const clr = ratio >= 1 ? 'FF991b1b' : ratio >= 0.5 ? 'FF92400e' : 'FF475569';
+                    font = { name:'Calibri', size:8, bold: ratio >= 1, color:{argb: clr} };
+                    fill = { type:'pattern', pattern:'solid', fgColor:{argb: ratio >= 1 ? 'FFfee2e2' : rowBg} };
+                }
             }
             cell.font = font; cell.fill = fill; cell.alignment = align; cell.border = bdr();
         });
