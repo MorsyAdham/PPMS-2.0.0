@@ -923,7 +923,7 @@ function startRealtimeSync() {
 
     _realtimeChannel = db
         .channel('f100_plans_realtime')
-        .on('postgres_changes', { event: '*', schema: 'public', table: 'f100_plans' }, () => {
+        .on('postgres_changes', { event: '*', schema: 'public', table: 'f100_plans' }, (payload) => {
             if (_realtimePending) return;
             _realtimePending = true;
             setTimeout(async () => {
@@ -934,6 +934,20 @@ function startRealtimeSync() {
                 // If a date input is focused, skip to avoid losing the user's input
                 const activeDateInput = document.activeElement?.matches?.('.inline-date-input, .inline-end-input');
                 if (activeDateInput) return;
+                // Try surgical update using the payload data — avoids full table rebuild
+                const record = payload?.new;
+                if (record?.id) {
+                    const idx = currentData.findIndex(r => String(r.id) === String(record.id));
+                    if (idx >= 0) {
+                        currentData[idx] = { ...currentData[idx], ...record };
+                        const surgicalOk = updateF100TableRowInPlace(record.id);
+                        if (surgicalOk) {
+                            showToast('Plan updated by another user.', 'info');
+                            return;
+                        }
+                    }
+                }
+                // Fallback: full reload with scroll preservation
                 const pos = saveScrollPos();
                 await loadData();
                 restoreScrollPos(pos);
@@ -4415,7 +4429,7 @@ async function saveActualStart(planId, dateValue) {
                 row.actual_start_date = valueToSave;
                 row.status = newStatus;
                 const updated = updateF100TableRowInPlace(planId);
-                if (!updated) renderF100Table(currentData);
+                if (!updated) { const pos = saveScrollPos(); renderF100Table(currentData); restoreScrollPos(pos); }
                 renderF100VPX(currentData);
             } else { await loadData(); }
         } catch (err) {
@@ -4461,6 +4475,7 @@ async function saveActualStart(planId, dateValue) {
             progressTable, planId, snapBefore || null, snapAfter || null
         );
 
+        markLocalSave();
         showToast(valueToSave ? 'Start date saved.' : 'Start date cleared.', 'success');
         // In-place update: patch currentData and re-render without scroll reset
         const row = currentData.find(t => t.id === planId);
@@ -4504,7 +4519,7 @@ async function saveCompletionDate(planId, dateValue, silent = false) {
                 row.actual_end_date = valueToSave;
                 row.status = newStatus;
                 const updated = updateF100TableRowInPlace(planId);
-                if (!updated) renderF100Table(currentData);
+                if (!updated) { const pos = saveScrollPos(); renderF100Table(currentData); restoreScrollPos(pos); }
                 renderF100VPX(currentData);
             } else {
                 const pos = saveScrollPos();
@@ -4551,6 +4566,7 @@ async function saveCompletionDate(planId, dateValue, silent = false) {
             progressTable, planId, snapBefore || null, snapAfter || null
         );
 
+        markLocalSave();
         showToast(valueToSave ? 'Completion date saved.' : 'Completion date cleared.', 'success');
         const row2 = currentData.find(t => t.id === planId);
         if (row2) {
