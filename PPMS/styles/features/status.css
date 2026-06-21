@@ -1,0 +1,186 @@
+/* Current Status section */
+
+.cs-section {
+    padding: 0 24px 32px;
+}
+
+/* ── Position banner ─────────────────────────────────────────────── */
+.cs-banner {
+    display: flex;
+    align-items: center;
+    gap: 0;
+    background: var(--clr-surface);
+    border: 1px solid var(--clr-border);
+    border-radius: var(--radius-lg);
+    padding: 20px 28px;
+    margin-bottom: 16px;
+    flex-wrap: wrap;
+    gap: 20px;
+}
+
+.cs-pos-block {
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+    min-width: 140px;
+}
+
+.cs-pos-label {
+    font-size: .68rem;
+    font-weight: 600;
+    letter-spacing: .07em;
+    text-transform: uppercase;
+    color: var(--clr-text-muted);
+}
+
+.cs-pos-value {
+    font-family: var(--ff-display);
+    font-size: 2.2rem;
+    font-weight: 700;
+    color: var(--clr-text);
+    line-height: 1;
+}
+
+.cs-pos-block--actual .cs-pos-value {
+    color: var(--clr-accent);
+}
+
+.cs-pos-meta {
+    font-size: .72rem;
+    color: var(--clr-text-muted);
+}
+
+.cs-pos-sep {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 4px;
+    color: var(--clr-text-dim);
+    padding: 0 12px;
+    font-size: .68rem;
+    font-weight: 600;
+    letter-spacing: .06em;
+    text-transform: uppercase;
+}
+
+.cs-pos-sep svg {
+    width: 20px;
+    height: 20px;
+    opacity: .5;
+}
+
+.cs-gap-block {
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+    margin-left: auto;
+    text-align: right;
+}
+
+.cs-gap-label {
+    font-size: .68rem;
+    font-weight: 600;
+    letter-spacing: .07em;
+    text-transform: uppercase;
+    color: var(--clr-text-muted);
+}
+
+.cs-gap-value {
+    font-family: var(--ff-display);
+    font-size: 1.3rem;
+    font-weight: 700;
+}
+
+.cs-gap-ok  { color: var(--clr-completed); }
+.cs-gap-warn { color: var(--clr-overdue); }
+
+/* ── KPI row ─────────────────────────────────────────────────────── */
+.cs-kpi-row {
+    display: grid;
+    grid-template-columns: repeat(4, 1fr);
+    gap: 12px;
+    margin-bottom: 16px;
+}
+
+.cs-kpi-card {
+    background: var(--clr-surface);
+    border: 1px solid var(--clr-border);
+    border-radius: var(--radius);
+    padding: 14px 18px;
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+}
+
+.cs-kpi-value {
+    font-family: var(--ff-display);
+    font-size: 1.7rem;
+    font-weight: 700;
+    color: var(--clr-text);
+    line-height: 1;
+}
+
+.cs-kpi-label {
+    font-size: .68rem;
+    font-weight: 600;
+    letter-spacing: .06em;
+    text-transform: uppercase;
+    color: var(--clr-text-muted);
+}
+
+.cs-kpi-card--ok    .cs-kpi-value { color: var(--clr-completed); }
+.cs-kpi-card--warn  .cs-kpi-value { color: #f59e0b; }
+.cs-kpi-card--danger .cs-kpi-value { color: var(--clr-overdue); }
+
+/* ── Unit table ──────────────────────────────────────────────────── */
+.cs-table-wrap {
+    background: var(--clr-surface);
+    border: 1px solid var(--clr-border);
+    border-radius: var(--radius-lg);
+    overflow-x: auto;
+}
+
+.cs-mini-bar {
+    width: 80px;
+    height: 4px;
+    background: var(--clr-surface-2);
+    border-radius: 2px;
+    overflow: hidden;
+    display: inline-block;
+    vertical-align: middle;
+    margin: 0 6px;
+}
+
+.cs-mini-fill {
+    height: 100%;
+    background: var(--clr-accent);
+    border-radius: 2px;
+    transition: width .3s;
+}
+
+.cs-task-count {
+    font-size: .72rem;
+    color: var(--clr-text-muted);
+}
+
+/* ── Light theme overrides ───────────────────────────────────────── */
+[data-theme="light"] .cs-banner,
+[data-theme="light"] .cs-kpi-card,
+[data-theme="light"] .cs-table-wrap {
+    background: #fff;
+    border-color: #e2e8f0;
+}
+
+@media (max-width: 900px) {
+    .cs-kpi-row {
+        grid-template-columns: repeat(2, 1fr);
+    }
+    .cs-banner {
+        flex-direction: column;
+        align-items: flex-start;
+    }
+    .cs-gap-block {
+        margin-left: 0;
+        text-align: left;
+    }
+}
