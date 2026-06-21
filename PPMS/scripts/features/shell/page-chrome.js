@@ -22,6 +22,7 @@ export function renderPageChrome() {
             <!-- Centre nav -->
             <nav class="section-nav" id="sectionNav" aria-label="Page sections">
                 <a class="section-nav-link" href="#summarySection"  data-target="summarySection">Overview</a>
+                <a class="section-nav-link" href="#statusSection"   data-target="statusSection">Status</a>
                 <a class="section-nav-link" href="#ganttNavAnchor" data-target="ganttNavAnchor">Schedule</a>
                 <a class="section-nav-link" href="#vpxSection"     data-target="vpxSection">Progress</a>
                 <a class="section-nav-link" href="#chartsSection"  data-target="chartsSection">Analytics</a>

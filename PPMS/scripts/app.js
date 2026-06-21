@@ -1401,6 +1401,7 @@ function refreshAllViews() {
 
     updateSummary(displayData);
     renderCharts(displayData);
+    renderCurrentStatus(displayData);
     renderVPX(displayData);
     if (isKD2Module()) {
         // Ensure KD2 schedule uses the same filtered view as other components
@@ -1503,6 +1504,7 @@ async function loadF100Data() {
         renderTable([]);
         updateSummary([]);
         renderCharts([]);
+        renderCurrentStatus([]);
         renderVPX([]);
         renderGantt([], '', '');
         return;
@@ -1614,6 +1616,7 @@ async function loadF100Data() {
     renderTable(rows);
     updateSummary(rows);
     renderCharts(rows);
+    renderCurrentStatus(rows);
     renderVPX(rows);
     const gsEl = document.getElementById('ganttStart');
     const geEl = document.getElementById('ganttEnd');
@@ -1676,6 +1679,7 @@ async function loadData() {
             renderTable(applyTableSearchFilters(displayData));
             updateSummary(displayData);
             renderCharts(displayData);
+            renderCurrentStatus(displayData);
             renderVPX(displayData);
             await getModuleRuntime().loadPlanningSnapshot?.(db);
             await getModuleRuntime().refreshWorkspace?.();
@@ -1815,6 +1819,7 @@ async function loadData() {
         renderTable(displayData);
         updateSummary(displayData);
         renderCharts(displayData);
+        renderCurrentStatus(displayData);
         renderVPX(displayData);   // use same filtered data as table/charts
 
         // Auto-set gantt range from data on first load or when inputs are empty
@@ -3729,6 +3734,160 @@ function renderVPX(data) {
     html += '</tbody></table>';
     container.innerHTML = html;
 }
+/* ── Current Status: plan position vs actual position ────────────── */
+function renderCurrentStatus(data) {
+    const section = document.getElementById('statusSection');
+    if (!section) return;
+
+    if (!data.length) {
+        section.style.display = 'none';
+        return;
+    }
+    section.style.display = '';
+
+    const today = todayStr();
+
+    const getActualEnd = r => (r.module === 'gun' || r.module === 'vehicle')
+        ? r.actual_end_date || null
+        : r.progress?.completion_date || null;
+
+    // Group by unit
+    const unitMap = new Map();
+    data.forEach(r => {
+        const key = r.vehicle_no || '—';
+        if (!unitMap.has(key)) {
+            unitMap.set(key, {
+                label: key,
+                vehicle: r.vehicle || '—',
+                serial: typeof r.unit_serial === 'number' ? r.unit_serial : (parseInt(r.unit_serial, 10) || 0),
+                tasks: [],
+            });
+        }
+        unitMap.get(key).tasks.push(r);
+    });
+
+    const units = [...unitMap.values()].map(u => {
+        const tasks = u.tasks;
+        const total = tasks.length;
+        const statuses = tasks.map(r => calculateStatus(r));
+        const completed  = statuses.filter(s => s === 'Completed' || s === 'Late Completion').length;
+        const overdue    = statuses.filter(s => s === 'Overdue').length;
+        const inProgress = statuses.filter(s => s === 'In Progress').length;
+        const pct = total ? Math.round((completed / total) * 100) : 0;
+
+        const endDates   = tasks.map(r => r.end_date).filter(Boolean).sort();
+        const startDates = tasks.map(r => r.start_date).filter(Boolean).sort();
+        const plannedEnd   = endDates[endDates.length - 1]  || null;
+        const plannedStart = startDates[0] || null;
+
+        const compDates = tasks.map(r => getActualEnd(r)).filter(Boolean).sort();
+        const lastCompDate = compDates[compDates.length - 1] || null;
+        const isFullyDone  = completed === total && total > 0;
+        const actualEnd    = isFullyDone ? lastCompDate : null;
+
+        const plannedDoneByToday = !!(plannedEnd && plannedEnd <= today);
+
+        let varianceDays = 0;
+        if (plannedEnd && plannedEnd < today && !isFullyDone) {
+            varianceDays = daysBetween(plannedEnd, today);
+        } else if (isFullyDone && actualEnd && plannedEnd && actualEnd > plannedEnd) {
+            varianceDays = daysBetween(plannedEnd, actualEnd);
+        }
+
+        let unitStatus;
+        if (isFullyDone) {
+            unitStatus = actualEnd && plannedEnd && actualEnd > plannedEnd ? 'Late Completion' : 'Completed';
+        } else if (overdue > 0) {
+            unitStatus = 'Overdue';
+        } else if (inProgress > 0) {
+            unitStatus = 'In Progress';
+        } else {
+            unitStatus = 'Planned';
+        }
+
+        return { ...u, total, completed, overdue, inProgress, pct, plannedEnd, plannedStart, actualEnd, plannedDoneByToday, isFullyDone, varianceDays, unitStatus };
+    });
+
+    units.sort((a, b) => {
+        if (a.serial && b.serial) return a.serial - b.serial;
+        return String(a.label).localeCompare(String(b.label));
+    });
+
+    const unitsPlanDone     = units.filter(u => u.plannedDoneByToday).length;
+    const unitsActualDone   = units.filter(u => u.isFullyDone).length;
+    const unitsBehind       = units.filter(u => u.plannedDoneByToday && !u.isFullyDone).length;
+    const totalOverdueTasks = units.reduce((sum, u) => sum + u.overdue, 0);
+
+    // Plan position: latest unit whose planned window contains today
+    const planWindowUnits = units.filter(u => u.plannedStart && u.plannedStart <= today && u.plannedEnd && u.plannedEnd >= today);
+    const planPos = planWindowUnits.length
+        ? planWindowUnits[planWindowUnits.length - 1]
+        : units.filter(u => u.plannedDoneByToday)[unitsPlanDone - 1] || null;
+
+    // Actual position: latest unit currently In Progress, else last done
+    const ipUnits   = units.filter(u => u.unitStatus === 'In Progress');
+    const doneUnits = units.filter(u => u.isFullyDone);
+    const actualPos = ipUnits.length ? ipUnits[ipUnits.length - 1]
+        : doneUnits.length ? doneUnits[doneUnits.length - 1] : null;
+
+    const setTxt = (id, val) => { const el = document.getElementById(id); if (el) el.textContent = val ?? '—'; };
+    setTxt('statusPlanPosition', planPos?.label ?? '—');
+    setTxt('statusPlanMeta', planPos
+        ? `${planPos.pct}% done · ends ${planPos.plannedEnd ? formatDate(planPos.plannedEnd) : '—'}`
+        : '—');
+    setTxt('statusActualPosition', actualPos?.label ?? '—');
+    setTxt('statusActualMeta', actualPos
+        ? `${actualPos.pct}% done · ${actualPos.unitStatus}`
+        : '—');
+
+    const varEl = document.getElementById('statusVariance');
+    if (varEl) {
+        if (unitsBehind === 0) {
+            varEl.innerHTML = '<span class="cs-gap-ok">On Track</span>';
+        } else {
+            varEl.innerHTML = `<span class="cs-gap-warn">${unitsBehind} unit${unitsBehind !== 1 ? 's' : ''} behind</span>`;
+        }
+    }
+
+    setTxt('statusUnitsPlanDone',   String(unitsPlanDone));
+    setTxt('statusUnitsActualDone', String(unitsActualDone));
+    setTxt('statusUnitsBehind',     String(unitsBehind));
+    setTxt('statusTasksOverdue',    String(totalOverdueTasks));
+
+    const tbody = document.getElementById('statusTableBody');
+    if (!tbody) return;
+    if (!units.length) {
+        tbody.innerHTML = '<tr><td colspan="8" class="table-empty">No unit data available.</td></tr>';
+        return;
+    }
+
+    const BADGE_CLS = {
+        'Completed':       'badge-completed',
+        'Late Completion': 'badge-late',
+        'Overdue':         'badge-overdue',
+        'In Progress':     'badge-in-progress',
+        'Planned':         'badge-planned',
+    };
+
+    tbody.innerHTML = units.map(u => {
+        const badge   = BADGE_CLS[u.unitStatus] || 'badge-planned';
+        const varHtml = u.varianceDays > 0
+            ? `<span class="delay-positive">+${u.varianceDays}d</span>`
+            : u.isFullyDone ? '<span class="delay-zero">On Time</span>' : '—';
+        const bar = `<div class="cs-mini-bar"><div class="cs-mini-fill" style="width:${u.pct}%"></div></div>`;
+        return `<tr>
+            <td><strong>${esc(u.label)}</strong></td>
+            <td>${esc(u.vehicle)}</td>
+            <td><span>${u.pct}%</span>${bar}<span class="cs-task-count">${u.completed}/${u.total}</span></td>
+            <td>${u.overdue > 0 ? `<span class="delay-positive">${u.overdue}</span>` : '0'}</td>
+            <td>${u.plannedEnd ? formatDate(u.plannedEnd) : '—'}</td>
+            <td>${u.actualEnd  ? formatDate(u.actualEnd)  : '—'}</td>
+            <td>${varHtml}</td>
+            <td><span class="badge ${badge}">${esc(u.unitStatus)}</span></td>
+        </tr>`;
+    }).join('');
+}
+
 function renderCharts(data) {
     renderBarChart(data);
     renderLineChart(data);
@@ -3748,13 +3907,14 @@ function renderKD2BottleneckChart(data) {
     if (!isKD2Module() || !data.length) { card.style.display = 'none'; return; }
     card.style.display = '';
 
-    // Build per-station delay stats
+    // Build per-station delay stats — only Overdue tasks count as bottlenecks
     const stationMap = new Map();
     data.forEach(r => {
         const key = r.process_station || '(Unknown)';
         if (!stationMap.has(key)) stationMap.set(key, { total: 0, delayed: 0, delaySum: 0, maxDelay: 0 });
         const s = stationMap.get(key);
         s.total++;
+        if (calculateStatus(r) !== 'Overdue') return;
         const d = delayDays(r);
         if (d > 0) { s.delayed++; s.delaySum += d; if (d > s.maxDelay) s.maxDelay = d; }
     });
@@ -3786,7 +3946,7 @@ function renderKD2BottleneckChart(data) {
 
     const sub = document.getElementById('kd2BottleneckSubtitle');
     const withDelays = stations.filter(s => s.delayed > 0).length;
-    if (sub) sub.textContent = `${withDelays} of ${stations.length} station${stations.length !== 1 ? 's' : ''} with delays · in process order`;
+    if (sub) sub.textContent = `${withDelays} of ${stations.length} station${stations.length !== 1 ? 's' : ''} with overdue tasks · in process order`;
 
     _kd2BottleneckChartInst = new Chart(canvas, {
         type: 'bar',
