@@ -840,7 +840,7 @@ let barChartInst = null;
 let lineChartInst = null;
 let currentData = [];      // flat merged rows
 let _f100TableView = 'vehicle'; // 'vehicle' | 'part' | 'process'
-let _kd2TableView  = 'battalion'; // 'battalion' | 'vehicle' | 'unit' | 'station'
+let _kd2TableView  = 'unit'; // 'battalion' | 'vehicle' | 'unit' | 'station'
 let _tableFilters  = [];          // [{ id, field, fieldLabel, value }]
 let _filterSeq     = 0;           // unique id counter for filter chips
 let unitCodeMap = {};      // { 'K9||M1': 'EGY N25020', ... }
@@ -3893,6 +3893,11 @@ function renderCharts(data) {
     renderLineChart(data);
     renderF100ExtraCharts(data);
     renderKD2BottleneckChart(data);
+    // Charts get created before the grid's layout has necessarily settled
+    // (font swap, a section flipping from display:none in the same tick) —
+    // resize once after this frame, then keep watching for further shifts.
+    _resizeAllCharts();
+    _watchChartsGridResize();
 }
 
 /* ── KD2 Station Bottleneck chart ───────────────────────────────── */
@@ -4297,9 +4302,28 @@ function getChartGrouping(data) {
 /* ── Chart card expand (centered modal overlay) ─────────────────── */
 function _resizeAllCharts() {
     setTimeout(() => {
-        [barChartInst, lineChartInst, _f100ChartStatus, _f100ChartStep, _f100ChartVtype]
+        [barChartInst, lineChartInst, _f100ChartStatus, _f100ChartStep, _f100ChartVtype, _kd2BottleneckChartInst]
             .forEach(c => { try { c?.resize(); } catch {} });
     }, 60);
+}
+
+/* Charts are created synchronously during the first render, sometimes before
+   the grid/container has settled its final layout (font swap, a section
+   flipping from display:none, scrollbar appearing) — Chart.js measures the
+   canvas at creation time and doesn't re-measure on its own unless something
+   external nudges it. A ResizeObserver on the charts grid catches any of
+   those post-creation layout shifts and forces a resize, which is otherwise
+   only ever triggered by accident via the browser's native fullscreen toggle. */
+let _chartsGridResizeObserver = null;
+function _watchChartsGridResize() {
+    if (typeof ResizeObserver === 'undefined') return;
+    if (!_chartsGridResizeObserver) _chartsGridResizeObserver = new ResizeObserver(() => _resizeAllCharts());
+    document.querySelectorAll('.charts-grid, .f100-charts-grid').forEach(grid => {
+        if (!grid.dataset.chartsResizeWatched) {
+            grid.dataset.chartsResizeWatched = '1';
+            _chartsGridResizeObserver.observe(grid);
+        }
+    });
 }
 
 function _closeChartExpand(card, btn) {
@@ -10473,10 +10497,14 @@ async function initIssuesSection() {
     const addBtn = document.getElementById('btnAddIssue');
     if (addBtn) addBtn.style.display = isPlanner() ? '' : 'none';
 
-    // Show unread badge before loading, then clear after table loads
-    await _issueNotifUpdateBadge();
-    await _populateIssueReporterFilter();
-    await loadIssues(true);
+    // These three reads are independent — fire them concurrently instead of
+    // waiting on each round-trip in turn (was 3-4x slower than the plan table,
+    // which issues a single query).
+    await Promise.all([
+        _issueNotifUpdateBadge(),
+        _populateIssueReporterFilter(),
+        loadIssues(true),
+    ]);
     _issueNotifClearBadge();
 }
 
@@ -10514,7 +10542,8 @@ async function _populateIssueReporterFilter() {
             .from('production_issues')
             .select('reporter_email, reporter_name')
             .eq('module', getActiveModuleId())
-            .order('reporter_email');
+            .order('reporter_email')
+            .limit(1000);
         const seen = new Set();
         (data || []).forEach(r => {
             if (seen.has(r.reporter_email)) return;
@@ -10545,9 +10574,12 @@ async function loadIssues(reset = false) {
         tbody.innerHTML = `<tr><td colspan="9" class="table-empty"><div class="empty-state"><span class="spinner"></span><p>Loading…</p></div></td></tr>`;
     }
 
+    // Narrow column list — description/proposed_solution/notes/person_in_charge
+    // aren't shown in the row and are fetched fresh (select('*')) when a row is
+    // opened; 'estimated' count avoids forcing an exact-count table scan.
     let query = db
         .from('production_issues')
-        .select('*', { count: 'exact' })
+        .select('id, title, category, priority, status, reporter_name, reporter_email, created_at, updated_at', { count: 'estimated' })
         .eq('module', getActiveModuleId())
         .order('created_at', { ascending: true })
         .range(_issuesOffset, _issuesOffset + ISSUES_PAGE_SIZE - 1);
