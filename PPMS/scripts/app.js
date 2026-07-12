@@ -8307,7 +8307,7 @@ async function exportExcel(typeKey, fromDate, toDate, category, preview) {
         showToast(`Excel exported — ${rows.length} rows`, 'success');
     };
     if (preview) {
-        _showGenericPreview({ title: def.label, kind: 'html', html: _worksheetToHtml(ws), onDownload: doDownload });
+        _showGenericPreview({ title: def.label, kind: 'sheets', sheets: _workbookToSheets(wb), onDownload: doDownload });
     } else {
         await doDownload();
     }
@@ -9658,7 +9658,7 @@ async function exportVpxExcel(preview) {
         showToast('Excel exported successfully.', 'success');
     };
     if (preview) {
-        _showGenericPreview({ title: getVpxTitleParts().join(' '), kind: 'html', html: _worksheetToHtml(ws), onDownload: doDownload });
+        _showGenericPreview({ title: getVpxTitleParts().join(' '), kind: 'sheets', sheets: _workbookToSheets(wb), onDownload: doDownload });
     } else {
         await doDownload();
     }
@@ -9725,9 +9725,16 @@ function _worksheetToHtml(ws) {
     return html;
 }
 
-/** Opens the shared preview modal. kind: 'pdf' (iframe src) or 'html'
- *  (innerHTML). onDownload runs the real export when the user confirms. */
-function _showGenericPreview({ title, kind, src, html, onDownload }) {
+/** Every worksheet in a workbook, rendered to HTML — one entry per sheet
+ *  so the preview modal can show tabs for multi-sheet exports. */
+function _workbookToSheets(wb) {
+    return wb.worksheets.map(sheet => ({ name: sheet.name, html: _worksheetToHtml(sheet) }));
+}
+
+/** Opens the shared preview modal. kind: 'pdf' (iframe src), 'html'
+ *  (single innerHTML), or 'sheets' (tabbed multi-sheet Excel preview).
+ *  onDownload runs the real export when the user confirms. */
+function _showGenericPreview({ title, kind, src, html, sheets, onDownload }) {
     const overlay = document.getElementById('genericPreviewModalOverlay');
     if (!overlay) { onDownload?.(); return; }
 
@@ -9735,12 +9742,34 @@ function _showGenericPreview({ title, kind, src, html, onDownload }) {
     if (titleEl) titleEl.textContent = title || 'Preview';
     const frame = document.getElementById('genericPreviewFrame');
     const htmlDiv = document.getElementById('genericPreviewHtml');
+    const tabBar = document.getElementById('genericPreviewTabs');
+
+    const renderSheet = html => { htmlDiv.innerHTML = html || ''; };
+
     if (kind === 'pdf') {
-        frame.hidden = false; htmlDiv.hidden = true;
+        frame.hidden = false; htmlDiv.hidden = true; tabBar.hidden = true;
         frame.src = src;
-    } else {
+    } else if (kind === 'sheets' && sheets?.length) {
         frame.hidden = true; htmlDiv.hidden = false;
-        htmlDiv.innerHTML = html || '';
+        if (sheets.length > 1) {
+            tabBar.hidden = false;
+            tabBar.innerHTML = sheets.map((s, i) =>
+                `<button type="button" class="report-preview-tab${i === 0 ? ' active' : ''}" data-idx="${i}">${esc(s.name)}</button>`
+            ).join('');
+            tabBar.querySelectorAll('.report-preview-tab').forEach(btn => {
+                btn.addEventListener('click', () => {
+                    tabBar.querySelectorAll('.report-preview-tab').forEach(b => b.classList.remove('active'));
+                    btn.classList.add('active');
+                    renderSheet(sheets[+btn.dataset.idx].html);
+                });
+            });
+        } else {
+            tabBar.hidden = true;
+        }
+        renderSheet(sheets[0].html);
+    } else {
+        frame.hidden = true; htmlDiv.hidden = false; tabBar.hidden = true;
+        renderSheet(html);
     }
     overlay.style.display = 'flex';
 
@@ -10046,7 +10075,7 @@ async function exportVpxStationReportExcel(preview) {
         showToast('Station report exported.', 'success');
     };
     if (preview) {
-        _showGenericPreview({ title, kind: 'html', html: _worksheetToHtml(ws), onDownload: doDownload });
+        _showGenericPreview({ title, kind: 'sheets', sheets: _workbookToSheets(wb), onDownload: doDownload });
     } else {
         await doDownload();
     }
@@ -12184,7 +12213,7 @@ async function exportIssueReportExcel(opts) {
         showToast('Excel exported.', 'success');
     };
     if (opts.preview) {
-        _showGenericPreview({ title: _issueReportTitle(opts), kind: 'html', html: _worksheetToHtml(ws), onDownload: doDownload });
+        _showGenericPreview({ title: _issueReportTitle(opts), kind: 'sheets', sheets: _workbookToSheets(wb), onDownload: doDownload });
     } else {
         await doDownload();
     }
