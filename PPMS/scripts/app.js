@@ -11395,8 +11395,8 @@ function renderIssueCategoryBadge(category) {
 
 function renderIssueRow(issue, idx) {
     const u = getCurrentUser();
-    // Only the original reporter may edit — no exceptions for admins
-    const canEdit = !!(issue.reporter_email && u?.email && issue.reporter_email === u.email);
+    // Original reporter may edit; master_admin may edit any issue
+    const canEdit = isMasterAdmin() || !!(issue.reporter_email && u?.email && issue.reporter_email === u.email);
 
     return `
     <tr data-issue-id="${issue.id}">
@@ -11807,9 +11807,9 @@ async function openIssueModal(id = null, resumeDraft = null) {
         const { data, error } = await db.from('production_issues').select('*').eq('id', id).single();
         if (error || !data) { showToast('Failed to load issue.', 'error'); return; }
 
-        // Permission check — only the original reporter may edit
+        // Permission check — original reporter may edit; master_admin may edit any issue
         const u = getCurrentUser();
-        const canEdit = !!(data.reporter_email && u?.email && data.reporter_email === u.email);
+        const canEdit = isMasterAdmin() || !!(data.reporter_email && u?.email && data.reporter_email === u.email);
         if (!canEdit) { showToast('You can only edit issues you reported.', 'error'); return; }
 
         overlay.dataset.editId = id;
@@ -15047,6 +15047,8 @@ async function placeF100VisualBlock(track, plannedStart) {
 
 /* ── F100 Edit Block modal ────────────────────────────────────────── */
 function openF100EditBlockModal(planId) {
+    if (!canEditPlan()) { showToast('Only planners and admins can edit blocks.', 'error'); return; }
+
     const task = currentData.find(t => String(t.id) === String(planId));
     if (!task) return;
     document.getElementById('f100EbPlanId').value = String(planId);
