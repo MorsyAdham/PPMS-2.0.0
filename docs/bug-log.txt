@@ -216,6 +216,11 @@ reproduced by running the real functions under Africa/Cairo (UTC+3).
 Severity: HIGH = data loss/corruption or security | MEDIUM = wrong numbers
 or dates shown to users | LOW = cosmetic, edge case, or latent.
 
+Status 27 Sep 2026: SC-02 to SC-12 fixed and deployed (commit "Fix system
+checkup bugs SC-02 to SC-12"); SC-13 data corrected in the live database
+(database/migrations/56_fix_btl02_k9_m3_m4_serials.sql). SC-01 remains open —
+it needs a planned auth migration, not a patch.
+
 --------------------------------------------------------
 RESOLVED TODAY
 --------------------------------------------------------
@@ -255,7 +260,7 @@ OPEN — HIGH
         password server-side), revoke anon SELECT on planning_app_users, and
         rewrite policies per role. Treat as a project, not a quick patch.
 
-❌ SC-02 Gantt "move lane" / "from block" also moves blocks in OTHER plan versions
+✅ SC-02 Gantt "move lane" / "from block" also moves blocks in OTHER plan versions
    Where: fetchKd2LaneRowsForGantt ~1012 and fetchKd2StationRowsForGantt ~1031,
           used by resolveGanttMoveSet ~1042.
    Problem: Both query kd2_plan without PlanVersions.scoped(…, 'kd2'), so the
@@ -272,14 +277,14 @@ OPEN — HIGH
 OPEN — MEDIUM
 --------------------------------------------------------
 
-❌ SC-03 "This Month" time-frame filter uses the wrong dates
+✅ SC-03 "This Month" time-frame filter uses the wrong dates
    Where: currentMonthRange() ~7386.
    Problem: Builds local-midnight dates then calls toISOString() (UTC), so in
             Egypt September 2026 becomes 2026-08-31 → 2026-09-29: includes the
             last day of last month and drops the last day of this month.
    Fix: Use localDateStr() (defined ~16769), as currentWeekRange() already does.
 
-❌ SC-04 Day ranges shifted back one day (Gantt, S-curve chart, drag edit)
+✅ SC-04 Day ranges shifted back one day (Gantt, S-curve chart, drag edit)
    Where: generateDateRange() ~7395; callers buildVisibleGanttDays ~880,
           S-curve ~5832, Gantt ~7780, drag-edit index ~17386.
    Problem: Same UTC conversion: generateDateRange(2026-09-01, 2026-09-03)
@@ -287,14 +292,14 @@ OPEN — MEDIUM
             early and loses its last day; cumulative chart points are off by one.
    Fix: localDateStr(cur) instead of cur.toISOString().slice(0, 10).
 
-❌ SC-05 Expected / projected delivery dates one working day early
+✅ SC-05 Expected / projected delivery dates one working day early
    Where: _addWorkingDays() ~4161; used by delivery card ~4207 and VPX
           expected/projected dates ~11800, ~11805.
    Problem: Same UTC conversion: _addWorkingDays('2026-09-01', 1) returns
             2026-09-01 instead of 2026-09-02.
    Fix: return localDateStr(d).
 
-❌ SC-06 Unit Codes "Add" silently overwrites an existing unit's serial
+✅ SC-06 Unit Codes "Add" silently overwrites an existing unit's serial
    Where: saveUnitCode() KD2 branch — upsert(…, { onConflict:
           'battalion_id,vehicle_type,unit_serial' }).
    Problem: Adding "M2" for a battalion that already has M2 replaces that
@@ -303,7 +308,7 @@ OPEN — MEDIUM
    Fix: Use insert for Add and show "BTL-01 K9 M2 already exists — edit it
         instead" on conflict; keep update for Edit.
 
-❌ SC-07 F100 Unit filter is not battalion-aware (same bug as the KD2 one fixed today)
+✅ SC-07 F100 Unit filter is not battalion-aware (same bug as the KD2 one fixed today)
    Where: loadF100Data() ~2557 (filterOptions.f100Serial) and plans query ~2520.
    Problem: Option value is unit_serial only and the label has no battalion.
             With more than one F100 battalion, "Unit 1" matches every
@@ -316,31 +321,31 @@ OPEN — MEDIUM
 OPEN — LOW
 --------------------------------------------------------
 
-❌ SC-08 "Today" is yesterday between 00:00 and 03:00 Cairo time
+✅ SC-08 "Today" is yesterday between 00:00 and 03:00 Cairo time
    Where: todayStr() ~7254 (23 callers) and app/scripts/core/dates.js line 2;
           report/export dates (e.g. ~9731, ~12115) use the same pattern.
    Problem: new Date().toISOString() is UTC, so after midnight Overdue/In
             Progress status, the "Day" filter and export file names lag a day.
    Fix: localDateStr(new Date()).
 
-❌ SC-09 F100 Battalion filter lists every f100_battalions row
+✅ SC-09 F100 Battalion filter lists every f100_battalions row
    Where: populateF100BattalionFilter() ~2447.
    Problem: Same as the KD2 issue fixed today — shows shells with no units/plans.
    Fix: Build from f100_vehicle_units + f100_plans like KD2 loadFilters().
 
-❌ SC-10 New battalion doesn't appear in the Battalion filter until reload
+✅ SC-10 New battalion doesn't appear in the Battalion filter until reload
    Where: saveUnitCode() KD2 branch reloads unit codes and the Unit filter only.
    Problem: After today's change the Battalion list comes from logged units, so
             adding the first unit of BTL-03 needs a page reload to list BTL-03.
    Fix: Call loadFilters() (or refresh battalion options) after saving a unit.
 
-❌ SC-11 Comment notifications don't say which battalion
+✅ SC-11 Comment notifications don't say which battalion
    Where: saveNotifSnapshot() rowInfo ~6300, shown at ~6434.
    Problem: Text reads "K9 · M2 · station" — ambiguous when several battalions
             have an M2.
    Fix: Add battalion_code to rowInfo and the displayed line.
 
-❌ SC-12 Active Users panel inserts user names without escaping
+✅ SC-12 Active Users panel inserts user names without escaping
    Where: ~2119 (${u.name || u.email}).
    Problem: A name containing HTML would render as markup. Low risk (names are
             set by admins) but every other panel escapes with esc().
@@ -350,11 +355,12 @@ OPEN — LOW
 DATA — PENDING CONFIRMATION
 --------------------------------------------------------
 
-⚠️ SC-13 BTL-02 has no K9 M4, and serial EGY N26030 is unused
+✅ SC-13 BTL-02 had no K9 M4, and serial EGY N26030 was unused
    Found: BTL-02 K9 has 17 units (M1–M3, M5–M18). Serials run M2 = EGY N26029,
           M3 = EGY N26031, M5 = EGY N26032 — N26030 is skipped.
-   Question: Is M4 missing from Unit Codes, or is M3's serial wrong? Not changed
-             — values must come from the source records.
+   Resolution: Confirmed by the planner — serials run in unit order. M3 set to
+               EGY N26030 and M4 added as EGY N26031; BTL-02 K9 is now M1–M18,
+               EGY N26028 → N26045 (migration 56).
 
 --------------------------------------------------------
 CHECKED — NO ISSUES FOUND
