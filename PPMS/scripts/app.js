@@ -792,10 +792,10 @@ function getRowCode(row) {
 // so here we return unit_code (bottom line).
 function getRowUnitMeta(row) {
     if (isKD2Module()) {
-        const code = getUnitCode(row.vehicle, row.vehicle_no);
+        const code = getUnitCode(row.vehicle, row.vehicle_no, row.battalion_code);
         return code ? `<br><span class="unit-code-badge">${esc(code)}</span>` : '';
     }
-    const code = getUnitCode(row.vehicle, row.vehicle_no);
+    const code = getUnitCode(row.vehicle, row.vehicle_no, row.battalion_code);
     return code ? `<br><span class="unit-code-badge">${esc(code)}</span>` : '';
 }
 
@@ -811,7 +811,7 @@ function getTableFilterFields() {
     ];
     return [
         { field: 'vehicle',   label: 'Vehicle',   match: r => [r.vehicle] },
-        { field: 'unit',      label: 'Unit',      match: r => [r.vehicle_no, r.unit_label, getUnitCode(r.vehicle, r.vehicle_no)] },
+        { field: 'unit',      label: 'Unit',      match: r => [r.vehicle_no, r.unit_label, getUnitCode(r.vehicle, r.vehicle_no, r.battalion_code)] },
         { field: 'battalion', label: 'Battalion', match: r => [r.battalion_code] },
         { field: 'week',      label: 'Week',      match: r => [r.week] },
         { field: 'station',   label: 'Station',   match: r => [r.process_station] },
@@ -1268,19 +1268,38 @@ async function loadUnitCodes() {
             if (unitsError) throw unitsError;
             if (battalionError) throw battalionError;
             const battalionMap = Object.fromEntries((battalions || []).map(row => [row.id, row.battalion_code]));
-            (units || []).forEach(r => {
-                const code = r.unit_code || '';
+            // The same unit label (e.g. "M2") exists in every battalion, so entries are
+            // stored under a battalion-qualified key. The plain vehicle||label key is kept
+            // only while it is unambiguous; once two battalions share it, it is blanked so
+            // one battalion's serial number is never shown for another battalion's unit.
+            const unitLabels = r => {
                 const battalionCode = battalionMap[r.battalion_id] || '';
                 const fallbackLabel = battalionCode
                     ? `${battalionCode} / ${r.vehicle_type}-${String(r.unit_serial).padStart(2, '0')}`
                     : `${r.vehicle_type}-${String(r.unit_serial).padStart(2, '0')}`;
-                const key1 = r.unit_label ? r.vehicle_type + '||' + r.unit_label : null;
-                const key2 = r.vehicle_type + '||' + fallbackLabel;
-                if (key1) unitCodeMap[key1] = code;
-                unitCodeMap[key2] = code;
+                return { battalionCode, fallbackLabel, labels: [...new Set([r.unit_label, fallbackLabel].filter(Boolean))] };
+            };
+            const plainKeyCounts = {};
+            (units || []).forEach(r => {
+                unitLabels(r).labels.forEach(label => {
+                    const plainKey = unitMapKey(r.vehicle_type, label);
+                    plainKeyCounts[plainKey] = (plainKeyCounts[plainKey] || 0) + 1;
+                });
+            });
+            (units || []).forEach(r => {
+                const code = r.unit_code || '';
+                const { battalionCode, fallbackLabel, labels } = unitLabels(r);
                 const drEntry = { id: r.id, reasons: (r.delay_reason && typeof r.delay_reason === 'object') ? r.delay_reason : {} };
-                if (key1) vpxDelayReasonMap[key1] = drEntry;
-                vpxDelayReasonMap[key2] = drEntry;
+                labels.forEach(label => {
+                    const qualifiedKey = unitMapKey(r.vehicle_type, label, battalionCode);
+                    unitCodeMap[qualifiedKey] = code;
+                    vpxDelayReasonMap[qualifiedKey] = drEntry;
+                    const plainKey = unitMapKey(r.vehicle_type, label);
+                    if (plainKeyCounts[plainKey] === 1) {
+                        unitCodeMap[plainKey] = code;
+                        vpxDelayReasonMap[plainKey] = drEntry;
+                    }
+                });
                 unitRegistryRows.push({
                     battalion_id: r.battalion_id,
                     battalion_code: battalionCode || '—',
@@ -1330,35 +1349,47 @@ function populateUnitFilter(vehicle = null) {
     const sel = document.getElementById('filterUnit');
     const prevVal = sel.value;
     const prevVehicle = sel.options[sel.selectedIndex]?.dataset?.vehicle || '';
+    const prevBattalion = sel.options[sel.selectedIndex]?.dataset?.battalion || '';
     sel.innerHTML = '<option value="">All Units</option>';
 
+    // KD2 unit labels repeat per battalion (BTL-01 M2, BTL-02 M2), so each
+    // battalion gets its own option carrying its own serial number.
+    const kd2 = isKD2Module();
+    const battalionScope = kd2 ? getVal('filterBattalion') : '';
     const pairs = [];
     const seen = new Set();
     [...unitRegistryRows, ...(currentData || [])].forEach(r => {
         const v = r.vehicle || r.vehicle_type || '';
         const u = r.vehicle_no || '';
+        const b = kd2 && r.battalion_code && r.battalion_code !== '—' ? r.battalion_code : '';
         if (!v || !u) return;
         if (vehicle && v !== vehicle) return;
-        const key = v + '||' + u;
-        if (!seen.has(key)) { seen.add(key); pairs.push({ v, u }); }
+        if (battalionScope && b !== battalionScope) return;
+        const key = unitMapKey(v, u, b);
+        if (!seen.has(key)) { seen.add(key); pairs.push({ v, u, b }); }
     });
     pairs.sort((a, b) => {
+        const bc = String(a.b).localeCompare(String(b.b));
+        if (bc !== 0) return bc;
         const vc = vehicleSort(a.v, b.v);
         return vc !== 0 ? vc : naturalSort(a.u, b.u);
     });
 
-    pairs.forEach(({ v, u }) => {
-        const code = unitCodeMap[v + '||' + u] || '';
+    pairs.forEach(({ v, u, b }) => {
+        const code = getUnitCode(v, u, b);
         const opt = document.createElement('option');
         opt.value = u;
         opt.dataset.vehicle = v;
+        if (b) opt.dataset.battalion = b;
         const base = code ? u + ' · ' + code : u;
-        opt.textContent = vehicle ? base : v + ' · ' + base;
+        const prefix = [b && !battalionScope ? b : '', vehicle ? '' : v].filter(Boolean);
+        opt.textContent = [...prefix, base].join(' · ');
         sel.appendChild(opt);
     });
 
     if (prevVal) {
-        const idx = [...sel.options].findIndex(o => o.value === prevVal && o.dataset.vehicle === prevVehicle);
+        const idx = [...sel.options].findIndex(o => o.value === prevVal && o.dataset.vehicle === prevVehicle
+            && (o.dataset.battalion || '') === prevBattalion);
         if (idx >= 0) sel.selectedIndex = idx;
         else {
             const fallback = [...sel.options].findIndex(o => o.value === prevVal);
@@ -2887,7 +2918,7 @@ function renderTable(data) {
         <td class="unit-cell">${[
             row.battalion_code ? `<span class="f100-tbl-bat-tag">${esc(row.battalion_code)}</span>` : '',
             `<span class="unit-main-label">${esc(row.vehicle_no)}</span>`,
-            getUnitCode(row.vehicle, row.vehicle_no) ? `<span class="unit-code-badge">${esc(getUnitCode(row.vehicle, row.vehicle_no))}</span>` : '',
+            getUnitCode(row.vehicle, row.vehicle_no, row.battalion_code) ? `<span class="unit-code-badge">${esc(getUnitCode(row.vehicle, row.vehicle_no, row.battalion_code))}</span>` : '',
         ].filter(Boolean).join('')}</td>
         <td>${esc(row.process_station)}</td>
         <td class="mono station-code-cell">${esc(getRowCode(row))}</td>
@@ -3464,14 +3495,14 @@ function getVpxRowPrimaryLabel(row) {
 }
 
 function getVpxRowSecondaryLabel(row) {
-    const unitCode = getUnitCode(row.vehicle, row.vehicle_no);
+    const unitCode = getUnitCode(row.vehicle, row.vehicle_no, row.battalion_code);
     if (isKD2Module()) return unitCode || '';
     return unitCode;
 }
 
 function getVpxExportLabel(row) {
-    if (!isKD2Module()) return row.vehicle + '\n' + unitLabel(row.vehicle, row.vehicle_no);
-    return [row.battalion_code || '—', `${row.vehicle} · ${unitLabel(row.vehicle, row.vehicle_no)}`].join('\n');
+    if (!isKD2Module()) return row.vehicle + '\n' + unitLabel(row.vehicle, row.vehicle_no, row.battalion_code);
+    return [row.battalion_code || '—', `${row.vehicle} · ${unitLabel(row.vehicle, row.vehicle_no, row.battalion_code)}`].join('\n');
 }
 
 /* ──────────────────────────────────────────────────────────────────
@@ -3820,12 +3851,12 @@ function renderVPX(data) {
         var rowPctHtml = row.total > 0
             ? '<div class="vpx-unit-pct-row"><div class="vpx-unit-pct-bar-wrap"><div class="vpx-unit-pct-bar-fill" style="width:' + rowPct + '%"></div></div><span class="vpx-unit-pct-text">' + row.done + '/' + row.total + ' (' + rowPct + '%)</span></div>'
             : '';
-        var drEntry = isKD2Module() ? getDelayReasonEntry(row.vehicle, row.vehicle_no) : null;
+        var drEntry = isKD2Module() ? getDelayReasonEntry(row.vehicle, row.vehicle_no, row.battalion_code) : null;
         var drCategory = _vpxCategoryFilter || 'general';
         var drReason = drEntry?.reasons?.[drCategory] || '';
         var drBtnHtml = drEntry
             ? '<button type="button" class="vpx-delay-reason-btn' + (drReason ? ' has-reason' : '') + '"'
-                + ' data-vpx-vehicle="' + esc(row.vehicle) + '" data-vpx-unit="' + esc(row.vehicle_no) + '" data-vpx-category="' + esc(drCategory) + '"'
+                + ' data-vpx-battalion="' + esc(row.battalion_code || '') + '" data-vpx-vehicle="' + esc(row.vehicle) + '" data-vpx-unit="' + esc(row.vehicle_no) + '" data-vpx-category="' + esc(drCategory) + '"'
                 + ' title="' + (drReason ? 'Delay reason (' + esc(drCategory) + '): ' + esc(drReason) : 'Add a delay reason (' + esc(drCategory) + ')') + '">'
                 + '<svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.6"><path d="M3 2.5h7.5L13 5v8.5a1 1 0 01-1 1H3a1 1 0 01-1-1v-10a1 1 0 011-1z"/><path d="M9.5 2.5V5H13"/><path d="M4.5 8h5M4.5 10.5h3.5"/></svg>'
                 + '</button>'
@@ -5404,7 +5435,7 @@ function openCompleteModal(planId, idx) {
     } else {
         const actualStart = row.progress?.actual_start_date;
         document.getElementById('modalInfo').innerHTML = `
-        <strong>${esc(row.vehicle)} · ${esc(row.vehicle_no)}${getUnitCode(row.vehicle, row.vehicle_no) ? ' <span style="font-weight:400;opacity:.7;font-size:.85em">(' + esc(getUnitCode(row.vehicle, row.vehicle_no)) + ')</span>' : ''}</strong><br>
+        <strong>${esc(row.vehicle)} · ${esc(row.vehicle_no)}${getUnitCode(row.vehicle, row.vehicle_no, row.battalion_code) ? ' <span style="font-weight:400;opacity:.7;font-size:.85em">(' + esc(getUnitCode(row.vehicle, row.vehicle_no, row.battalion_code)) + ')</span>' : ''}</strong><br>
         ${esc(row.process_station)}<br>
         <small>Planned: ${formatDate(row.start_date)} → ${formatDate(row.end_date)}</small>
         ${actualStart ? `<br><small>Actual start: ${formatDate(actualStart)}</small>` : ''}`;
@@ -5577,7 +5608,23 @@ function wireEvents() {
 
     // Cascade: when vehicle changes, update unit dropdown to match
     document.getElementById('filterVehicle')?.addEventListener('change', onVehicleFilterChange);
-    
+
+    // KD2: unit options are battalion-scoped. Keep the battalion filter and the
+    // selected unit in sync so "M2" never matches another battalion's M2.
+    document.getElementById('filterBattalion')?.addEventListener('change', () => {
+        if (isKD2Module()) populateUnitFilter(getVal('filterVehicle') || null);
+    });
+    document.getElementById('filterUnit')?.addEventListener('change', () => {
+        if (!isKD2Module()) return;
+        const sel = document.getElementById('filterUnit');
+        const battalion = sel.options[sel.selectedIndex]?.dataset?.battalion || '';
+        const battalionSel = document.getElementById('filterBattalion');
+        if (battalion && battalionSel && battalionSel.value !== battalion) {
+            battalionSel.value = battalion;
+            populateUnitFilter(getVal('filterVehicle') || null);
+        }
+    });
+
     // Reload data when K9 component filter changes
     document.getElementById('filterK9Component')?.addEventListener('change', loadData);
 
@@ -5924,14 +5971,29 @@ function formatDateShort(isoStr) {
     return d.toLocaleDateString('en-GB', { day: '2-digit', month: 'short' });
 }
 
-/** Return the unit code for a vehicle+unit combo, or '' */
-function getUnitCode(vehicle, vehicle_no) {
-    return unitCodeMap[vehicle + '||' + vehicle_no] || '';
+/** Key for unitCodeMap / vpxDelayReasonMap. KD2 units are battalion-scoped
+ *  ("BTL-01||K9||M2"); the plain form ("K9||M2") is used when no battalion applies. */
+function unitMapKey(vehicle, vehicle_no, battalion = '') {
+    return (battalion ? battalion + '||' : '') + vehicle + '||' + vehicle_no;
+}
+
+/** Look up a unit-scoped map entry, preferring the battalion-qualified key. */
+function lookupUnitMap(map, vehicle, vehicle_no, battalion) {
+    if (battalion) {
+        const qualifiedKey = unitMapKey(vehicle, vehicle_no, battalion);
+        if (qualifiedKey in map) return map[qualifiedKey];
+    }
+    return map[unitMapKey(vehicle, vehicle_no)];
+}
+
+/** Return the unit code for a vehicle+unit combo (battalion-scoped in KD2), or '' */
+function getUnitCode(vehicle, vehicle_no, battalion = '') {
+    return lookupUnitMap(unitCodeMap, vehicle, vehicle_no, battalion) || '';
 }
 
 /** Format unit label: "M1" or "M1 · EGY N25020" */
-function unitLabel(vehicle, vehicle_no) {
-    const code = getUnitCode(vehicle, vehicle_no);
+function unitLabel(vehicle, vehicle_no, battalion = '') {
+    const code = getUnitCode(vehicle, vehicle_no, battalion);
     return code ? vehicle_no + ' · ' + code : vehicle_no;
 }
 
@@ -5939,11 +6001,11 @@ function unitLabel(vehicle, vehicle_no) {
  *  vehicle isn't registered in Unit Codes (no row to attach a reason to).
  *  `reasons` is keyed by VPX category (Hull/Turret/Assembly/Structure) since
  *  each component tracks its delay separately. */
-function getDelayReasonEntry(vehicle, vehicle_no) {
-    return vpxDelayReasonMap[vehicle + '||' + vehicle_no] || null;
+function getDelayReasonEntry(vehicle, vehicle_no, battalion = '') {
+    return lookupUnitMap(vpxDelayReasonMap, vehicle, vehicle_no, battalion) || null;
 }
-function getDelayReason(vehicle, vehicle_no, category) {
-    return getDelayReasonEntry(vehicle, vehicle_no)?.reasons?.[category || 'general'] || '';
+function getDelayReason(vehicle, vehicle_no, category, battalion = '') {
+    return getDelayReasonEntry(vehicle, vehicle_no, battalion)?.reasons?.[category || 'general'] || '';
 }
 
 function daysBetween(from, to) {
@@ -6775,7 +6837,7 @@ function renderGantt(plans, startDate, endDate) {
             <div class="gr-unit-info">
               ${isKD2Module() && !isKd2ProcessView && groupKey ? `<span class="gr-unit-ctx">${esc(laneVehicle)} · ${esc(groupKey)}</span>` : ''}
               ${isKd2ProcessView && _stationWC ? `<span class="gr-unit-ctx">${esc(_stationWC)}</span>` : ''}
-              <span class="gr-unit-name">${esc(isF100ProcessView ? laneUnit : isF100KD2Module() ? (() => { const t0 = tasks[0]; const uCode = t0?.unit_code || ''; const uName = t0?.unit_name || ''; return uCode && uName ? `${uCode} · ${uName}` : uCode || uName || `${laneVehicle} #${laneUnit}`; })() : isKd2ProcessView ? laneUnit : isKD2Module() ? unitLabel(laneVehicle, laneUnit) : unitLabel(laneVehicle, laneUnit))}</span>
+              <span class="gr-unit-name">${esc(isF100ProcessView ? laneUnit : isF100KD2Module() ? (() => { const t0 = tasks[0]; const uCode = t0?.unit_code || ''; const uName = t0?.unit_name || ''; return uCode && uName ? `${uCode} · ${uName}` : uCode || uName || `${laneVehicle} #${laneUnit}`; })() : isKd2ProcessView ? laneUnit : isKD2Module() ? unitLabel(laneVehicle, laneUnit, groupKey) : unitLabel(laneVehicle, laneUnit))}</span>
               ${(!isKd2ProcessView && _stationWC) ? `<span class="gr-unit-wc">${esc(_stationWC)}</span>` : ''}
               ${_f100PctHtml}
               ${_kd2PctHtml}
@@ -8118,7 +8180,7 @@ async function exportExcel(typeKey, fromDate, toDate, category, preview) {
         { header: '#', width: 5, key: (r, i) => i + 1 },
         { header: 'Vehicle', width: 10, key: r => r.vehicle },
         { header: 'Unit', width: 10, key: r => r.vehicle_no },
-        { header: 'Unit Code', width: 16, key: r => getUnitCode(r.vehicle, r.vehicle_no) || '—' },
+        { header: 'Unit Code', width: 16, key: r => getUnitCode(r.vehicle, r.vehicle_no, r.battalion_code) || '—' },
         { header: 'Station', width: 26, key: r => r.process_station },
         { header: 'Code / Work Center', width: 18, key: r => getRowCode(r) },
         { header: 'Category', width: 16, key: r => getModuleCategory(r.process_station, r) },
@@ -9995,7 +10057,7 @@ async function exportVpxStationReportExcel(preview) {
     let excelRowIdx = 6;
     rows.forEach(row => {
         const { cells, finalDelay } = _vpxProjectRow(row, activeCols);
-        const code = getUnitCode(row.vehicle, row.vehicle_no);
+        const code = getUnitCode(row.vehicle, row.vehicle_no, row.battalion_code);
         const label = `${row.vehicle} #${row.vehicle_no || ''}${code ? '\n' + code : ''}`.trim();
         const planRowN = excelRowIdx;
         const actualRowN = excelRowIdx + 1;
@@ -10056,7 +10118,7 @@ async function exportVpxStationReportExcel(preview) {
 
         // Delay Reason — editable per-vehicle, per-category note (VPX matrix
         // "note" icon), scoped to the tab this report was generated from.
-        const delayReason = getDelayReason(row.vehicle, row.vehicle_no, _vpxCategoryFilter);
+        const delayReason = getDelayReason(row.vehicle, row.vehicle_no, _vpxCategoryFilter, row.battalion_code);
         ws.mergeCells(planRowN, reasonCol, actualRowN, reasonCol);
         const reasonCell = ws.getCell(planRowN, reasonCol);
         reasonCell.value = delayReason || '—';
@@ -10180,9 +10242,9 @@ async function exportVpxStationReportPDF(preview) {
 
     rows.forEach(row => {
         const { cells, finalDelay } = _vpxProjectRow(row, activeCols);
-        const code = getUnitCode(row.vehicle, row.vehicle_no);
+        const code = getUnitCode(row.vehicle, row.vehicle_no, row.battalion_code);
         const label = `${row.vehicle} #${row.vehicle_no || ''}${code ? '\n' + code : ''}`.trim();
-        const delayReason = getDelayReason(row.vehicle, row.vehicle_no, _vpxCategoryFilter);
+        const delayReason = getDelayReason(row.vehicle, row.vehicle_no, _vpxCategoryFilter, row.battalion_code);
 
         vehicleBlockStartRows.push(body.length);
 
@@ -10346,17 +10408,17 @@ function wireVpxReportModal() {
 /* ─── VPX delay-reason editing — click the note icon on a vehicle's row
    header to view/edit why it's delayed; flows into the Station Report as
    the "Delay Reason" column. Gated by the same permission as plan edits. ── */
-function openVpxDelayReasonModal(vehicle, vehicleNo, category) {
+function openVpxDelayReasonModal(vehicle, vehicleNo, category, battalion = '') {
     const overlay = document.getElementById('vpxDelayReasonModalOverlay');
     if (!overlay) return;
-    const entry = getDelayReasonEntry(vehicle, vehicleNo);
+    const entry = getDelayReasonEntry(vehicle, vehicleNo, battalion);
     if (!entry) {
         showToast('Add this vehicle in Unit Codes first to attach a delay reason.', 'error');
         return;
     }
 
     const titleEl = document.getElementById('vpxDelayReasonModalTitle');
-    if (titleEl) titleEl.textContent = `Delay Reason — ${vehicle} ${vehicleNo} (${category})`;
+    if (titleEl) titleEl.textContent = `Delay Reason — ${battalion ? battalion + ' · ' : ''}${vehicle} ${vehicleNo} (${category})`;
     const textEl = document.getElementById('vpxDelayReasonText');
     if (textEl) textEl.value = entry.reasons?.[category] || '';
 
@@ -10370,6 +10432,7 @@ function openVpxDelayReasonModal(vehicle, vehicleNo, category) {
     overlay.dataset.rowId = entry.id;
     overlay.dataset.vehicle = vehicle;
     overlay.dataset.vehicleNo = vehicleNo;
+    overlay.dataset.battalion = battalion;
     overlay.dataset.category = category;
     overlay.style.display = 'flex';
 }
@@ -10386,7 +10449,7 @@ async function saveVpxDelayReason() {
     if (saveBtn) { saveBtn.disabled = true; saveBtn.textContent = 'Saving…'; }
 
     const vehicle = overlay.dataset.vehicle, vehicleNo = overlay.dataset.vehicleNo;
-    const entry = getDelayReasonEntry(vehicle, vehicleNo);
+    const entry = getDelayReasonEntry(vehicle, vehicleNo, overlay.dataset.battalion || '');
     const nextReasons = { ...(entry?.reasons || {}) };
     if (text) nextReasons[category] = text; else delete nextReasons[category];
 
@@ -10413,7 +10476,7 @@ function wireVpxDelayReasonModal() {
     document.getElementById('vpxMatrix')?.addEventListener('click', e => {
         const btn = e.target.closest('.vpx-delay-reason-btn');
         if (!btn) return;
-        openVpxDelayReasonModal(btn.dataset.vpxVehicle, btn.dataset.vpxUnit, btn.dataset.vpxCategory);
+        openVpxDelayReasonModal(btn.dataset.vpxVehicle, btn.dataset.vpxUnit, btn.dataset.vpxCategory, btn.dataset.vpxBattalion || '');
     });
 }
 
