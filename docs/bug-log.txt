@@ -202,4 +202,173 @@ UI — GANTT (ADDITIONAL)
 ========================================================
 
 - I want the mark as complete (actual end) to just be like the how we add the actual start, and just leave the action as comments, the comment will have the user who added it and multiple users can add
-  comments 
+  comments
+
+========================================================
+SYSTEM CHECKUP — 27 Sep 2026
+========================================================
+
+Scope: all code in app/ (static review + targeted checks), plus read-only
+checks on the live Supabase plan/unit data. Line numbers refer to
+app/scripts/app.js unless another file is named. Time-zone bugs were
+reproduced by running the real functions under Africa/Cairo (UTC+3).
+
+Severity: HIGH = data loss/corruption or security | MEDIUM = wrong numbers
+or dates shown to users | LOW = cosmetic, edge case, or latent.
+
+--------------------------------------------------------
+RESOLVED TODAY
+--------------------------------------------------------
+
+✅ KD2 Unit filter showed another battalion's serial number (commit 3edd6cc)
+   Problem: Unit labels (M1, M2…) repeat per battalion, but the filter made one
+            option per vehicle+label and read the serial from a key the last
+            battalion overwrote — BTL-01 M2 showed BTL-02's EGY N26029.
+   Solution: One option per battalion; selection matches battalion + vehicle +
+             unit in data load, Gantt and reports; ambiguous keys left blank.
+
+✅ KD2 Battalion/Vehicle filters listed every record, not the logged data (commit 02c1043)
+   Problem: Battalion filter showed all 5 kd2_battalions shells although only
+            BTL-01/BTL-02 have units; table "Unit" view merged BTL-01 M2 and
+            BTL-02 M2 into one progress count.
+   Solution: Options built from registered units + active-plan rows; table
+             Unit view keyed by battalion.
+
+--------------------------------------------------------
+OPEN — HIGH
+--------------------------------------------------------
+
+❌ SC-01 Database is open to anyone holding the public anon key (security)
+   Where: database/f100/02_rls_policies.sql (all policies "TO anon … USING (true)"),
+          app/scripts/pages/login-page.js ~127 (login query), core/config.js (key).
+   Problem: The app uses its own login (planning_app_users) instead of Supabase
+            Auth, so row-level security cannot tell users apart. Every table
+            allows anonymous select/insert/update/delete, and the anon key is
+            public in both GitHub repos. Roles (viewer/planner/operator) are
+            enforced only in the browser. Passwords are stored as unsalted
+            SHA-256 hashes compared from the browser, so the user table must be
+            anonymously readable for login to work.
+   Not verified: whether password_hash can be read anonymously — that check
+            was deliberately not run against the live user table. Verify in the
+            Supabase dashboard (Authentication/Policies for planning_app_users).
+   Fix: Move login to Supabase Auth (or a SECURITY DEFINER RPC that checks the
+        password server-side), revoke anon SELECT on planning_app_users, and
+        rewrite policies per role. Treat as a project, not a quick patch.
+
+❌ SC-02 Gantt "move lane" / "from block" also moves blocks in OTHER plan versions
+   Where: fetchKd2LaneRowsForGantt ~1012 and fetchKd2StationRowsForGantt ~1031,
+          used by resolveGanttMoveSet ~1042.
+   Problem: Both query kd2_plan without PlanVersions.scoped(…, 'kd2'), so the
+            move set includes the same unit's rows from every version. Live data:
+            archived versions 2 "Baseline Plan", 8 "test by JB" and 11 "test by
+            AM" all hold BTL-01 rows (655–1,165 each) alongside active version 5
+            — a lane move in the active plan would silently shift archived plans.
+   Fix: Wrap both queries in PlanVersions.scoped(…, 'kd2') (kd2.js already does
+        this in its own timeline move code ~3521). Also confirm whether the
+        "from block" station move is meant to span all battalions — it has no
+        battalion filter today.
+
+--------------------------------------------------------
+OPEN — MEDIUM
+--------------------------------------------------------
+
+❌ SC-03 "This Month" time-frame filter uses the wrong dates
+   Where: currentMonthRange() ~7386.
+   Problem: Builds local-midnight dates then calls toISOString() (UTC), so in
+            Egypt September 2026 becomes 2026-08-31 → 2026-09-29: includes the
+            last day of last month and drops the last day of this month.
+   Fix: Use localDateStr() (defined ~16769), as currentWeekRange() already does.
+
+❌ SC-04 Day ranges shifted back one day (Gantt, S-curve chart, drag edit)
+   Where: generateDateRange() ~7395; callers buildVisibleGanttDays ~880,
+          S-curve ~5832, Gantt ~7780, drag-edit index ~17386.
+   Problem: Same UTC conversion: generateDateRange(2026-09-01, 2026-09-03)
+            returns 08-31, 09-01, 09-02. The Gantt's visible range starts a day
+            early and loses its last day; cumulative chart points are off by one.
+   Fix: localDateStr(cur) instead of cur.toISOString().slice(0, 10).
+
+❌ SC-05 Expected / projected delivery dates one working day early
+   Where: _addWorkingDays() ~4161; used by delivery card ~4207 and VPX
+          expected/projected dates ~11800, ~11805.
+   Problem: Same UTC conversion: _addWorkingDays('2026-09-01', 1) returns
+            2026-09-01 instead of 2026-09-02.
+   Fix: return localDateStr(d).
+
+❌ SC-06 Unit Codes "Add" silently overwrites an existing unit's serial
+   Where: saveUnitCode() KD2 branch — upsert(…, { onConflict:
+          'battalion_id,vehicle_type,unit_serial' }).
+   Problem: Adding "M2" for a battalion that already has M2 replaces that
+            unit's serial number with no warning (same "overwrite" pattern as
+            the unit-filter bug).
+   Fix: Use insert for Add and show "BTL-01 K9 M2 already exists — edit it
+        instead" on conflict; keep update for Edit.
+
+❌ SC-07 F100 Unit filter is not battalion-aware (same bug as the KD2 one fixed today)
+   Where: loadF100Data() ~2557 (filterOptions.f100Serial) and plans query ~2520.
+   Problem: Option value is unit_serial only and the label has no battalion.
+            With more than one F100 battalion, "Unit 1" matches every
+            battalion's unit 1 and duplicate options appear. Latent today: F100
+            only has TEST-BAT-1.
+   Fix: Same pattern as KD2 — battalion-scoped option values, label with the
+        battalion when several are shown, battalion-aware row matching.
+
+--------------------------------------------------------
+OPEN — LOW
+--------------------------------------------------------
+
+❌ SC-08 "Today" is yesterday between 00:00 and 03:00 Cairo time
+   Where: todayStr() ~7254 (23 callers) and app/scripts/core/dates.js line 2;
+          report/export dates (e.g. ~9731, ~12115) use the same pattern.
+   Problem: new Date().toISOString() is UTC, so after midnight Overdue/In
+            Progress status, the "Day" filter and export file names lag a day.
+   Fix: localDateStr(new Date()).
+
+❌ SC-09 F100 Battalion filter lists every f100_battalions row
+   Where: populateF100BattalionFilter() ~2447.
+   Problem: Same as the KD2 issue fixed today — shows shells with no units/plans.
+   Fix: Build from f100_vehicle_units + f100_plans like KD2 loadFilters().
+
+❌ SC-10 New battalion doesn't appear in the Battalion filter until reload
+   Where: saveUnitCode() KD2 branch reloads unit codes and the Unit filter only.
+   Problem: After today's change the Battalion list comes from logged units, so
+            adding the first unit of BTL-03 needs a page reload to list BTL-03.
+   Fix: Call loadFilters() (or refresh battalion options) after saving a unit.
+
+❌ SC-11 Comment notifications don't say which battalion
+   Where: saveNotifSnapshot() rowInfo ~6300, shown at ~6434.
+   Problem: Text reads "K9 · M2 · station" — ambiguous when several battalions
+            have an M2.
+   Fix: Add battalion_code to rowInfo and the displayed line.
+
+❌ SC-12 Active Users panel inserts user names without escaping
+   Where: ~2119 (${u.name || u.email}).
+   Problem: A name containing HTML would render as markup. Low risk (names are
+            set by admins) but every other panel escapes with esc().
+   Fix: ${esc(u.name || u.email || '—')}.
+
+--------------------------------------------------------
+DATA — PENDING CONFIRMATION
+--------------------------------------------------------
+
+⚠️ SC-13 BTL-02 has no K9 M4, and serial EGY N26030 is unused
+   Found: BTL-02 K9 has 17 units (M1–M3, M5–M18). Serials run M2 = EGY N26029,
+          M3 = EGY N26031, M5 = EGY N26032 — N26030 is skipped.
+   Question: Is M4 missing from Unit Codes, or is M3's serial wrong? Not changed
+             — values must come from the source records.
+
+--------------------------------------------------------
+CHECKED — NO ISSUES FOUND
+--------------------------------------------------------
+
+- Syntax: every JS file in app/ passes node --check.
+- Broken references: no missing inline-handler functions, local scripts,
+  styles, assets or ES-module imports; 4 "missing" element ids were a false
+  positive (built by the dateInput() helper in the X-ray editor).
+- Other unit keys: Gantt lanes, VPX rows, chart breakdowns, delay reasons and
+  the KD2 import all include the battalion.
+- KD2 live data: no duplicate plan rows per version/unit/station, no rows with
+  end < start or missing dates, every row has a plan version, no plan rows for
+  unregistered units, and serial numbers are unique (enforced by the database).
+- Escaping: issue viewer, Gantt tooltips, toasts and reports escape user text.
+
+========================================================
