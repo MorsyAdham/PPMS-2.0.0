@@ -2493,7 +2493,9 @@ window.PPMSModuleRuntime = (() => {
 
     function getUnitFilterValue() {
         if (typeof filterState === 'undefined') return '';
-        return [...filterState.unit].find(v => v !== 'all') || '';
+        // Unit filter values are battalion-scoped ("BTL-01||K9||M2") — return the label part.
+        const value = [...filterState.unit].find(v => v !== 'all') || '';
+        return value.split('||').pop();
     }
 
     function formatUnitLabel(vehicle, unitSerial, preferredLabel = '') {
