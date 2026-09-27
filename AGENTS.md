@@ -1,34 +1,24 @@
 # Repository Guidelines
 
-## Project Structure & Module Organization
+## Project Structure
 
-This workspace mixes planning documents with a small web prototype.
+See [`README.md`](./README.md) for the full layout. In short:
 
-Planning documents live under [`docs/planning/`](./docs/planning/), including the main source [`F200_K9_K10_K11_plan_structure.md`](./docs/planning/F200_K9_K10_K11_plan_structure.md) and the related KD2 notes.
+- `app/` — the PPMS web app. It is the **only** copy of the app and exactly what is deployed. All code changes go here.
+- `database/` — Supabase SQL (`migrations/`, `schema/`, `f100/`). Tracked in git, never deployed.
+- `docs/planning/` — F200 / KD2 planning documents, including the main source [`F200_K9_K10_K11_plan_structure.md`](./docs/planning/F200_K9_K10_K11_plan_structure.md).
+- `docs/f100/` — F100 plan documents. `docs/engineering/` — code structure guide for `app/`.
+- `data/workbooks/` — reference Excel files. `tools/` — helper scripts, including `deploy.sh`.
 
-The `PPMS/` folder contains the application, organized by purpose:
+Keep new planning Markdown under `docs/planning/`. Keep app files inside the matching `app/` subfolder (`scripts/`, `styles/`, `assets/`), not the `app/` root. New SQL goes in `database/migrations/` with the next free number.
 
-- `PPMS/index.html`, `PPMS/login.html`, and `PPMS/system-test.html` for entry pages
-- `PPMS/scripts/` for client-side behavior modules
-- `PPMS/styles/` for CSS
-- `PPMS/assets/` for shared static assets
-- `PPMS/data/workbooks/` for reference Excel files
-- `PPMS/sql/` for schema and migration scripts
-- `PPMS/tools/` for helper scripts
-- `PPMS/archive/` for legacy or obfuscated files that should not mix with active app code
+## Build, Test, and Deploy
 
-Keep new planning Markdown under `docs/planning/` unless there is a strong reason to place it elsewhere. Keep app-specific files inside the appropriate `PPMS/` subfolder rather than the `PPMS/` root.
+There is no build pipeline or automated test suite.
 
-## Build, Test, and Development Commands
-
-There is no formal build pipeline. Use lightweight local checks:
-
-- `Get-ChildItem -Force` — inspect workspace contents
-- `rg --files` — list files quickly
-- `Get-Content .\docs\planning\F200_K9_K10_K11_plan_structure.md` — review the main planning document
-- `Get-Content .\PPMS\scripts\app.js` — inspect frontend logic
-
-For frontend review, open `PPMS/index.html` in a browser and verify layout, interactions, and asset loading manually.
+- Serve `app/` with a static server (e.g. VS Code Live Server on `app/index.html`) and test the affected page manually. Confirm there are no console errors, broken links, or missing assets.
+- `node --check app/scripts/app.js` — quick syntax check after editing a script.
+- A change is **not shipped** until it is deployed: commit, push to `origin`, then run `bash tools/deploy.sh`. The live site is GitHub Pages on the `production` remote (`MorsyAdham/Planning-Monitoring-System`), whose contents are exactly `app/`. Never edit or force-push the `production` repo directly.
 
 ## Coding Style & Naming Conventions
 
@@ -38,11 +28,11 @@ Use descriptive file names with underscores, for example `F200_<scope>_summary.m
 
 ## Testing Guidelines
 
-There is no automated test suite. Validate changes by checking Markdown rendering, table readability, and consistency of quantities, lead times, and backward-planning logic. For `PPMS/`, test the affected page manually in-browser and confirm there are no broken links or missing assets.
+Validate document changes by checking Markdown rendering, table readability, and consistency of quantities, lead times, and backward-planning logic. For `app/`, test the affected page in-browser. KD2 unit labels (M1, M2…) repeat in every battalion, so check unit-level changes with more than one battalion.
 
 ## Commit & Pull Request Guidelines
 
-Git history is not available in this workspace snapshot, so use short imperative commit messages such as `Clarify K9 assembly lead-time inputs` or `Update PPMS login page copy`.
+Use short imperative commit messages such as `Clarify K9 assembly lead-time inputs` or `Fix KD2 unit filter serials`.
 
 Pull requests should include:
 
