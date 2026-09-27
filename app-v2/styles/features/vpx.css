@@ -1,0 +1,97 @@
+/* VPX ownership. */
+
+.vpx-fullscreen-btn {
+    display: inline-flex;
+    align-items: center;
+    gap: 7px;
+}
+
+.vpx-fullscreen-btn[aria-pressed="true"] {
+    border-color: rgba(79, 142, 247, .46);
+    background: rgba(79, 142, 247, .12);
+    color: #93c5fd;
+}
+
+.vpx-card.is-fullscreen,
+.vpx-card:fullscreen {
+    display: flex;
+    flex-direction: column;
+    width: 100vw;
+    height: 100vh;
+    max-width: none;
+    border-radius: 0;
+    border: none;
+    background: color-mix(in srgb, var(--clr-surface) 94%, #020617 6%);
+}
+
+.vpx-card.is-fullscreen .vpx-card-header,
+.vpx-card:fullscreen .vpx-card-header {
+    padding: 20px 28px 16px;
+}
+
+.vpx-card.is-fullscreen .vpx-scroll-wrap,
+.vpx-card:fullscreen .vpx-scroll-wrap {
+    flex: 1 1 auto;
+    min-height: 0;
+    max-height: none;
+}
+
+/* ── Vehicle-type segmented selector ────────────────────────────── */
+.vpx-type-tabs {
+    display: flex;
+}
+
+.vpx-type-tab {
+    padding: 4px 13px;
+    border: 1px solid rgba(255,255,255,.14);
+    background: rgba(255,255,255,.03);
+    color: var(--clr-text-muted, #94a3b8);
+    font-size: .72rem;
+    font-weight: 700;
+    letter-spacing: .07em;
+    cursor: pointer;
+    transition: background .15s, color .15s, border-color .15s;
+    position: relative;
+    margin-left: -1px;
+}
+
+.vpx-type-tab:first-child { border-radius: 6px 0 0 6px; margin-left: 0; }
+.vpx-type-tab:last-child  { border-radius: 0 6px 6px 0; }
+.vpx-type-tab:only-child  { border-radius: 6px; }
+
+.vpx-type-tab:hover {
+    border-color: rgba(79,142,247,.45);
+    color: #93c5fd;
+    z-index: 1;
+}
+
+.vpx-type-tab.active {
+    background: rgba(79,142,247,.16);
+    border-color: rgba(79,142,247,.55);
+    color: #93c5fd;
+    z-index: 2;
+}
+
+[data-theme="light"] .vpx-type-tab {
+    border-color: #cbd5e1;
+    background: #f8fafc;
+    color: #64748b;
+}
+
+[data-theme="light"] .vpx-type-tab:hover {
+    border-color: #4f8ef7;
+    color: #4f8ef7;
+}
+
+[data-theme="light"] .vpx-type-tab.active {
+    background: rgba(79,142,247,.1);
+    border-color: #4f8ef7;
+    color: #2563eb;
+}
+
+/* Category sub-selector (Hull/Turret/Assembly, or Structure/Assembly) —
+   same segmented-button look, slightly smaller since it's the second tier. */
+.vpx-category-tabs .vpx-category-tab {
+    padding: 3px 11px;
+    font-size: .68rem;
+}

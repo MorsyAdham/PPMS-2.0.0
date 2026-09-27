@@ -1,18 +1,26 @@
 #!/usr/bin/env bash
-# Publish app/ to the live site.
+# Publish an app folder to the Planning-Monitoring-System repo.
 #
-# The live PPMS site is GitHub Pages on MorsyAdham/Planning-Monitoring-System,
-# whose repo root is exactly the contents of app/. This script copies app/
-# into a temporary checkout of that repo, commits, and pushes (fast-forward,
-# never a force-push).
+#   tools/deploy.sh ["commit message"]         app/    -> main  (live site, GitHub Pages)
+#   tools/deploy.sh --v2 ["commit message"]    app-v2/ -> v2    (new secure system, Vercel)
 #
-# Usage:   tools/deploy.sh ["commit message"]
-#          (defaults to the message of the latest workspace commit)
-# Needs:   git remote "production" -> https://github.com/MorsyAdham/Planning-Monitoring-System.git
+# The target branch's contents are exactly the source folder. This script
+# copies the folder into a temporary checkout of that branch, commits, and
+# pushes (fast-forward, never a force-push). The commit message defaults to
+# the latest workspace commit's message.
+#
+# Needs git remote "production" -> https://github.com/MorsyAdham/Planning-Monitoring-System.git
 set -euo pipefail
 
 REMOTE=production
+SRC=app
 BRANCH=main
+if [ "${1:-}" = "--v2" ]; then
+    SRC=app-v2
+    BRANCH=v2
+    shift
+fi
+
 ROOT="$(git rev-parse --show-toplevel)"
 cd "$ROOT"
 
@@ -21,29 +29,43 @@ if ! git remote get-url "$REMOTE" >/dev/null 2>&1; then
     echo "  git remote add $REMOTE https://github.com/MorsyAdham/Planning-Monitoring-System.git" >&2
     exit 1
 fi
-if [ -n "$(git status --porcelain -- app)" ]; then
-    echo "app/ has uncommitted changes - commit them first so the workspace and live site stay in sync." >&2
+if [ ! -d "$SRC" ]; then
+    echo "Folder $SRC/ not found." >&2
+    exit 1
+fi
+if [ -n "$(git status --porcelain -- "$SRC")" ]; then
+    echo "$SRC/ has uncommitted changes - commit them first so the workspace and deployed code stay in sync." >&2
     exit 1
 fi
 
 MSG="${1:-$(git log -1 --format=%B)}"
 
-git fetch -q "$REMOTE" "$BRANCH"
+# A new branch (first v2 deploy) starts from main's history.
+if git ls-remote --exit-code --heads "$REMOTE" "$BRANCH" >/dev/null 2>&1; then
+    BASE="$BRANCH"
+else
+    BASE=main
+    echo "Branch '$BRANCH' does not exist on $REMOTE yet - creating it from main."
+fi
+git fetch -q "$REMOTE" "$BASE"
+
 WT="$(mktemp -d)"
 trap 'git -C "$ROOT" worktree remove --force "$WT" >/dev/null 2>&1 || true' EXIT
-git worktree add -q --detach "$WT" "$REMOTE/$BRANCH"
+git worktree add -q --detach "$WT" "$REMOTE/$BASE"
 
-# Mirror app/ exactly: drop everything tracked, copy app/ in, let git work out the diff.
+# Mirror the folder exactly: drop everything tracked, copy it in, let git work out the diff.
 git -C "$WT" rm -rq --ignore-unmatch .
-cp -R app/. "$WT/"
+cp -R "$SRC"/. "$WT/"
 git -C "$WT" add -A
 
-if git -C "$WT" diff --cached --quiet; then
-    echo "Live site already matches app/ - nothing to deploy."
+if git -C "$WT" diff --cached --quiet && [ "$BASE" = "$BRANCH" ]; then
+    echo "$REMOTE/$BRANCH already matches $SRC/ - nothing to deploy."
     exit 0
 fi
 
-git -C "$WT" diff --cached --stat | tail -1
-git -C "$WT" commit -q -m "$MSG"
-git -C "$WT" push -q "$REMOTE" HEAD:"$BRANCH"
-echo "Deployed $(git -C "$WT" rev-parse --short HEAD) to $REMOTE/$BRANCH - GitHub Pages updates in about a minute."
+if ! git -C "$WT" diff --cached --quiet; then
+    git -C "$WT" diff --cached --stat | tail -1
+    git -C "$WT" commit -q -m "$MSG"
+fi
+git -C "$WT" push -q "$REMOTE" HEAD:"refs/heads/$BRANCH"
+echo "Deployed $SRC/ as $(git -C "$WT" rev-parse --short HEAD) to $REMOTE/$BRANCH."
