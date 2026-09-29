@@ -378,3 +378,143 @@ CHECKED — NO ISSUES FOUND
 - Escaping: issue viewer, Gantt tooltips, toasts and reports escape user text.
 
 ========================================================
+
+========================================================
+SYSTEM CHECKUP — 29 Sep 2026
+========================================================
+
+Scope: all code in app/ — automated checks (syntax, duplicate functions and
+globals, element ids, inline handlers, #id selectors) plus a code review of
+areas the 27 Sep checkup did not cover (Production Issues, comments,
+realtime, paging). Function names are given instead of line numbers because
+app.js moved a lot in this change. Every fix below is applied to both app/
+and app-v2/.
+
+Severity: HIGH = data loss/corruption or security | MEDIUM = wrong numbers
+or dates shown to users | LOW = cosmetic, edge case, or latent.
+
+Status 29 Sep 2026: SC-14 to SC-22 fixed and deployed with the Production
+Issues update (issue categories = migration 57, per-user drafts = migration
+58, both applied to the live database). SC-23 to SC-25 are structural notes,
+left open. SC-01 remains open.
+
+--------------------------------------------------------
+RESOLVED TODAY — Production Issues improvements
+--------------------------------------------------------
+
+✅ Issues table: Category / Priority / Status / Reporter filters moved into
+   the column headers (same funnel style as the Plan table); active filters
+   show as removable chips in the toolbar.
+
+✅ Issue Details view redesigned: header with issue number, age and priority
+   colour; Reported → In Progress → Resolved → Closed progress line; Issue /
+   Proposed Solution / Action Taken blocks; facts side panel; Prev / Next
+   (and ← →) through the listed issues. Edit button now also shows for
+   master_admin, matching the table.
+
+✅ Generate Report dialog rebuilt: three report types (Issue List, By
+   Category, Status Report), status and category tick-boxes for every type,
+   starts from the table's current filters, and a "Review & remove issues"
+   list to untick issues that should not be in the report (no database
+   change). Status Report period now has "Custom dates" (From / To).
+
+--------------------------------------------------------
+FIXED — HIGH
+--------------------------------------------------------
+
+✅ SC-16 Comments added by another user could be overwritten
+   Where: saveF100Comment(), saveKd2Comment().
+   Problem: The new comment was appended to this page's in-memory copy of the
+            comment list and the whole list written back, so a comment another
+            user added since the last refresh was lost.
+   Fix: Read the row's current comments from the database just before
+        appending. A very small window remains if two users save in the same
+        instant; closing it fully needs a database-side append (RPC).
+
+--------------------------------------------------------
+FIXED — MEDIUM
+--------------------------------------------------------
+
+✅ SC-14 Editing an issue reset its resolved date; Closed wiped it
+   Where: saveIssue().
+   Problem: resolved_at was set to "now" on every save of a resolved issue
+            (even a typo fix) and cleared for Closed issues — Status Report
+            periods and "resolved in X days" were wrong.
+   Fix: Stamp resolved_at only when an issue first becomes Resolved or
+        Closed, keep it on later edits, clear it only if reopened. The Status
+        Report now counts Closed issues by their resolved date too.
+
+✅ SC-15 Issue search failed on commas, dots or brackets
+   Where: loadIssues() and buildIssueReportRows() — .or(title.ilike…).
+   Problem: Text such as "weld, crack" or "(M2)" broke the PostgREST filter
+            and showed "Failed to load issues".
+   Fix: New _orIlikeValue() quotes the value and escapes % and _.
+
+✅ SC-17 "All modules" issues report left out KD1 and ignored module access
+   Where: buildIssueReportRows(), _issueReportModuleLabel().
+   Problem: Hard-coded to kd2 + f100kd2.
+   Fix: Uses the modules the user may open (new getAllowedModules() on the
+        module runtime in kd2.js); the button label lists them.
+
+✅ SC-18 Newest issues hidden behind "Load more"
+   Where: loadIssues().
+   Problem: Listed oldest first, 50 at a time.
+   Fix: Newest first. Reports keep their chronological order.
+
+--------------------------------------------------------
+FIXED — LOW / LATENT
+--------------------------------------------------------
+
+✅ SC-19 Report Reporter list kept the previous module's names
+   Where: _populateReporterSelect().
+   Fix: Rebuilt each time the report dialog opens.
+
+✅ SC-20 F100 queries stop at 1,000 rows
+   Where: populateF100BattalionFilter() (units + plans), loadF100Data() plans.
+   Fix: Paged with new _selectAllPages() and a stable order by id. Latent
+        today (F100 data is small).
+
+✅ SC-21 X-ray data fetch sent every id in one request
+   Where: loadData() KD2 branch, kd2_progress .in('id', …).
+   Fix: Fetched in chunks of 150 ids so a large "all battalions" view can't
+        exceed the URL length limit.
+
+✅ SC-22 Issues summary cards stop counting at 1,000 issues
+   Where: loadIssuesOverview().
+   Fix: Paged with _selectAllPages().
+
+--------------------------------------------------------
+OPEN — STRUCTURAL (LOW)
+--------------------------------------------------------
+
+❌ SC-23 app.js is ~19,700 lines and holds almost every feature
+   The feature folders under scripts/features/ mostly only return HTML.
+   Suggest moving one feature at a time (Issues is a good first candidate)
+   into its folder during the app-v2 work.
+
+❌ SC-24 Role checks and showToast are defined twice
+   Where: core/guards.js + core/notifications.js and again at the top of
+          app.js (isPlanner, isMasterAdmin, canEditPlan…, showToast).
+   Problem: The app.js copies win at runtime, so a change made only in core/
+            has no effect. Keep one copy (core/) and expose it globally.
+
+❌ SC-25 Issues Status Report Excel layout written twice
+   Where: exportIssueReportExcel() status_report branch and
+          _addIssueStatusReportSheet() (Executive Report).
+   Suggest one shared sheet builder.
+
+--------------------------------------------------------
+CHECKED — NO ISSUES FOUND
+--------------------------------------------------------
+
+- Syntax: every JS file in app/ passes node --check.
+- No duplicate top-level functions or globals across app.js, kd2.js,
+  gantt-module.js, custom-select.js and plan-versions.js.
+- Every getElementById / #id selector and inline handler resolves (the
+  xrayEdit* ids are built by the dateInput() helper, as before).
+- Toasts use textContent; Gantt/timeline tooltips and the issue viewer
+  escape user text.
+- Realtime channels are removed before re-subscribing; poll timers are
+  cleared before restart.
+
+========================================================
