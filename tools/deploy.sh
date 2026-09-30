@@ -58,30 +58,27 @@ git -C "$WT" rm -rq --ignore-unmatch .
 cp -R "$SRC"/. "$WT/"
 git -C "$WT" add -A
 
-# version.json is regenerated every deploy, so leave it out of "anything changed?"
-if git -C "$WT" diff --cached --quiet -- . ':(exclude)version.json' && [ "$BASE" = "$BRANCH" ]; then
+# version.json and build-info.js are regenerated every deploy, so leave them
+# out of "anything changed?"
+if git -C "$WT" diff --cached --quiet -- . ':(exclude)version.json' ':(exclude)scripts/core/build-info.js' && [ "$BASE" = "$BRANCH" ]; then
     echo "$REMOTE/$BRANCH already matches $SRC/ - nothing to deploy."
     exit 0
 fi
 
-# Release manifest for the in-app "Update available" notice
-# (scripts/features/update-notice): which version is live, when, what's new,
-# and the files a browser should re-download before reloading onto it.
-VERSION_ID="$(git rev-parse --short HEAD)-$(date -u +%Y%m%d%H%M%S)"
-( cd "$SRC" && find . -type f \( -name '*.js' -o -name '*.css' -o -name '*.html' \) | sed 's|^\./||' | sort ) \
-    | VERSION_ID="$VERSION_ID" NOTES="$(printf '%s' "$MSG" | head -n 1)" node -e '
-        const files = require("fs").readFileSync(0, "utf8").split("\n").filter(Boolean);
-        process.stdout.write(JSON.stringify({
-            version: process.env.VERSION_ID,
-            deployedAt: new Date().toISOString(),
-            notes: process.env.NOTES,
-            files,
-        }, null, 1));' > "$WT/version.json"
-git -C "$WT" add version.json
+# Version stamp for the navbar version chip (scripts/features/update-notice):
+#   scripts/core/build-info.js - the version this code IS (loaded with the app)
+#   version.json               - the latest deployed version (fetched live),
+#                                plus the files to re-download before reloading
+# The label is the deploy number on the target branch, e.g. "v134".
+VERSION_NUM=$(( $(git -C "$WT" rev-list --count HEAD) + 1 ))
+VERSION_LABEL="v$VERSION_NUM"
+VERSION_ID="$VERSION_LABEL-$(git rev-parse --short HEAD)"
+node "$ROOT/tools/stamp_version.cjs" "$SRC" "$WT" "$VERSION_LABEL" "$VERSION_ID" "$MSG"
+git -C "$WT" add version.json scripts/core/build-info.js
 
 if ! git -C "$WT" diff --cached --quiet; then
     git -C "$WT" diff --cached --stat | tail -1
     git -C "$WT" commit -q -m "$MSG"
 fi
 git -C "$WT" push -q "$REMOTE" HEAD:"refs/heads/$BRANCH"
-echo "Deployed $SRC/ as $(git -C "$WT" rev-parse --short HEAD) to $REMOTE/$BRANCH."
+echo "Deployed $SRC/ as $VERSION_LABEL ($(git -C "$WT" rev-parse --short HEAD)) to $REMOTE/$BRANCH."
