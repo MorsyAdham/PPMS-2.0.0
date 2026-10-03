@@ -23,7 +23,8 @@ PPMS web app that tracks the plans against actual production.
 ├── docs/
 │   ├── planning/        F200 / KD2 planning documents
 │   ├── f100/            F100 implementation plan and checklist
-│   ├── engineering/     Code structure guide for app/
+│   ├── engineering/     Code structure guide for app/, domain/security/Vercel plan, performance backlog
+│   ├── communications/  Emails and announcements to users (e.g. the PPMS launch email)
 │   └── bug-log.txt      Running log of reported issues and fixes
 ├── data/workbooks/      Reference Excel plans
 └── tools/

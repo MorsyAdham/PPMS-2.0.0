@@ -1,0 +1,327 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Executive Report Insights Preview</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=Rajdhani:wght@600;700&family=DM+Mono:wght@400;500&display=swap">
+<style>
+/* Layout: a review sheet — the PPMS dialog on a desk-like ground, then the printed A4 page it produces */
+:root {
+  --ground: #eef1f6;
+  --ink: #142033;
+  --ink-soft: #55627a;
+  --line: #d6dce7;
+  --accent: #2563eb;
+  --surface: #ffffff;
+  --surface-2: #f5f7fb;
+  --chip: #e6edfb;
+  --ok: #16a34a; --warn: #d97706; --bad: #dc2626;
+  --ff-display: 'Rajdhani', 'Segoe UI', sans-serif;
+  --ff-body: 'Inter', 'Segoe UI', system-ui, sans-serif;
+  --ff-mono: 'DM Mono', ui-monospace, Consolas, monospace;
+}
+@media (prefers-color-scheme: dark) { :root:not([data-theme="light"]) {
+  --ground: #0e1320; --ink: #e2e8f4; --ink-soft: #8b98b4; --line: #2a3350; --accent: #5b8def;
+  --surface: #161b27; --surface-2: #1c2233; --chip: #1e2a48; color-scheme: dark } }
+:root[data-theme="dark"] {
+  --ground: #0e1320; --ink: #e2e8f4; --ink-soft: #8b98b4; --line: #2a3350; --accent: #5b8def;
+  --surface: #161b27; --surface-2: #1c2233; --chip: #1e2a48; color-scheme: dark }
+
+/* The printed page keeps paper colours in every theme */
+.paper {
+  --p-bg: #ffffff; --p-ink: #0f172a; --p-soft: #475569; --p-dim: #64748b; --p-line: #cbd5e1;
+  --p-navy: #1e3a8a; --p-blue: #2563eb; --p-tint: #eff6ff;
+  --p-ok: #15803d; --p-ok-bg: #dcfce7; --p-warn: #b45309; --p-warn-bg: #fef3c7; --p-bad: #b91c1c; --p-bad-bg: #fee2e2;
+}
+
+* { box-sizing: border-box; }
+body { margin: 0; background: var(--ground); color: var(--ink); font: 14px/1.5 var(--ff-body); }
+.wrap { max-width: 1120px; margin: 0 auto; padding-inline: 16px; padding-block: 28px 56px; display: grid; gap: 36px; }
+.intro h1 { font: 700 2rem/1.1 var(--ff-display); letter-spacing: .02em; margin: 0 0 6px; text-wrap: balance; }
+.intro p { margin: 0; color: var(--ink-soft); max-width: 70ch; }
+.note { display: inline-flex; gap: 8px; align-items: center; margin-top: 12px; padding: 6px 10px; border-radius: 8px; background: var(--chip); color: var(--ink); font-size: .8rem; }
+.step-label { font: 600 .72rem/1 var(--ff-body); letter-spacing: .12em; text-transform: uppercase; color: var(--ink-soft); margin: 0 0 12px; }
+
+/* ── 1. Menu mock ─────────────────────────────── */
+.dialog { max-width: 640px; background: var(--surface); border: 1px solid var(--line); border-radius: 16px; box-shadow: 0 18px 50px rgba(15, 23, 42, .18); overflow: hidden; }
+.dlg-head { display: flex; gap: 12px; align-items: center; padding: 18px 20px 14px; border-bottom: 1px solid var(--line); }
+.dlg-icon { width: 40px; height: 40px; border-radius: 11px; display: grid; place-items: center; background: var(--chip); color: var(--accent); flex: none; }
+.dlg-icon svg { width: 22px; height: 22px; }
+.dlg-head h2 { margin: 0; font: 700 1.25rem/1.1 var(--ff-display); letter-spacing: .03em; }
+.dlg-head p { margin: 2px 0 0; color: var(--ink-soft); font-size: .82rem; }
+.dlg-x { margin-left: auto; width: 30px; height: 30px; border: 0; border-radius: 8px; background: transparent; color: var(--ink-soft); font-size: 18px; }
+.dlg-body { padding: 16px 20px 6px; display: grid; gap: 16px; }
+.scope { display: flex; flex-wrap: wrap; gap: 6px; }
+.scope span { padding: 3px 9px; border-radius: 999px; background: var(--surface-2); border: 1px solid var(--line); font-size: .74rem; color: var(--ink-soft); }
+.scope b { color: var(--ink); font-weight: 600; }
+.snap { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 8px; }
+.snap div { padding: 10px 12px; border-radius: 10px; background: var(--surface-2); border: 1px solid var(--line); min-width: 0; }
+.snap small { display: block; font-size: .68rem; letter-spacing: .08em; text-transform: uppercase; color: var(--ink-soft); }
+.snap strong { display: block; font: 700 1.25rem/1.2 var(--ff-display); }
+.snap em { font-style: normal; font-size: .74rem; font-weight: 600; }
+.bad-t { color: var(--bad); } .ok-t { color: var(--ok); } .warn-t { color: var(--warn); }
+.inside h3, .formats h3 { margin: 0 0 8px; font-size: .74rem; letter-spacing: .1em; text-transform: uppercase; color: var(--ink-soft); font-weight: 600; }
+.inside ol { list-style: none; margin: 0; padding: 0; display: grid; gap: 6px; }
+.inside li { display: grid; grid-template-columns: 26px 1fr auto; gap: 10px; align-items: start; padding: 8px 10px; border-radius: 10px; border: 1px solid var(--line); }
+.inside li.new { border-color: var(--accent); background: var(--chip); }
+.num { width: 26px; height: 26px; border-radius: 50%; display: grid; place-items: center; font: 600 .8rem/1 var(--ff-mono); background: var(--surface-2); border: 1px solid var(--line); }
+.new .num { background: var(--accent); border-color: var(--accent); color: #fff; }
+.inside strong { display: block; font-size: .86rem; }
+.inside span.d { display: block; font-size: .76rem; color: var(--ink-soft); }
+.badge { font-size: .64rem; font-weight: 700; letter-spacing: .06em; padding: 2px 7px; border-radius: 999px; background: var(--accent); color: #fff; align-self: center; }
+.toggle { display: flex; align-items: center; gap: 10px; font-size: .84rem; }
+.sw { width: 34px; height: 20px; border-radius: 999px; background: var(--accent); position: relative; flex: none; }
+.sw::after { content: ''; position: absolute; top: 3px; right: 3px; width: 14px; height: 14px; border-radius: 50%; background: #fff; }
+.fmt { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 8px; }
+.fmt button { text-align: left; padding: 12px; border-radius: 12px; border: 1px solid var(--line); background: var(--surface); color: var(--ink); font: inherit; cursor: pointer; display: grid; gap: 4px; min-width: 0; }
+.fmt button:hover, .fmt button:focus-visible { border-color: var(--accent); outline: none; box-shadow: 0 0 0 3px var(--chip); }
+.fmt .t { display: flex; align-items: center; gap: 8px; font-weight: 700; }
+.fmt .t i { width: 26px; height: 26px; border-radius: 7px; display: grid; place-items: center; font-style: normal; font: 700 .62rem/1 var(--ff-mono); color: #fff; }
+.fmt .pdf i { background: #dc2626; } .fmt .doc i { background: #2563eb; } .fmt .xls i { background: #16a34a; }
+.fmt small { color: var(--ink-soft); font-size: .74rem; }
+.fmt .go { color: var(--accent); font-size: .76rem; font-weight: 600; }
+.dlg-foot { display: flex; justify-content: space-between; align-items: center; gap: 10px; padding: 12px 20px 16px; color: var(--ink-soft); font-size: .76rem; }
+.dlg-foot button { padding: 7px 14px; border-radius: 8px; border: 1px solid var(--line); background: transparent; color: var(--ink); font: inherit; }
+
+/* ── 2. Printed insights page (A4 landscape) ───── */
+.sheet-scroll { overflow-x: auto; }
+.paper { width: 100%; max-width: 1120px; aspect-ratio: 297 / 210; min-height: 0; background: var(--p-bg); color: var(--p-ink); border-radius: 4px;
+  box-shadow: 0 1px 2px rgba(0,0,0,.08), 0 16px 40px rgba(15, 23, 42, .16); padding: 2.4% 2.8%; display: grid; grid-template-rows: auto auto auto 1fr auto; gap: 1.4%;
+  font-size: clamp(8px, .95vw, 11px); }
+.p-head { display: flex; justify-content: space-between; align-items: end; border-bottom: 1.5px solid var(--p-navy); padding-bottom: .6em; }
+.p-head h2 { margin: 0; font: 700 2.1em/1 var(--ff-display); color: var(--p-navy); letter-spacing: .03em; }
+.p-head .k { font-size: .82em; letter-spacing: .1em; text-transform: uppercase; color: var(--p-blue); font-weight: 700; }
+.p-head .m { font-size: .86em; color: var(--p-dim); text-align: right; }
+.verdict { display: flex; gap: .9em; align-items: center; padding: .8em 1em; border: 1px solid #fca5a5; background: #fff5f5; border-left: 4px solid var(--p-bad); border-radius: 4px; }
+.verdict b { color: var(--p-bad); }
+.verdict p { margin: 0; font-size: 1.12em; }
+.kpis { display: grid; grid-template-columns: repeat(6, minmax(0, 1fr)); gap: .8em; }
+.kpi { border: 1px solid var(--p-line); border-radius: 4px; padding: .6em .8em; border-top: 3px solid var(--p-blue); }
+.kpi.b { border-top-color: var(--p-bad); } .kpi.w { border-top-color: #d97706; } .kpi.g { border-top-color: #16a34a; }
+.kpi small { display: block; font-size: .78em; letter-spacing: .06em; text-transform: uppercase; color: var(--p-dim); font-weight: 600; }
+.kpi strong { display: block; font: 700 2em/1.15 var(--ff-display); }
+.kpi span { font-size: .85em; color: var(--p-soft); }
+.grid3 { display: grid; grid-template-columns: 1.15fr 1.15fr 1fr; gap: 1.2em; min-height: 0; }
+.col { display: grid; gap: 1em; align-content: start; min-width: 0; }
+.blk h4 { margin: 0 0 .45em; font-size: .92em; letter-spacing: .08em; text-transform: uppercase; color: var(--p-navy); }
+.blk h4 small { text-transform: none; letter-spacing: 0; color: var(--p-dim); font-weight: 500; }
+table.t { width: 100%; border-collapse: collapse; font-size: .92em; font-variant-numeric: tabular-nums; }
+.t th { text-align: left; font-weight: 600; color: var(--p-dim); border-bottom: 1px solid var(--p-line); padding: .3em .4em; font-size: .9em; }
+.t td { padding: .32em .4em; border-bottom: 1px solid #eef2f7; }
+.t td.r, .t th.r { text-align: right; }
+.pill { display: inline-block; padding: .05em .55em; border-radius: 999px; font-weight: 700; font-size: .9em; }
+.pill.b { background: var(--p-bad-bg); color: var(--p-bad); } .pill.w { background: var(--p-warn-bg); color: var(--p-warn); } .pill.g { background: var(--p-ok-bg); color: var(--p-ok); }
+.bar { height: .55em; background: #e2e8f0; border-radius: 2px; position: relative; min-width: 4em; }
+.bar i { position: absolute; inset: 0 auto 0 0; background: var(--p-blue); border-radius: 2px; }
+.bar u { position: absolute; top: -.2em; bottom: -.2em; width: 2px; background: var(--p-ink); }
+.weeks { display: grid; grid-template-columns: repeat(8, 1fr); gap: .35em; align-items: end; height: 5.6em; padding-top: .3em; }
+.wk { display: grid; grid-template-columns: 1fr 1fr; gap: 1px; align-items: end; height: 100%; }
+.wk i { background: #bfdbfe; } .wk b { background: #22c55e; }
+.wk-l { display: grid; grid-template-columns: repeat(8, 1fr); gap: .35em; font-size: .75em; color: var(--p-dim); text-align: center; }
+.legend { display: flex; gap: 1em; font-size: .8em; color: var(--p-soft); margin-top: .3em; }
+.legend span::before { content: ''; display: inline-block; width: .8em; height: .8em; margin-right: .35em; vertical-align: -.1em; background: var(--c); }
+.issues { display: grid; grid-template-columns: repeat(3, 1fr); gap: .5em; }
+.issues div { background: var(--p-tint); border-radius: 4px; padding: .45em .6em; }
+.issues strong { display: block; font: 700 1.6em/1.1 var(--ff-display); }
+.issues small { color: var(--p-soft); font-size: .8em; }
+.obs { margin: 0; padding-left: 1.2em; display: grid; gap: .35em; }
+.obs li { line-height: 1.4; }
+.obs b { color: var(--p-navy); }
+.p-foot { display: flex; justify-content: space-between; font-size: .78em; color: var(--p-dim); border-top: 1px solid var(--p-line); padding-top: .5em; }
+.ex { font-size: .78em; color: var(--p-warn); font-style: italic; }
+
+/* ── 3. Decision notes ─────────────────────────── */
+.decide { display: grid; grid-template-columns: repeat(auto-fit, minmax(260px, 1fr)); gap: 12px; }
+.decide div { background: var(--surface); border: 1px solid var(--line); border-radius: 12px; padding: 14px 16px; min-width: 0; }
+.decide h3 { margin: 0 0 6px; font-size: .95rem; }
+.decide ul { margin: 0; padding-left: 18px; color: var(--ink-soft); font-size: .85rem; display: grid; gap: 4px; }
+
+@media (max-width: 720px) {
+  .snap, .fmt { grid-template-columns: 1fr; }
+  .sheet-scroll .paper { min-width: 780px; }
+}
+@media (prefers-reduced-motion: reduce) { * { transition: none !important; } }
+</style>
+
+<div class="wrap">
+  <header class="intro">
+    <h1>Executive Report — Insights preview</h1>
+    <p>A preview of two changes before anything is built: a redesigned Executive Report menu, and a new <b>Production Insights</b> page that sits between the station report (progress) and the production issues report. Nothing that is in the report today is removed or changed.</p>
+    <span class="note">Example figures: delivery, units, stations and issues are from your plan on 2–3 Oct 2026. Panels marked "illustrative" use sample numbers.</span>
+  </header>
+
+  <!-- 1. Menu -->
+  <section aria-labelledby="m1">
+    <p class="step-label" id="m1">1 · The new Executive Report menu</p>
+    <div class="dialog" role="img" aria-label="Redesigned Executive Report dialog">
+      <div class="dlg-head">
+        <span class="dlg-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M14 3H6a2 2 0 00-2 2v14a2 2 0 002 2h12a2 2 0 002-2V9z"/><path d="M14 3v6h6M8 17v-3M12 17v-6M16 17v-4"/></svg></span>
+        <div><h2>Executive Report</h2><p>One document for management — progress, insights and issues</p></div>
+        <button class="dlg-x" tabindex="-1" aria-hidden="true">×</button>
+      </div>
+      <div class="dlg-body">
+        <div class="scope">
+          <span>Module <b>F200 – KD2</b></span><span>Plan <b>RE: KD2 Battalion 1</b></span><span>Filters <b>All time · All units</b></span>
+        </div>
+        <div class="snap">
+          <div><small>Forecast delivery</small><strong>19 Dec 2026</strong><em class="bad-t">+27 wd vs 17 Nov</em></div>
+          <div><small>Completion</small><strong>43%</strong><em class="warn-t">517 of 1,202 blocks</em></div>
+          <div><small>Open issues</small><strong>13</strong><em class="bad-t">9 critical / high</em></div>
+        </div>
+        <div class="inside">
+          <h3>What's inside</h3>
+          <ol>
+            <li><span class="num">1</span><span><strong>Cover summary</strong><span class="d">Progress, status split and delivery forecast</span></span><span></span></li>
+            <li><span class="num">2</span><span><strong>Station report</strong><span class="d">K9 Hull · Turret · Assembly, K10 and K11 Structure · Assembly — one page per table</span></span><span></span></li>
+            <li class="new"><span class="num">3</span><span><strong>Production insights</strong><span class="d">Key figures, units behind, where to act, pace and issue trends</span></span><span class="badge">NEW</span></li>
+            <li><span class="num">4</span><span><strong>Production issues status report</strong><span class="d">All time, every status and category</span></span><span></span></li>
+          </ol>
+        </div>
+        <label class="toggle"><span class="sw" aria-hidden="true"></span> Include production insights</label>
+        <div class="formats">
+          <h3>Choose a format</h3>
+          <div class="fmt">
+            <button class="pdf"><span class="t"><i>PDF</i>PDF</span><small>Best for printing and email</small><span class="go">Preview →</span></button>
+            <button class="doc"><span class="t"><i>DOC</i>Word</span><small>Editable document</small><span class="go">Preview →</span></button>
+            <button class="xls"><span class="t"><i>XLS</i>Excel</span><small>Tables, one sheet per section</small><span class="go">Preview →</span></button>
+          </div>
+        </div>
+      </div>
+      <div class="dlg-foot"><span>You'll see a preview before anything downloads.</span><button tabindex="-1">Close</button></div>
+    </div>
+  </section>
+
+  <!-- 2. Insights page -->
+  <section aria-labelledby="m2">
+    <p class="step-label" id="m2">2 · The new Production Insights page (as printed, A4 landscape)</p>
+    <div class="sheet-scroll">
+      <article class="paper" aria-label="Production Insights page">
+        <div class="p-head">
+          <div><div class="k">Section 3</div><h2>Production Insights</h2></div>
+          <div class="m">F200 – KD2 · RE: KD2 Battalion 1 · All time<br>Data as of 2 Oct 2026</div>
+        </div>
+
+        <div class="verdict">
+          <p>Delivery is forecast for <b>19 Dec 2026</b> — <b>27 working days</b> after the planned 17 Nov 2026. <b>25 of 25 units</b> are forecast to finish late; the biggest cause is <b>MACHINING 1ST/2ND on K9</b>.</p>
+        </div>
+
+        <div class="kpis">
+          <div class="kpi w"><small>Completion</small><strong>43%</strong><span>517 of 1,202 blocks</span></div>
+          <div class="kpi w"><small>On-time rate</small><strong>40%</strong><span>208 of 517 done on time</span></div>
+          <div class="kpi b"><small>Overdue</small><strong>286</strong><span>blocks past planned end</span></div>
+          <div class="kpi"><small>In progress</small><strong>26</strong><span>blocks started</span></div>
+          <div class="kpi b"><small>Units late</small><strong>25 / 25</strong><span>worst +43 wd (K9 M11)</span></div>
+          <div class="kpi b"><small>Open issues</small><strong>13</strong><span>9 critical / high</span></div>
+        </div>
+
+        <div class="grid3">
+          <div class="col">
+            <div class="blk">
+              <h4>Units furthest behind <small>forecast finish vs plan</small></h4>
+              <table class="t">
+                <thead><tr><th>Unit</th><th>Planned</th><th>Forecast</th><th class="r">Delay</th></tr></thead>
+                <tbody>
+                  <tr><td>K9 BTL-01 M11</td><td>10 Oct</td><td>29 Nov</td><td class="r"><span class="pill b">+43 wd</span></td></tr>
+                  <tr><td>K9 BTL-01 M9</td><td>17 Oct</td><td>28 Nov</td><td class="r"><span class="pill b">+36 wd</span></td></tr>
+                  <tr><td>K9 BTL-01 M14</td><td>31 Oct</td><td>10 Dec</td><td class="r"><span class="pill b">+35 wd</span></td></tr>
+                  <tr><td>K9 BTL-01 M13</td><td>28 Oct</td><td>07 Dec</td><td class="r"><span class="pill b">+34 wd</span></td></tr>
+                  <tr><td>K9 BTL-01 M15</td><td>02 Nov</td><td>10 Dec</td><td class="r"><span class="pill b">+33 wd</span></td></tr>
+                </tbody>
+              </table>
+            </div>
+            <div class="blk">
+              <h4>Where to act first <small>delay added to unit finishes now</small></h4>
+              <table class="t">
+                <thead><tr><th>Station</th><th>Veh.</th><th class="r">Units</th><th class="r">Open</th><th class="r">Adds</th></tr></thead>
+                <tbody>
+                  <tr><td>MACHINING 1ST/2ND</td><td>K9</td><td class="r">9</td><td class="r">3</td><td class="r"><span class="pill b">+22</span></td></tr>
+                  <tr><td>LOWER HULL</td><td>K11</td><td class="r">2</td><td class="r">—</td><td class="r"><span class="pill b">+20</span></td></tr>
+                  <tr><td>MARRIAGE 1ST</td><td>K9</td><td class="r">8</td><td class="r">—</td><td class="r"><span class="pill w">+18</span></td></tr>
+                  <tr><td>2ND QUALIFYING</td><td>K10</td><td class="r">2</td><td class="r">—</td><td class="r"><span class="pill w">+18</span></td></tr>
+                  <tr><td>STOWAGE 1ST</td><td>K9</td><td class="r">5</td><td class="r">2</td><td class="r"><span class="pill w">+17</span></td></tr>
+                </tbody>
+              </table>
+            </div>
+          </div>
+
+          <div class="col">
+            <div class="blk">
+              <h4>Progress by vehicle <small>done vs expected by today</small> <span class="ex">illustrative</span></h4>
+              <table class="t">
+                <thead><tr><th>Vehicle</th><th class="r">Units</th><th>Progress</th><th class="r">Done</th><th class="r">Finish</th></tr></thead>
+                <tbody>
+                  <tr><td>K9</td><td class="r">18</td><td><div class="bar"><i style="width:41%"></i><u style="left:62%"></u></div></td><td class="r">41%</td><td class="r"><span class="pill b">+31 wd</span></td></tr>
+                  <tr><td>K10</td><td class="r">4</td><td><div class="bar"><i style="width:52%"></i><u style="left:60%"></u></div></td><td class="r">52%</td><td class="r"><span class="pill w">+19 wd</span></td></tr>
+                  <tr><td>K11</td><td class="r">3</td><td><div class="bar"><i style="width:46%"></i><u style="left:58%"></u></div></td><td class="r">46%</td><td class="r"><span class="pill w">+22 wd</span></td></tr>
+                </tbody>
+              </table>
+              <div class="legend"><span style="--c:#2563eb">done</span><span style="--c:#0f172a">expected by today</span></div>
+            </div>
+            <div class="blk">
+              <h4>Weekly pace <small>last 8 weeks</small> <span class="ex">illustrative</span></h4>
+              <div class="weeks" aria-hidden="true">
+                <div class="wk"><i style="height:70%"></i><b style="height:55%"></b></div>
+                <div class="wk"><i style="height:82%"></i><b style="height:60%"></b></div>
+                <div class="wk"><i style="height:64%"></i><b style="height:58%"></b></div>
+                <div class="wk"><i style="height:90%"></i><b style="height:66%"></b></div>
+                <div class="wk"><i style="height:76%"></i><b style="height:62%"></b></div>
+                <div class="wk"><i style="height:88%"></i><b style="height:70%"></b></div>
+                <div class="wk"><i style="height:80%"></i><b style="height:64%"></b></div>
+                <div class="wk"><i style="height:84%"></i><b style="height:61%"></b></div>
+              </div>
+              <div class="wk-l"><span>FW33</span><span>FW34</span><span>FW35</span><span>FW36</span><span>FW37</span><span>FW38</span><span>FW39</span><span>FW40</span></div>
+              <div class="legend"><span style="--c:#bfdbfe">planned</span><span style="--c:#22c55e">completed</span></div>
+              <p style="margin:.4em 0 0;font-size:.9em">Last 4 weeks: <b>36 blocks/week</b> completed vs <b>44 planned</b> (82%) · overdue backlog <b>+12</b>.</p>
+            </div>
+          </div>
+
+          <div class="col">
+            <div class="blk">
+              <h4>Production issues</h4>
+              <div class="issues">
+                <div><strong>10</strong><small>open</small></div>
+                <div><strong>3</strong><small>in progress</small></div>
+                <div><strong>16</strong><small>resolved</small></div>
+              </div>
+              <table class="t" style="margin-top:.5em">
+                <tbody>
+                  <tr><td>Critical / high still open</td><td class="r"><span class="pill b">9</span></td></tr>
+                  <tr><td>Opened vs resolved (12 weeks)</td><td class="r">23 vs 14</td></tr>
+                  <tr><td>Average time to resolve</td><td class="r">19.5 days</td></tr>
+                  <tr><td>Most open category</td><td class="r">Part Machining (5)</td></tr>
+                </tbody>
+              </table>
+            </div>
+            <div class="blk">
+              <h4>Key observations</h4>
+              <ol class="obs">
+                <li>Delivery is forecast <b>27 working days late</b>; the delay sits in the K9 units' remaining route, not in early stations that are already finished.</li>
+                <li><b>K9 Machining and Welding</b> stations add the most delay — MACHINING 1ST/2ND, MARRIAGE 1ST and STOWAGE 1ST affect 22 unit finishes.</li>
+                <li>Issues are <b>opening faster than they are resolved</b> (23 vs 14 in 12 weeks), with 9 critical / high still open.</li>
+                <li><b>Part Machining</b> has the most open issues (5) — the same area as the top delay cause.</li>
+              </ol>
+            </div>
+          </div>
+        </div>
+
+        <div class="p-foot"><span>Figures follow the process-order forecast used across PPMS · working days exclude Fridays</span><span>Page 9 of 14</span></div>
+      </article>
+    </div>
+  </section>
+
+  <!-- 3. Points to decide -->
+  <section aria-labelledby="m3">
+    <p class="step-label" id="m3">3 · Points to agree before building</p>
+    <div class="decide">
+      <div><h3>Placement</h3><ul><li>One insights page after the station tables and before the issues report.</li><li>Nothing existing is moved or changed.</li></ul></div>
+      <div><h3>Formats</h3><ul><li>PDF and Word: this page.</li><li>Excel: a new "Insights" sheet in the same position.</li></ul></div>
+      <div><h3>Data</h3><ul><li>Every figure is computed from the same data and forecast as the dashboard, at the moment the report is generated.</li><li>Observations are written automatically from those figures.</li></ul></div>
+      <div><h3>Options</h3><ul><li>"Include production insights" switch, on by default.</li><li>Tell me what to add or drop from the page.</li></ul></div>
+    </div>
+  </section>
+</div>
+
+</html>
