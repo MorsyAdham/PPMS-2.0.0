@@ -11,6 +11,7 @@ Speed and memory improvements that are planned but not built yet. They are kept 
 | v137 | Off-screen views redraw only when scrolled into view. The Plan Table is drawn in batches of 150 rows. Edit controls on Gantt blocks are built on hover. |
 | v138 | Co-editors' changes are applied incrementally: only the changed blocks are fetched. |
 | v140 | Background tabs pause redraws and polling, then catch up once when shown. Live updates are filtered to the open plan version. Export libraries (jsPDF, autoTable, SheetJS, ExcelJS) load on first use. Live updates redraw only the Gantt rows that changed. |
+| v147 | The hidden KD2 workspace timeline (~5,000 elements) is no longer drawn on every load and live update. Gantt bars no longer carry a CSS filter at rest (it made every bar its own layer). Your own drags and resizes redraw only the changed Gantt rows. After an edit, the Plan Table and VPX redraw only when on screen. Gantt rows scrolled out of view skip layout and painting (`content-visibility`). Comment notifications receive only the open plan version's rows. Hidden tabs send the "online" signal every 60 s instead of 12 s. Full Gantt redraw with two battalions: 2.3 s → about 0.1 s. |
 
 Measured on the real plan (1,202 blocks, 139 Gantt rows) after v140:
 
@@ -21,7 +22,7 @@ Measured on the real plan (1,202 blocks, 139 Gantt rows) after v140:
 
 Items are listed in suggested order.
 
-### 2.1 Filter the comment-notification channel by plan version
+### 2.1 Filter the comment-notification channel by plan version — done in v147
 
 - **Today:** `startCommentNotifSync` listens to every `kd2_plan` and `f100_plans` update, in every plan version. So every tab still receives every block edit, even though the main live-update channel is now version-filtered. This cancels part of the v140 saving.
 - **Change:**
@@ -30,7 +31,7 @@ Items are listed in suggested order.
   - Skip the localStorage read when the `comments` value has not changed.
 - **Effort:** small. **Risk:** low. Check that comment notifications from other versions are not expected first.
 
-### 2.2 Pause the presence heartbeat in hidden tabs
+### 2.2 Pause the presence heartbeat in hidden tabs — done in v147
 
 - **Today:** presence sends a heartbeat every 12 s, even from a hidden tab.
 - **Change:** slow it to about 60 s while the tab is hidden, and send one immediately when the tab is shown again. Users who are away would still show as online, as long as the pruning window allows for the slower beat.
@@ -42,7 +43,12 @@ Items are listed in suggested order.
 - **Change:** if three live redraws in a row take longer than about 1.5 s, stop redrawing automatically. Show a "New changes — click to refresh" chip instead, and resume normal behaviour after the user refreshes.
 - **Effort:** small to medium. **Risk:** low.
 
-### 2.4 Draw only the visible part of the Gantt (virtualisation)
+### 2.4 Draw only the visible part of the Gantt (virtualisation) — mostly solved in v147
+
+Measured on 5 Oct 2026 with two battalions (2,160 blocks, 139 rows, 366 days): a full Gantt redraw takes about 1.25 s, of which about 0.9 s is layout of the bars. Only 12% of the timeline is on screen at once (1,644 of 13,176 px).
+
+v147 lets the browser skip rows that are scrolled out of view (`content-visibility: auto`), which brought a full redraw to about 0.1 s without changing how the Gantt is built. Full virtualisation is only worth doing if more battalions push it back above about 0.5 s.
+
 
 - **Today:** every row and the full date range are drawn, even though only part is on screen. This is fine at 139 rows, but grows with every battalion added.
 - **Change:**
