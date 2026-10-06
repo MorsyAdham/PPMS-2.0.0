@@ -26,6 +26,7 @@ AREA_BY_FILE = {
     'core/i18n.js': 'Header & menus',
     'tour/': 'Help & tour',
     'charts/': 'Analytics',
+    'admin/': 'Administration',
 }
 # Texts passed to _t() through variables / maps
 DYNAMIC = {
@@ -101,7 +102,7 @@ def main():
                 src = open(os.path.join(dirpath, f), encoding='utf-8').read()
                 corpus.append(src.replace("\\'", "'").replace('\\"', '"'))
     corpus = re.sub(r'\s+', ' ', html.unescape(' '.join(corpus)))
-    for name in ('i18n_stage2_draft.py', 'i18n_stage3_draft.py'):
+    for name in ('i18n_stage2_draft.py', 'i18n_stage3_draft.py', 'i18n_stage4_draft.py'):
         stage = runpy.run_path(os.path.join(os.path.dirname(__file__), name))
         for t in stage['TR']:
             words = [w.strip() for w in re.split(r'\{\w+\}|<[^>]+>', html.unescape(t)) if len(w.strip()) >= 2]
