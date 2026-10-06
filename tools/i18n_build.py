@@ -1,18 +1,20 @@
 """(Re)build app/scripts/i18n/strings.js from the extracted texts.
 
 Keeps every existing translation in strings.js, adds new texts with their
-area, fills Korean / Arabic from a draft file when given, and drops texts
+area, fills Korean / Arabic from draft files when given, and drops texts
 no longer used in the code (listed so nothing disappears silently).
 
 usage:
   python tools/i18n_extract.py > extracted.json
-  python tools/i18n_build.py extracted.json [tools/i18n_stage1_draft.py]
+  python tools/i18n_build.py extracted.json [tools/i18n_stage1_draft.py tools/i18n_stage2_draft.py]
 """
 import io, json, os, runpy, sys
 
 HERE = os.path.dirname(__file__)
 STRINGS = os.path.join(HERE, '..', 'app', 'scripts', 'i18n', 'strings.js')
-AREA_ORDER = ['Header & menus', 'Filter bar', 'Executive Summary', 'Gantt', 'Gantt / shared', 'Sign-in page', 'Other']
+AREA_ORDER = ['Header & menus', 'Filter bar', 'Executive Summary', 'Gantt', 'Gantt / shared', 'Screens & messages',
+              'Progress (VPX)', 'Analytics', 'Plan Table', 'Issues', 'Dialogs', 'KD2 planning', 'Assistant',
+              'Help & tour', 'Sign-in page', 'Loading screen', 'Other']
 
 HEADER = """// PPMS interface translations — English text -> { area, ko, ar }.
 // Generated / updated by tools/i18n_build.py and tools/i18n_import.py.
@@ -33,7 +35,9 @@ def save_strings(data):
 
 def main():
     extracted = json.load(io.open(sys.argv[1], encoding='utf-8'))
-    draft = runpy.run_path(sys.argv[2])['TR'] if len(sys.argv) > 2 else {}
+    draft = {}
+    for path in sys.argv[2:]:
+        draft.update(runpy.run_path(path)['TR'])
     data = load_strings()
     out = {}
     for text, area in extracted.items():

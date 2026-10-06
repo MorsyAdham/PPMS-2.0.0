@@ -2,11 +2,14 @@
 
 Finds _t("…") / _t('…') calls with a literal first argument, plus texts
 that reach _t() through a variable (listed in DYNAMIC below — keep it in
-step when such a list changes). Prints JSON: { "English text": "area", … }.
+step when such a list changes), plus the screen texts of stage 2
+(tools/i18n_stage2_draft.py, i18n_stage3_draft.py — translated on screen by core/i18n.js, not
+wrapped in _t()); a screen text is kept while its words still appear in
+app/. Prints JSON: { "English text": "area", … }.
 
 usage: python tools/i18n_extract.py > extracted.json
 """
-import json, os, re, sys
+import html, json, os, re, runpy, sys
 
 ROOT = os.path.join(os.path.dirname(__file__), '..', 'app', 'scripts')
 AREA_BY_FILE = {
@@ -21,6 +24,8 @@ AREA_BY_FILE = {
     'login-page.js': 'Sign-in page',
     'index-page.js': 'Header & menus',
     'core/i18n.js': 'Header & menus',
+    'tour/': 'Help & tour',
+    'charts/': 'Analytics',
 }
 # Texts passed to _t() through variables / maps
 DYNAMIC = {
@@ -50,6 +55,10 @@ DYNAMIC = {
                        'SYSTEMS ONLINE', 'Production Planning & Monitoring System', 'Connecting…',
                        'WELCOME', 'WELCOME, {name}', 'All systems ready', 'Connecting to database…', 'Connection failed',
                        'Preparing workspace…', 'Loading filters…', 'Loading plan data…', 'Rendering workspace…', 'Loading issues…'],
+    'KD2 planning': ['{a} ticked unit has no start date', '{a} ticked units have no start date',
+                     '{a} was planned by someone else in the meantime and has been left out. Check the list and try again.',
+                     '{a} were planned by someone else in the meantime and have been left out. Check the list and try again.'],
+    'Screens & messages': ['Revision "{a}" created.', 'Revision "{a}" created (empty).'],
     'Gantt / shared': ['Delete {n} block', 'Delete {n} blocks', 'Shifting 1 vehicle ({b} blocks)…',
                        'Shifting {n} vehicles ({b} blocks)…', 'Saving {n} block…', 'Saving {n} blocks…',
                        '{n} block rescheduled ✓', '{n} blocks rescheduled ✓',
@@ -83,6 +92,21 @@ def main():
     for area, texts in DYNAMIC.items():
         for t in texts:
             found.setdefault(t, area)
+    # Stage 2 screen texts still present in the app
+    app_dir = os.path.join(ROOT, '..')
+    corpus = []
+    for dirpath, _, files in os.walk(app_dir):
+        for f in files:
+            if (f.endswith('.js') or f.endswith('.html')) and f != 'strings.js':
+                src = open(os.path.join(dirpath, f), encoding='utf-8').read()
+                corpus.append(src.replace("\\'", "'").replace('\\"', '"'))
+    corpus = re.sub(r'\s+', ' ', html.unescape(' '.join(corpus)))
+    for name in ('i18n_stage2_draft.py', 'i18n_stage3_draft.py'):
+        stage = runpy.run_path(os.path.join(os.path.dirname(__file__), name))
+        for t in stage['TR']:
+            words = [w.strip() for w in re.split(r'\{\w+\}|<[^>]+>', html.unescape(t)) if len(w.strip()) >= 2]
+            if all(w in corpus for w in words):
+                found.setdefault(t, stage['AREA'].get(t, 'Other'))
     found.pop('', None)
     for k in SKIP:
         found.pop(k, None)

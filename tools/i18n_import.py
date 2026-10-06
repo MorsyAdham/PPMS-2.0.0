@@ -28,9 +28,10 @@ def main():
         en, ko, ar = str(row[1]), (row[2] or '').strip(), (row[3] or '').strip()
         if en not in data:
             unknown.append(en); continue
-        need = set(PH.findall(en))
+        # {s} is a plural ending: it may (and usually should) be left out
+        need = set(PH.findall(en)) - {'{s}'}
         for lang, txt in (('ko', ko), ('ar', ar)):
-            if txt and set(PH.findall(txt)) != need:
+            if txt and set(PH.findall(txt)) - {'{s}'} != need:
                 problems.append(f'{lang}: placeholders differ — "{en}" -> "{txt}"')
                 continue
             if txt and data[en].get(lang) != txt:
