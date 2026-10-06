@@ -23,13 +23,15 @@ PPMS web app that tracks the plans against actual production.
 ├── docs/
 │   ├── planning/        F200 / KD2 planning documents
 │   ├── f100/            F100 implementation plan and checklist
-│   ├── engineering/     Code structure guide for app/, domain/security/Vercel plan, performance backlog
+│   ├── engineering/     Code structure guide for app/, domain/security/Vercel plan, performance backlog, multi-language plan
+│   ├── translations/    Interface translation review sheet (English · Korean · Arabic)
 │   ├── communications/  Emails and announcements to users (e.g. the PPMS launch email)
 │   └── bug-log.txt      Running log of reported issues and fixes
 ├── data/workbooks/      Reference Excel plans
 └── tools/
     ├── deploy.sh              Publish app/ to the live site
-    └── upload_to_supabase.py  Import an Excel plan into Supabase
+    ├── upload_to_supabase.py  Import an Excel plan into Supabase
+    └── i18n_*.py              Interface translations: extract, build, export review sheet, import reviewed sheet
 ```
 
 ## Modules
