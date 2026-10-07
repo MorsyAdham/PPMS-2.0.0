@@ -207,6 +207,13 @@ ROWS = [
     ('Use PPMS in <b>English</b>, <b>Korean (한국어)</b> or <b>Arabic (العربية)</b>. Your choice is remembered.', 'PPMS를 <b>영어</b>, <b>한국어</b> 또는 <b>아랍어(العربية)</b>로 사용하세요. 선택한 언어는 기억됩니다.', 'استخدم PPMS <b>بالإنجليزية</b> أو <b>الكورية (한국어)</b> أو <b>العربية</b>. يتم تذكّر اختيارك.'),
     ("See who is online right now — live, with what they are doing and where. Press <b>Activity</b> to open a person's Audit Log.", '지금 접속 중인 사용자를 실시간으로 보고, 무엇을 어디서 하고 있는지 확인하세요. <b>활동</b>을 누르면 해당 사용자의 감사 로그가 열립니다.', 'شاهد من المتصل الآن — مباشرةً، مع ما يفعله وأين. اضغط <b>النشاط</b> لفتح سجل التدقيق الخاص بالشخص.'),
     ('The plan on a calendar. Hover any block for a card with its dates, status and delay; the key above the chart explains the status badges. Scroll sideways through time — <b>TODAY</b> is marked and Saturdays are shaded.', '달력 위의 계획입니다. 블록에 마우스를 올리면 날짜, 상태, 지연이 담긴 카드가 표시되고, 차트 위의 범례가 상태 배지를 설명합니다. 옆으로 스크롤해 시간을 이동하세요 — <b>오늘</b>이 표시되고 토요일은 음영 처리됩니다.', 'الخطة على تقويم. مرّر المؤشر على أي بلوك لبطاقة بتواريخه وحالته وتأخيره؛ ويشرح الدليل أعلى المخطط شارات الحالة. مرّر أفقيًا عبر الزمن — يتم تمييز <b>اليوم</b> وتظليل أيام السبت.'),
+    # Help — "Topics for" (manual by role)
+    ('Topics for', '대상 역할', 'المواضيع لـ'),
+    ('All roles', '전체 역할', 'كل الأدوار'),
+    ('Show topics for', '역할별 주제 보기', 'عرض المواضيع لـ'),
+    ('Show the manual for one role — only the topics that role can use. Word downloads the same selection.', '한 역할의 매뉴얼만 표시합니다 — 해당 역할이 사용할 수 있는 주제만 보입니다. Word도 같은 선택으로 내려받습니다.', 'اعرض الدليل لدور واحد — المواضيع التي يمكن لذلك الدور استخدامها فقط. يُنزَّل ملف Word بالاختيار نفسه.'),
+    ('Download the {a} edition of the manual as a Word document', '{a}용 매뉴얼을 Word 문서로 다운로드', 'تنزيل نسخة {a} من الدليل كمستند Word'),
+    ('Pick a chapter, search above, or ask the assistant at the bottom left. Topics marked with a lock are not available for your role. Use "Topics for" at the top to see — and download — the manual for one role.', '장을 선택하거나, 위에서 검색하거나, 왼쪽 아래 어시스턴트에게 물어보세요. 자물쇠 표시 항목은 현재 역할로 사용할 수 없습니다. 위의 "대상 역할"에서 한 역할의 매뉴얼을 보고 다운로드할 수 있습니다.', 'اختر فصلًا، أو ابحث في الأعلى، أو اسأل المساعد أسفل اليسار. الموضوعات المعلَّمة بقفل غير متاحة لدورك. استخدم "المواضيع لـ" في الأعلى لعرض الدليل — وتنزيله — لدور واحد.'),
 ]
 TR = {en: (ko, ar) for en, ko, ar in ROWS}
 AREA = {en: G for en, _, _ in ROWS}

@@ -3,8 +3,10 @@
 Source of truth: app/scripts/features/help/manual-content.js (the same
 content the in-app Help page and the assistant use).
 Screenshots:     app/assets/help/<section id>.jpg (optional per section).
-Output:          app/assets/help/PPMS_User_Manual.docx  (served by the app's
-                 Help page "Word" button) and a copy in docs/manual/.
+Output:          app/assets/help/PPMS_User_Manual.docx (all roles) plus one
+                 edition per role (PPMS_User_Manual_<Role>.docx), served by
+                 the Help page's "Word" button for the chosen role, and
+                 copies in docs/manual/.
 
 Layout: cover · about this manual · quick reference (roles, statuses,
 shortcuts) · contents · one chapter per group (banner + introduction,
@@ -32,8 +34,19 @@ ROOT = Path(__file__).resolve().parent.parent
 APP = ROOT / 'app'
 CONTENT = APP / 'scripts' / 'features' / 'help' / 'manual-content.js'
 IMAGES = APP / 'assets' / 'help'
-OUT_APP = IMAGES / 'PPMS_User_Manual.docx'
-OUT_DOCS = ROOT / 'docs' / 'manual' / 'PPMS_User_Manual.docx'
+
+# One edition per role, filtered like the Help page's "Topics for" choice:
+# a topic is in a role's edition when that role can use it (rank >= the
+# topic's minimum). File names match features/help/index.js.
+ROLE_RANK = {'viewer': 0, 'operator': 1, 'planner': 2, 'master_admin': 3}
+SECTION_MIN_RANK = {'all': 0, 'operator': 1, 'planner': 2, 'master_admin': 3}
+EDITIONS = {
+    None: ('PPMS_User_Manual.docx', 'Viewers, Operators, Planners and Master Admins'),
+    'viewer': ('PPMS_User_Manual_Viewer.docx', 'Viewer — topics a Viewer can use'),
+    'operator': ('PPMS_User_Manual_Operator.docx', 'Operator — topics an Operator can use'),
+    'planner': ('PPMS_User_Manual_Planner.docx', 'Planner — topics a Planner can use'),
+    'master_admin': ('PPMS_User_Manual_Master_Admin.docx', 'Master Admin — every topic'),
+}
 
 NAVY = '1E3A8A'
 ACCENT = RGBColor(0x1E, 0x3A, 0x8A)
@@ -342,9 +355,14 @@ def page_break(doc):
 
 
 # ── document ─────────────────────────────────────────────────────
-def build():
-    data = load_content()
+def build(role=None, data=None):
+    data = data or load_content()
     groups, sections, roles = data['groups'], data['sections'], data['roles']
+    if role:
+        sections = [s for s in sections if ROLE_RANK[role] >= SECTION_MIN_RANK.get(s['roles'], 0)]
+    file_name, covers = EDITIONS[role]
+    out_app = IMAGES / file_name
+    out_docs = ROOT / 'docs' / 'manual' / file_name
     intros, glossary = data['intros'], data['glossary']
     by_id = {s['id']: s for s in sections}
     edition = f'{datetime.date.today():%d %B %Y}'
@@ -376,7 +394,7 @@ def build():
     info = doc.add_table(rows=3, cols=2)
     no_table_borders(info)
     for row, (k, v) in zip(info.rows, (('Modules', 'F200 – KD1 · F200 – KD2 · F100 – KD2'),
-                                       ('Covers', 'Viewers, Operators, Planners and Master Admins'),
+                                       ('Covers', covers),
                                        ('Edition', edition))):
         a, b = row.cells
         a.width = Cm(3.2); b.width = Cm(13)
@@ -469,14 +487,18 @@ def build():
         simple_table(doc, ['Term', 'Meaning'], [list(g) for g in glossary], [Cm(4.6), Cm(12.2)])
 
     update_fields_on_open(doc)
-    OUT_APP.parent.mkdir(parents=True, exist_ok=True)
-    doc.save(OUT_APP)
-    OUT_DOCS.parent.mkdir(parents=True, exist_ok=True)
-    shutil.copyfile(OUT_APP, OUT_DOCS)
+    out_app.parent.mkdir(parents=True, exist_ok=True)
+    doc.save(out_app)
+    out_docs.parent.mkdir(parents=True, exist_ok=True)
+    try:
+        shutil.copyfile(out_app, out_docs)
+    except PermissionError:
+        print(f'  ! docs/manual/{file_name} is open (Word?) — not updated; close it and run again')
     with_img = sum(1 for s in sections if (IMAGES / f"{s['id']}.jpg").exists())
-    print(f'Saved {OUT_APP.relative_to(ROOT)} and {OUT_DOCS.relative_to(ROOT)} '
-          f'({len(sections)} topics, {with_img} with screenshots, {len(glossary)} glossary terms)')
+    print(f'Saved {file_name} ({len(sections)} topics, {with_img} with screenshots, {len(glossary)} glossary terms)')
 
 
 if __name__ == '__main__':
-    build()
+    content = load_content()
+    for edition_role in EDITIONS:
+        build(edition_role, content)
