@@ -203,6 +203,10 @@ ROWS = [
     ('Sign-in time not recorded', '로그인 시각 기록 없음', 'وقت تسجيل الدخول غير مسجّل'),
     ('older version', '이전 버전', 'إصدار أقدم'),
     ('This person is on an older PPMS version — they should load the latest version (blinking version badge) to show where they are and to log their exports.', '이 사용자는 이전 PPMS 버전을 사용 중입니다 — 위치 표시와 내보내기 기록을 위해 최신 버전을 불러와야 합니다(깜박이는 버전 배지).', 'هذا المستخدم على إصدار أقدم من PPMS — عليه تحميل أحدث إصدار (شارة الإصدار الوامضة) لإظهار مكانه وتسجيل عمليات التصدير.'),
+    # Guided tour (new / changed steps)
+    ('Use PPMS in <b>English</b>, <b>Korean (한국어)</b> or <b>Arabic (العربية)</b>. Your choice is remembered.', 'PPMS를 <b>영어</b>, <b>한국어</b> 또는 <b>아랍어(العربية)</b>로 사용하세요. 선택한 언어는 기억됩니다.', 'استخدم PPMS <b>بالإنجليزية</b> أو <b>الكورية (한국어)</b> أو <b>العربية</b>. يتم تذكّر اختيارك.'),
+    ("See who is online right now — live, with what they are doing and where. Press <b>Activity</b> to open a person's Audit Log.", '지금 접속 중인 사용자를 실시간으로 보고, 무엇을 어디서 하고 있는지 확인하세요. <b>활동</b>을 누르면 해당 사용자의 감사 로그가 열립니다.', 'شاهد من المتصل الآن — مباشرةً، مع ما يفعله وأين. اضغط <b>النشاط</b> لفتح سجل التدقيق الخاص بالشخص.'),
+    ('The plan on a calendar. Hover any block for a card with its dates, status and delay; the key above the chart explains the status badges. Scroll sideways through time — <b>TODAY</b> is marked and Saturdays are shaded.', '달력 위의 계획입니다. 블록에 마우스를 올리면 날짜, 상태, 지연이 담긴 카드가 표시되고, 차트 위의 범례가 상태 배지를 설명합니다. 옆으로 스크롤해 시간을 이동하세요 — <b>오늘</b>이 표시되고 토요일은 음영 처리됩니다.', 'الخطة على تقويم. مرّر المؤشر على أي بلوك لبطاقة بتواريخه وحالته وتأخيره؛ ويشرح الدليل أعلى المخطط شارات الحالة. مرّر أفقيًا عبر الزمن — يتم تمييز <b>اليوم</b> وتظليل أيام السبت.'),
 ]
 TR = {en: (ko, ar) for en, ko, ar in ROWS}
 AREA = {en: G for en, _, _ in ROWS}
