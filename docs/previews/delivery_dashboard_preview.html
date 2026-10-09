@@ -1,0 +1,690 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Delivery Outlook Preview</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Rajdhani:wght@500;600;700&family=DM+Mono:wght@400;500&family=Inter:wght@400;500;600;700&display=swap">
+<style>
+/* PREVIEW ONLY — the proposed full-screen Delivery view for management.
+   Reads the forecast snapshot PPMS saved in this browser (same origin as
+   the app on the local server). Nothing here changes the live system.
+   Reading order = the questions a manager asks, in order:
+   1 Are we on time, and is it getting better or worse?  2 What sets the date?
+   3 Are we keeping up with the plan today?  4 When do vehicles come out?
+   5 What can we still act on?  6 Detail per battalion / unit. */
+:root {
+  --bg: #f1f5f9; --surface: #ffffff; --surface-2: #f8fafc; --line: #dbe2ec; --line-soft: #e9eef5;
+  --ink: #0f172a; --ink-soft: #475569; --ink-dim: #8391a7;
+  --accent: #2563eb; --accent-soft: #e6eefc;
+  --ok: #15803d; --ok-bg: #dcfce7; --warn: #b45309; --warn-bg: #fef3c7; --bad: #b91c1c; --bad-bg: #fee2e2;
+  --track: #e2e8f0; --plan: #94a3b8;
+  --ff-display: 'Rajdhani', 'Segoe UI', sans-serif;
+  --ff-body: 'Inter', 'Segoe UI', system-ui, sans-serif;
+  --ff-mono: 'DM Mono', ui-monospace, Consolas, monospace;
+  --shadow: 0 1px 2px rgba(15, 23, 42, .05), 0 6px 24px rgba(15, 23, 42, .06);
+  color-scheme: light;
+}
+@media (prefers-color-scheme: dark) { :root:not([data-theme="light"]) {
+  --bg: #0f1117; --surface: #161b27; --surface-2: #1c2233; --line: #2a3350; --line-soft: #222b42;
+  --ink: #e2e8f4; --ink-soft: #9aa8c2; --ink-dim: #64739a;
+  --accent: #4f8ef7; --accent-soft: rgba(79, 142, 247, .15);
+  --ok: #4ade80; --ok-bg: rgba(34, 197, 94, .14); --warn: #fbbf24; --warn-bg: rgba(245, 158, 11, .14); --bad: #f87171; --bad-bg: rgba(239, 68, 68, .15);
+  --track: #262f47; --plan: #5d6b8c;
+  --shadow: 0 2px 16px rgba(0, 0, 0, .35);
+  color-scheme: dark; } }
+:root[data-theme="dark"] {
+  --bg: #0f1117; --surface: #161b27; --surface-2: #1c2233; --line: #2a3350; --line-soft: #222b42;
+  --ink: #e2e8f4; --ink-soft: #9aa8c2; --ink-dim: #64739a;
+  --accent: #4f8ef7; --accent-soft: rgba(79, 142, 247, .15);
+  --ok: #4ade80; --ok-bg: rgba(34, 197, 94, .14); --warn: #fbbf24; --warn-bg: rgba(245, 158, 11, .14); --bad: #f87171; --bad-bg: rgba(239, 68, 68, .15);
+  --track: #262f47; --plan: #5d6b8c;
+  --shadow: 0 2px 16px rgba(0, 0, 0, .35);
+  color-scheme: dark;
+}
+
+* { box-sizing: border-box; }
+html, body { margin: 0; }
+body { background: var(--bg); color: var(--ink); font: 14px/1.45 var(--ff-body); -webkit-font-smoothing: antialiased; }
+button { font: inherit; color: inherit; }
+.num { font-family: var(--ff-mono); font-variant-numeric: tabular-nums; }
+
+/* ── Top bar ───────────────────────────────────── */
+.bar { position: sticky; top: 0; z-index: 5; display: flex; align-items: center; gap: 14px; padding: 12px 28px;
+  background: var(--surface); border-bottom: 1px solid var(--line); }
+.badge { padding: 6px 10px; border-radius: 8px; background: var(--accent); color: #fff; font: 700 .85rem/1 var(--ff-display); letter-spacing: .04em; white-space: nowrap; }
+.bar h1 { margin: 0; font: 700 1.45rem/1 var(--ff-display); letter-spacing: .03em; }
+.bar .sub { color: var(--ink-soft); font-size: .8rem; margin-top: 3px; }
+.bar .grow { flex: 1; }
+.seg { display: inline-flex; padding: 3px; gap: 2px; border: 1px solid var(--line); border-radius: 10px; background: var(--surface-2); }
+.seg button { border: 0; background: transparent; padding: 6px 12px; border-radius: 7px; font-size: .8rem; font-weight: 600; color: var(--ink-soft); cursor: pointer; white-space: nowrap; }
+.seg button[aria-pressed="true"] { background: var(--surface); color: var(--accent); box-shadow: 0 1px 3px rgba(15, 23, 42, .12); }
+.icon-btn { width: 36px; height: 36px; display: grid; place-items: center; border: 1px solid var(--line); border-radius: 9px; background: var(--surface); cursor: pointer; color: var(--ink-soft); }
+.icon-btn svg { width: 18px; height: 18px; }
+.icon-btn:hover, .seg button:hover { color: var(--accent); }
+
+main { padding: 22px 28px 40px; display: grid; gap: 20px; max-width: 1880px; margin: 0 auto; }
+.card { background: var(--surface); border: 1px solid var(--line); border-radius: 14px; box-shadow: var(--shadow); }
+.h2 { display: flex; align-items: baseline; gap: 10px; margin: 0 0 12px; font: 700 1.15rem/1.1 var(--ff-display); letter-spacing: .03em; }
+.h2 small { font: 500 .78rem var(--ff-body); color: var(--ink-dim); letter-spacing: 0; }
+.hint { margin: -6px 0 12px; font-size: .8rem; color: var(--ink-soft); }
+.row2 { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: 16px; }
+.row2 { align-items: start; }
+.row2 .card { padding: 16px 18px; }
+.stack { display: grid; gap: 16px; }
+
+/* ── 1 · Verdict ───────────────────────────────── */
+.verdict { display: grid; grid-template-columns: minmax(300px, 1.05fr) minmax(360px, 1.3fr) minmax(260px, .9fr); gap: 0; }
+.verdict > div { padding: 20px 24px; }
+.verdict > div + div { border-left: 1px solid var(--line-soft); }
+.status { display: inline-flex; align-items: center; gap: 6px; padding: 4px 10px; border-radius: 999px; font: 700 .72rem/1 var(--ff-body); letter-spacing: .08em; text-transform: uppercase; }
+.status.ok { background: var(--ok-bg); color: var(--ok); }
+.status.warn { background: var(--warn-bg); color: var(--warn); }
+.status.bad { background: var(--bad-bg); color: var(--bad); }
+.big { margin: 10px 0 6px; font: 700 3.4rem/1 var(--ff-display); letter-spacing: .01em; }
+.big small { font-size: 1.3rem; color: var(--ink-soft); font-weight: 600; margin-left: 6px; }
+.verdict p { margin: 0; color: var(--ink-soft); }
+.verdict p b { color: var(--ink); }
+.lbl { display: block; font-size: .7rem; letter-spacing: .1em; text-transform: uppercase; color: var(--ink-dim); font-weight: 600; }
+.tl-dates { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; margin-bottom: 12px; }
+.tl-dates strong { font: 700 1.75rem/1.15 var(--ff-display); }
+.tl-dates div:last-child { text-align: right; }
+.tl-dates .late strong { color: var(--bad); }
+.tl-track { position: relative; height: 14px; border-radius: 99px; background: var(--track); }
+.tl-track i { position: absolute; top: 0; bottom: 0; border-radius: 99px; }
+.tl-track .done { left: 0; background: var(--accent); }
+.tl-track .slip { background: repeating-linear-gradient(135deg, var(--bad) 0 6px, color-mix(in srgb, var(--bad) 55%, transparent) 6px 12px); }
+.tl-legend { display: flex; justify-content: space-between; gap: 12px; margin-top: 8px; font-size: .76rem; color: var(--ink-soft); }
+.setby { margin-top: 14px; padding: 10px 12px; border-radius: 10px; background: var(--surface-2); border: 1px solid var(--line-soft); font-size: .8rem; color: var(--ink-soft); }
+.setby b { color: var(--ink); }
+.trend svg { display: block; width: 100%; height: 92px; margin-top: 6px; overflow: visible; }
+.trend .tval { display: flex; align-items: baseline; gap: 8px; margin-top: 4px; }
+.trend .tval strong { font: 700 1.5rem/1 var(--ff-display); }
+.trend .tval span { font-size: .8rem; color: var(--ink-soft); }
+.trend .tnote { margin-top: 8px; font-size: .74rem; color: var(--ink-dim); }
+.up { color: var(--bad); } .down { color: var(--ok); } .flat { color: var(--ink-soft); }
+
+/* ── 3 · Key figures ───────────────────────────── */
+.kpis { display: grid; grid-template-columns: repeat(5, minmax(0, 1fr)); gap: 14px; }
+.kpi { padding: 14px 18px; }
+.kpi strong { display: block; margin-top: 4px; font: 700 2rem/1.1 var(--ff-display); }
+.kpi em { font-style: normal; font-size: .78rem; color: var(--ink-soft); }
+.kpi.bad strong { color: var(--bad); } .kpi.ok strong { color: var(--ok); } .kpi.warn strong { color: var(--warn); }
+.meter { height: 6px; border-radius: 99px; background: var(--track); margin: 8px 0 6px; overflow: hidden; }
+.meter i { display: block; height: 100%; background: var(--accent); border-radius: 99px; }
+.kpi.bad .meter i { background: var(--bad); } .kpi.warn .meter i { background: var(--warn); } .kpi.ok .meter i { background: var(--ok); }
+
+/* ── Alerts ────────────────────────────────────── */
+.alerts { display: grid; gap: 10px; }
+.alert { display: flex; gap: 12px; align-items: flex-start; padding: 12px 16px; border-radius: 12px; border: 1px solid; font-size: .86rem; }
+.alert svg { flex: none; width: 18px; height: 18px; margin-top: 1px; }
+.alert.bad { background: var(--bad-bg); border-color: color-mix(in srgb, var(--bad) 35%, transparent); }
+.alert.bad svg, .alert.bad b { color: var(--bad); }
+.alert.warn { background: var(--warn-bg); border-color: color-mix(in srgb, var(--warn) 35%, transparent); }
+.alert.warn svg, .alert.warn b { color: var(--warn); }
+.alert span { color: var(--ink); }
+
+/* ── 4 · Monthly output ────────────────────────── */
+.chart svg { display: block; width: 100%; height: auto; overflow: visible; }
+.legend { display: flex; gap: 16px; font-size: .76rem; color: var(--ink-soft); margin-top: 6px; flex-wrap: wrap; }
+.legend i { display: inline-block; width: 10px; height: 10px; border-radius: 3px; margin-right: 6px; vertical-align: -1px; }
+
+/* ── 5 · Where to act ──────────────────────────── */
+.cause { display: grid; grid-template-columns: 26px minmax(0, 1fr) 72px; gap: 12px; align-items: center; padding: 9px 0; border-bottom: 1px solid var(--line-soft); }
+.cause:last-child { border-bottom: 0; }
+.rank { width: 26px; height: 26px; display: grid; place-items: center; border-radius: 7px; background: var(--surface-2); border: 1px solid var(--line); font: 700 .8rem var(--ff-display); color: var(--ink-soft); }
+.open-list .cause:first-child .rank { background: var(--bad); border-color: var(--bad); color: #fff; }
+.cause-t { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+.cause-t strong { font-size: .9rem; }
+.chip { padding: 1px 7px; border-radius: 5px; font-size: .7rem; background: var(--surface-2); border: 1px solid var(--line); color: var(--ink-soft); }
+.cause-l { font-size: .76rem; color: var(--ink-soft); margin-top: 2px; }
+.cause-bar { height: 6px; border-radius: 99px; background: var(--track); margin-top: 6px; overflow: hidden; }
+.cause-bar i { display: block; height: 100%; border-radius: 99px; background: var(--bad); }
+.lost .cause-bar i { background: var(--plan); }
+.cause .wd { text-align: right; font: 700 1.25rem/1 var(--ff-display); color: var(--bad); }
+.lost .cause .wd { color: var(--ink-soft); }
+.cause .wd small { font: 500 .7rem var(--ff-body); color: var(--ink-dim); margin-left: 2px; }
+.empty { padding: 18px; text-align: center; color: var(--ink-soft); }
+
+/* ── 6 · Battalion cards ───────────────────────── */
+.btls { display: grid; grid-template-columns: repeat(auto-fit, minmax(440px, 1fr)); gap: 16px; }
+.btl { padding: 16px 18px 10px; }
+.btl-head { display: flex; align-items: center; gap: 10px; margin-bottom: 4px; flex-wrap: wrap; }
+.btl-head h3 { margin: 0; font: 700 1.3rem/1 var(--ff-display); letter-spacing: .03em; }
+.btl-head .dates { margin-left: auto; font-size: .8rem; color: var(--ink-soft); }
+.btl-head .dates b { color: var(--ink); }
+.btl-adh { display: flex; gap: 18px; flex-wrap: wrap; font-size: .78rem; color: var(--ink-soft); margin: 6px 0 8px; }
+.btl-adh b { color: var(--ink); font-family: var(--ff-mono); font-weight: 500; }
+.btl-adh .bad b { color: var(--bad); }
+table { width: 100%; border-collapse: collapse; }
+th { text-align: left; font-size: .68rem; letter-spacing: .08em; text-transform: uppercase; color: var(--ink-dim); font-weight: 600; padding: 6px 8px; border-bottom: 1px solid var(--line); white-space: nowrap; }
+td { padding: 8px; border-bottom: 1px solid var(--line-soft); vertical-align: middle; }
+tbody tr:last-child td { border-bottom: 0; }
+td.r, th.r { text-align: right; }
+td.c, th.c { text-align: center; }
+.vt { display: inline-block; min-width: 38px; text-align: center; padding: 2px 7px; border-radius: 6px; background: var(--accent-soft); color: var(--accent); font: 700 .8rem/1.3 var(--ff-display); letter-spacing: .04em; }
+.delay { display: inline-block; min-width: 64px; text-align: center; padding: 3px 8px; border-radius: 6px; font: 600 .78rem/1.3 var(--ff-mono); white-space: nowrap; }
+.delay.ok { background: var(--ok-bg); color: var(--ok); }
+.delay.warn { background: var(--warn-bg); color: var(--warn); }
+.delay.bad { background: var(--bad-bg); color: var(--bad); }
+.late-of { color: var(--ink-soft); }
+.late-of b { color: var(--ink); }
+
+/* ── Unit table (fixed height, own scroll, sticky header) ── */
+.units { padding: 16px 18px 12px; }
+.units-head { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; margin-bottom: 8px; }
+.units-head .h2 { margin: 0; }
+.units-head .grow { flex: 1; }
+.scroll { max-height: 520px; overflow: auto; border: 1px solid var(--line-soft); border-radius: 10px; }
+.units table { min-width: 1400px; }
+.units thead th { position: sticky; top: 0; z-index: 1; background: var(--surface-2); }
+.unit-name { font-weight: 600; white-space: nowrap; }
+.unit-name small { display: block; font: 400 .72rem var(--ff-mono); color: var(--ink-dim); }
+.prog { display: flex; align-items: center; gap: 8px; min-width: 120px; }
+.prog .meter { flex: 1; margin: 0; }
+.prog span { font: .74rem var(--ff-mono); color: var(--ink-soft); white-space: nowrap; }
+.now { font-size: .8rem; color: var(--ink-soft); max-width: 190px; }
+.line { font-size: .78rem; white-space: nowrap; }
+.line .dot { display: inline-block; width: 8px; height: 8px; border-radius: 50%; margin-right: 6px; vertical-align: 1px; }
+.line.done { color: var(--ink-dim); }
+.line.done .dot { background: var(--ok); }
+.line.ok .dot { background: var(--accent); }
+.line.warn .dot { background: var(--warn); }
+.line.bad .dot { background: var(--bad); }
+.line b { font-family: var(--ff-mono); font-weight: 500; margin-left: 4px; }
+.line.warn b { color: var(--warn); } .line.bad b { color: var(--bad); }
+.na { color: var(--ink-dim); }
+.mini { position: relative; height: 22px; min-width: 200px; }
+.mini::before { content: ''; position: absolute; left: 0; right: 0; top: 10px; height: 2px; background: var(--track); border-radius: 2px; }
+.mini .seg-l { position: absolute; top: 9px; height: 4px; border-radius: 2px; background: var(--bad); }
+.mini .p { position: absolute; top: 5px; width: 2px; height: 12px; background: var(--ink-soft); }
+.mini .f { position: absolute; top: 6px; width: 10px; height: 10px; margin-left: -5px; border-radius: 50%; background: var(--ok); border: 2px solid var(--surface); }
+.mini .f.warn { background: var(--warn); } .mini .f.bad { background: var(--bad); }
+.mini .t { position: absolute; top: 0; bottom: 0; width: 1px; background: var(--ink-dim); opacity: .6; }
+.mini-axis { display: flex; justify-content: space-between; gap: 6px; font: .66rem var(--ff-mono); color: var(--ink-dim); text-transform: none; letter-spacing: 0; }
+.bt { white-space: nowrap; font-size: .8rem; }
+.bt b { font-weight: 600; }
+.bt .delay { min-width: 0; margin-left: 4px; padding: 1px 6px; }
+.bt small { display: block; font: 400 .68rem var(--ff-body); color: var(--ink-dim); }
+tr.grp td { padding: 10px 8px 4px; font: 700 .8rem var(--ff-display); letter-spacing: .08em; text-transform: uppercase; color: var(--ink-soft); border-bottom: 1px solid var(--line); background: var(--surface); }
+tr.crit td:first-child { box-shadow: inset 3px 0 0 var(--bad); }
+
+.note { display: flex; gap: 10px; padding: 14px 18px; font-size: .8rem; color: var(--ink-soft); }
+.note svg { flex: none; width: 18px; height: 18px; color: var(--accent); margin-top: 1px; }
+.note ul { margin: 6px 0 0; padding-left: 18px; display: grid; gap: 3px; }
+.preview-flag { position: fixed; right: 16px; bottom: 16px; z-index: 6; padding: 8px 12px; border-radius: 10px; background: var(--ink); color: var(--surface); font-size: .75rem; box-shadow: var(--shadow); max-width: 340px; cursor: pointer; }
+
+.missing { max-width: 560px; margin: 80px auto; padding: 28px; text-align: center; }
+.missing h2 { font: 700 1.5rem var(--ff-display); margin: 0 0 8px; }
+.missing p { color: var(--ink-soft); margin: 0; }
+
+@media (max-width: 1280px) {
+  .verdict { grid-template-columns: 1fr 1fr; }
+  .verdict > .trend { grid-column: 1 / -1; border-left: 0; border-top: 1px solid var(--line-soft); }
+}
+@media (max-width: 1100px) {
+  .row2 { grid-template-columns: 1fr; }
+  .kpis { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+}
+@media (max-width: 760px) {
+  .verdict { grid-template-columns: 1fr; }
+  .verdict > div + div { border-left: 0; border-top: 1px solid var(--line-soft); }
+}
+@media (max-width: 640px) {
+  .bar { flex-wrap: wrap; padding: 10px 16px; }
+  main { padding: 16px; }
+  .btls { grid-template-columns: 1fr; }
+  .big { font-size: 2.6rem; }
+  .preview-flag { display: none; }
+}
+@media print {
+  @page { size: A4 landscape; margin: 10mm; }
+  :root { --bg: #fff; --surface: #fff; --surface-2: #f8fafc; --line: #cbd5e1; --line-soft: #e2e8f0; --ink: #0f172a; --ink-soft: #475569; --ink-dim: #64748b;
+    --ok: #15803d; --ok-bg: #dcfce7; --warn: #b45309; --warn-bg: #fef3c7; --bad: #b91c1c; --bad-bg: #fee2e2; --track: #e2e8f0; --plan: #94a3b8; color-scheme: light; }
+  body { -webkit-print-color-adjust: exact; print-color-adjust: exact; }
+  .bar { position: static; }
+  .bar .icon-btn, .units-head .seg, .preview-flag { display: none; }
+  .card { box-shadow: none; break-inside: avoid; }
+  .units { break-inside: auto; }
+  .scroll { max-height: none; overflow: visible; border: 0; }
+  .units table { min-width: 0; }
+  main { padding: 10px 0; }
+}
+</style>
+</head>
+<body>
+<header class="bar">
+  <span class="badge" id="badge">F200 – KD2</span>
+  <div>
+    <h1>Delivery Outlook</h1>
+    <div class="sub" id="sub">—</div>
+  </div>
+  <span class="grow"></span>
+  <div class="seg" id="scope" role="group" aria-label="Battalion"></div>
+  <button class="icon-btn" id="themeBtn" type="button" title="Switch light / dark" aria-label="Switch light or dark theme">
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round"><path d="M21 12.8A9 9 0 1111.2 3a7 7 0 009.8 9.8z"/></svg>
+  </button>
+  <button class="icon-btn" id="printBtn" type="button" title="Print / save as PDF" aria-label="Print">
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><path d="M6 9V3h12v6M6 18H4a1 1 0 01-1-1v-6a2 2 0 012-2h14a2 2 0 012 2v6a1 1 0 01-1 1h-2"/><rect x="6" y="14" width="12" height="7" rx="1"/></svg>
+  </button>
+</header>
+<main id="main"></main>
+<div class="preview-flag" title="Click to hide" onclick="this.remove()">Preview only. Figures are a snapshot from PPMS taken <span id="snapAt">—</span>. In the app this view will open full screen from the Delivery card and always show live data.</div>
+
+<script>
+(() => {
+  'use strict';
+  const KEY = 'ppms_delivery_preview_snapshot';
+  let snap = null;
+  try { snap = JSON.parse(localStorage.getItem(KEY) || 'null'); } catch { snap = null; }
+  const main = document.getElementById('main');
+
+  // ── theme toggle (per-viewer convenience only)
+  const root = document.documentElement;
+  try { const t = localStorage.getItem('ppms_dd_theme'); if (t) root.dataset.theme = t; } catch {}
+  document.getElementById('themeBtn').onclick = () => {
+    const dark = root.dataset.theme ? root.dataset.theme === 'dark' : matchMedia('(prefers-color-scheme: dark)').matches;
+    root.dataset.theme = dark ? 'light' : 'dark';
+    try { localStorage.setItem('ppms_dd_theme', root.dataset.theme); } catch {}
+  };
+  document.getElementById('printBtn').onclick = () => window.print();
+
+  if (!snap || !Array.isArray(snap.units) || !(snap.v >= 3)) {
+    main.innerHTML = `<div class="card missing"><h2>No forecast snapshot yet</h2>
+      <p>Open PPMS on this computer (same local server), sign in and load F200 – KD2, then reload this page.</p></div>`;
+    return;
+  }
+
+  // ── helpers
+  const esc = s => String(s ?? '').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+  const D = iso => new Date(iso + 'T00:00:00');
+  const fmt = iso => iso ? D(iso).toLocaleDateString('en-GB', { day: '2-digit', month: 'short', year: 'numeric' }) : '—';
+  const fmtShort = iso => iso ? D(iso).toLocaleDateString('en-GB', { day: '2-digit', month: 'short' }) : '—';
+  const days = (a, b) => Math.round((D(b) - D(a)) / 86400000);
+  const workDays = (from, to) => { // = daysBetween() in app.js (Fridays excluded)
+    if (to <= from) return 0;
+    const end = D(to), d = D(from); let n = 0;
+    d.setDate(d.getDate() + 1);
+    while (d <= end) { if (d.getDay() !== 5) n++; d.setDate(d.getDate() + 1); }
+    return n;
+  };
+  const wd = (a, b) => (!a || !b ? 0 : b >= a ? workDays(a, b) : -workDays(b, a)); // = _fcSlip()
+  /** Working days from a to b, both days included (= _fcSpan in app.js). */
+  const span = (a, b) => (!a || !b ? null : Math.max(1, workDays(a, b) + (D(a).getDay() !== 5 ? 1 : 0)));
+  /** Build time of a unit: planned, and actual (finished) or forecast (not finished). */
+  const buildTime = u => ({ plan: span(u.ps, u.pf), real: span(u.fs, u.ff), done: u.complete, suspect: false }); // plan dates back to 2025 are real
+  const sev = n => n <= 0 ? 'ok' : n <= 5 ? 'warn' : 'bad';
+  const delayTxt = n => n > 0 ? `+${n} wd` : 'On track';
+  const plural = (n, w) => `${n} ${w}${n === 1 ? '' : 's'}`;
+  const vOrder = v => ({ K9: 0, K10: 1, K11: 2 }[v] ?? 9);
+  const unitNum = u => parseInt(String(u).replace(/\D+/g, ''), 10) || 0;
+  const planCmp = (a, b) => a.b.localeCompare(b.b, undefined, { numeric: true }) || vOrder(a.v) - vOrder(b.v) || unitNum(a.u) - unitNum(b.u);
+  const maxIso = list => list.reduce((m, x) => (x && x > m ? x : m), '');
+  const minIso = list => list.reduce((m, x) => (x && (!m || x < m) ? x : m), '');
+  const unitKey = u => `${u.b}|${u.v}|${u.u}`;
+  const unitLabel = u => `${u.b} · ${u.v} ${u.u}`;
+  const ICON = {
+    warn: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 9v4m0 4h.01M10.3 3.9L1.8 18a2 2 0 001.7 3h17a2 2 0 001.7-3L13.7 3.9a2 2 0 00-3.4 0z"/></svg>',
+    info: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round"><circle cx="12" cy="12" r="9"/><path d="M12 11v5M12 8h.01"/></svg>',
+  };
+  const LINE_COLS = [
+    { label: 'Hull / Structure', pick: L => L.Hull || L.Structure },
+    { label: 'Turret', pick: L => L.Turret },
+    { label: 'Assembly, Processing & Testing', pick: L => L['Assembly & Processing & Testing'] },
+  ];
+
+  const battalions = [...new Set(snap.units.map(u => u.b))].sort((a, b) => a.localeCompare(b, undefined, { numeric: true }));
+  let scope = 'all';
+  let sortMode = 'worst';
+  try { sortMode = localStorage.getItem('ppms_dd_sort') || 'worst'; } catch {}
+
+  document.getElementById('badge').textContent = snap.badge || 'F200 – KD2';
+  document.getElementById('snapAt').textContent = new Date(snap.generated).toLocaleString('en-GB', { day: '2-digit', month: 'short', hour: '2-digit', minute: '2-digit' });
+  const scopeEl = document.getElementById('scope');
+  scopeEl.innerHTML = ['all', ...battalions].map(b =>
+    `<button type="button" data-b="${esc(b)}" aria-pressed="${b === scope}">${b === 'all' ? 'All battalions' : esc(b)}</button>`).join('');
+  scopeEl.onclick = e => { const b = e.target.closest('button')?.dataset.b; if (b) { scope = b; render(); } };
+
+  /** Stations adding delay right now, merged per vehicle + station. */
+  function aggregateCauses(list) {
+    const m = new Map();
+    list.forEach(c => {
+      const k = `${c.v}||${c.st}`;
+      const e = m.get(k) || { v: c.v, st: c.st, cat: c.cat, line: c.line, max: 0, units: new Set(), openUnits: new Set() };
+      e.max = Math.max(e.max, c.d); e.units.add(`${c.b} ${c.u}`); if (c.open) e.openUnits.add(`${c.b} ${c.u}`);
+      m.set(k, e);
+    });
+    return [...m.values()].sort((a, b) => b.max - a.max || b.units.size - a.units.size);
+  }
+  const unitsTxt = set => { const a = [...set]; return a.slice(0, 4).join(', ') + (a.length > 4 ? ` +${a.length - 4} more` : ''); };
+
+  function render() {
+    scopeEl.querySelectorAll('button').forEach(btn => btn.setAttribute('aria-pressed', String(btn.dataset.b === scope)));
+    const inScope = x => scope === 'all' || x.b === scope;
+    const units = snap.units.filter(inScope);
+    const causes = snap.causes.filter(inScope);
+    const today = snap.today;
+    const planned = maxIso(units.map(u => u.pf));
+    const forecast = maxIso(units.map(u => u.ff));
+    const slip = Math.max(0, wd(planned, forecast));
+    const late = units.filter(u => u.slip > 0);
+    const worst = units.slice().sort((a, b) => b.slip - a.slip)[0];
+    const s = sev(slip);
+    const adh = Object.entries(snap.adh).filter(([b]) => scope === 'all' || b === scope).map(([, a]) => a)
+      .reduce((t, a) => { Object.keys(a).forEach(k => t[k] = (t[k] || 0) + a[k]); return t; }, {});
+
+    document.getElementById('sub').textContent =
+      `${snap.title || 'F200'} · ${scope === 'all' ? 'All battalions' : scope} · data as of ${fmt(today)}`;
+
+    // ── 1 · verdict, timeline, trend
+    const span = Math.max(1, days(today, forecast > planned ? forecast : planned));
+    const pos = iso => Math.min(100, Math.max(0, days(today, iso) / span * 100));
+    // What sets the date: the unit(s) finishing last, and the station adding most of their delay
+    const setters = units.filter(u => u.ff === forecast);
+    const setterCause = setters.length
+      ? causes.filter(c => setters.some(u => unitKey(u) === unitKey(c))).sort((a, b) => b.d - a.d)[0] : null;
+    const setText = setters.length
+      ? `Delivery date is set by <b>${esc(setters.slice(0, 2).map(unitLabel).join(', '))}${setters.length > 2 ? ` +${setters.length - 2} more` : ''}</b>`
+        + (setterCause ? `; most of its delay comes from <b>${esc(setterCause.st)}</b> (${esc(setterCause.line)}, +${setterCause.d} wd${setterCause.open ? ', not finished yet' : ''}).` : '.')
+      : '';
+
+    // Trend: delivery slip each week, rebuilt from recorded dates (current plan)
+    const series = snap.history.map(h => {
+      const ff = maxIso(units.map(u => h.ff[unitKey(u)]));
+      return { date: h.date, slip: Math.max(0, wd(planned, ff)) };
+    }).concat([{ date: today, slip }]);
+    const weekAgo = [...series].reverse().find(p => days(p.date, today) >= 7) || series[0];
+    const diff = slip - weekAgo.slip;
+    const first = series[0].slip;
+    // consecutive working days (from today backwards) on which the delay grew
+    let streak = 0, streakFrom = slip;
+    for (let i = series.length - 1; i > 0 && days(series[i - 1].date, series[i].date) <= 2; i--) {
+      if (series[i].slip > series[i - 1].slip) { streak++; streakFrom = series[i - 1].slip; } else break;
+    }
+    const tW = 320, tH = 80, padL = 4, padR = 26;
+    const tMax = Math.max(4, ...series.map(p => p.slip)) * 1.15;
+    const tSpan = Math.max(1, days(series[0].date, today));
+    const tx = i => padL + days(series[0].date, series[i].date) / tSpan * (tW - padL - padR);
+    const ty = v => tH - 8 - v / tMax * (tH - 18);
+    const path = series.map((p, i) => `${i ? 'L' : 'M'}${tx(i).toFixed(1)},${ty(p.slip).toFixed(1)}`).join(' ');
+    const trendSvg = `<svg viewBox="0 0 ${tW} ${tH + 14}" preserveAspectRatio="none" role="img" aria-label="Weekly delivery delay trend">
+        <line x1="${padL}" x2="${tW - padR}" y1="${ty(0)}" y2="${ty(0)}" stroke="var(--line)" stroke-width="1"/>
+        <path d="${path} L${tx(series.length - 1)},${ty(0)} L${tx(0)},${ty(0)} Z" fill="color-mix(in srgb, var(--${s === 'ok' ? 'ok' : 'bad'}) 12%, transparent)"/>
+        <path d="${path}" fill="none" stroke="var(--${s === 'ok' ? 'ok' : 'bad'})" stroke-width="2.2" stroke-linejoin="round" vector-effect="non-scaling-stroke"/>
+        ${series.map((p, i) => `<circle cx="${tx(i)}" cy="${ty(p.slip)}" r="${i === series.length - 1 ? 4 : 2.6}" fill="var(--${p.slip > 0 ? 'bad' : 'ok'})"><title>${fmt(p.date)}: +${p.slip} wd</title></circle>`).join('')}
+        <text x="${tx(series.length - 1) + 8}" y="${ty(slip) + 4}" font-size="11" font-family="DM Mono, monospace" fill="var(--ink)">+${slip}</text>
+        <text x="${padL}" y="${tH + 12}" font-size="10" font-family="DM Mono, monospace" fill="var(--ink-dim)">${fmtShort(series[0].date)}</text>
+        <text x="${tW - padR}" y="${tH + 12}" font-size="10" font-family="DM Mono, monospace" fill="var(--ink-dim)" text-anchor="end">Today</text>
+      </svg>`;
+    const trendWord = diff > 0 ? `<span class="up">▲ ${diff} wd worse</span> than last week`
+      : diff < 0 ? `<span class="down">▼ ${-diff} wd better</span> than last week` : `<span class="flat">No change</span> from last week`;
+    const longWord = slip === first ? `Same as 8 weeks ago (+${first} wd).` : `8 weeks ago it was +${first} wd.`;
+    const trendLbl = 'Delay trend · last 8 weeks';
+
+    const verdict = `
+      <section class="card verdict">
+        <div>
+          <span class="status ${s}">${slip > 0 ? (s === 'bad' ? 'Late' : 'At risk') : 'On track'}</span>
+          <div class="big">${slip > 0 ? `+${slip}<small>working days</small>` : 'On time'}</div>
+          <p>${slip > 0
+            ? `Forecast delivery <b>${fmt(forecast)}</b> against a plan of <b>${fmt(planned)}</b>. ${late.length} of ${units.length} units are forecast to finish late.`
+            : `Every unit is forecast to finish by the planned delivery of <b>${fmt(planned)}</b>.`}</p>
+        </div>
+        <div>
+          <div class="tl-dates">
+            <div><span class="lbl">Planned delivery</span><strong>${fmt(planned)}</strong></div>
+            <div class="${slip > 0 ? 'late' : ''}"><span class="lbl">Forecast delivery</span><strong>${fmt(forecast)}</strong></div>
+          </div>
+          <div class="tl-track" aria-hidden="true">
+            <i class="done" style="width:${pos(planned)}%"></i>
+            ${slip > 0 ? `<i class="slip" style="left:${pos(planned)}%;width:${pos(forecast) - pos(planned)}%"></i>` : ''}
+          </div>
+          <div class="tl-legend"><span>Today · ${workDays(today, planned)} working days to planned delivery</span><span>${slip > 0 ? `<b class="up">+${slip} wd</b> slip` : 'No slip'}</span></div>
+          ${setText ? `<div class="setby">${setText}</div>` : ''}
+        </div>
+        <div class="trend">
+          <span class="lbl">${trendLbl}</span>
+          <div class="tval"><strong>+${slip} wd</strong><span>${trendWord}</span></div>
+          ${trendSvg}
+          <div class="tnote">${longWord} Rebuilt from the dates recorded in PPMS, against today's plan.</div>
+        </div>
+      </section>`;
+
+    // ── 2 · alerts (only when something needs attention)
+    const alerts = [];
+    battalions.filter(b => scope === 'all' || b === scope).forEach(b => {
+      const a = snap.adh[b]; if (!a) return;
+      if (a.due > 0 && a.dueDone === 0) alerts.push({ k: 'bad', t: `<b>${esc(b)}: no progress recorded.</b> <span>${a.due} station tasks were due by today and none is marked finished; ${a.notStarted} should have started. Either work has not started or the dates have not been entered in PPMS.</span>` });
+    });
+    if (streak >= 3)
+      alerts.push({ k: 'bad', t: `<b>The delay is growing every day: +${streakFrom} → +${slip} wd over the last ${streak} working days.</b> <span>${(w => w
+        ? `<b>${esc(w.st)}</b> on ${esc(unitLabel(setters[0]))} was planned to start on ${fmt(w.ps)} and has not started; that unit sets the delivery date. Each day it waits, delivery moves one more day.`
+        : 'Something on the critical path is standing still. Each day it waits, delivery moves one more day.')(setters[0]?.waiting?.[0])}</span>` });
+    if (slip > 0 && first === slip && series.every(p => p.slip === slip))
+      alerts.push({ k: 'warn', t: `<b>The +${slip} wd delay has not moved in 8 weeks</b>, so it does not come from recent slips. <span>Taking the planned durations in process order, ${esc(setters[0] ? unitLabel(setters[0]) : 'the last unit')} cannot reach its planned finish even if every station from today runs on time. Worth reviewing that unit's plan: either the dates need more room, or the work needs extra capacity or overlap.</span>` });
+    const alertHtml = alerts.length ? `<section class="alerts">${alerts.map(a => `<div class="alert ${a.k}">${ICON.warn}<div>${a.t}</div></div>`).join('')}</section>` : '';
+
+    // ── 3 · key figures
+    const adhPct = adh.due ? Math.round(adh.dueDone / adh.due * 100) : 100;
+    const donePct = adh.total ? Math.round(adh.done / adh.total * 100) : 0;
+    const finished = units.filter(u => u.done >= u.total).length;
+    const kpis = `
+      <section class="kpis">
+        <div class="card kpi ${adhPct >= 90 ? 'ok' : adhPct >= 70 ? 'warn' : 'bad'}"><span class="lbl">Plan adherence</span><strong class="num">${adhPct}%</strong>
+          <div class="meter"><i style="width:${adhPct}%"></i></div><em>${adh.dueDone} of ${adh.due} tasks due by today are done</em></div>
+        <div class="card kpi ${adh.notStarted ? 'bad' : 'ok'}"><span class="lbl">Late to start</span><strong class="num">${adh.notStarted}</strong><em>tasks past their planned start, not started</em></div>
+        <div class="card kpi ${late.length ? 'bad' : 'ok'}"><span class="lbl">Units forecast late</span><strong class="num">${late.length}<small style="font-size:1rem;color:var(--ink-dim)"> / ${units.length}</small></strong><em>${late.length ? `${late.filter(u => u.slip > 5).length} by more than 5 wd` : 'none'}</em></div>
+        <div class="card kpi ${worst?.slip > 0 ? 'bad' : 'ok'}"><span class="lbl">Worst unit</span><strong class="num">${worst?.slip > 0 ? '+' + worst.slip + ' wd' : '—'}</strong><em>${worst?.slip > 0 ? esc(unitLabel(worst)) : 'no unit late'}</em></div>
+        <div class="card kpi"><span class="lbl">Work done</span><strong class="num">${donePct}%</strong>
+          <div class="meter"><i style="width:${donePct}%"></i></div><em>${adh.done.toLocaleString()} of ${adh.total.toLocaleString()} tasks · ${finished} unit${finished === 1 ? '' : 's'} complete</em></div>
+      </section>`;
+
+    // ── 4 · monthly output: units finishing per month, planned vs forecast (+ cumulative)
+    const mk = iso => iso.slice(0, 7);
+    const months = [];
+    { const from = minIso(units.map(u => u.pf < u.ff ? u.pf : u.ff)).slice(0, 7), to = maxIso(units.map(u => u.ff > u.pf ? u.ff : u.pf)).slice(0, 7);
+      let [y, m] = from.split('-').map(Number);
+      while (months.length < 36) { const k = `${y}-${String(m).padStart(2, '0')}`; if (k > to) break; months.push(k); if (++m > 12) { m = 1; y++; } } }
+    const pc = months.map(m => units.filter(u => mk(u.pf) === m).length);
+    const fcn = months.map(m => units.filter(u => mk(u.ff) === m).length);
+    const cW = 640, cH = 200, cl = 28, cr = 8, ct = 10, cb = 26;
+    const cMax = Math.max(1, ...pc, ...fcn);
+    const bw = (cW - cl - cr) / months.length;
+    const cy = v => ct + (cH - ct - cb) * (1 - v / cMax);
+    const ticks = [...new Set([0, Math.ceil(cMax / 2), cMax])];
+    const monthName = m => D(m + '-01').toLocaleDateString('en-GB', { month: 'short' }) + (m.endsWith('-01') || m === months[0] ? ` ${m.slice(2, 4)}` : '');
+    const chart = `<svg viewBox="0 0 ${cW} ${cH}" role="img" aria-label="Units finishing per month, planned versus forecast">
+        ${ticks.map(t => `<line x1="${cl}" x2="${cW - cr}" y1="${cy(t)}" y2="${cy(t)}" stroke="var(--line-soft)"/><text x="${cl - 6}" y="${cy(t) + 3.5}" font-size="10" text-anchor="end" fill="var(--ink-dim)" font-family="DM Mono, monospace">${t}</text>`).join('')}
+        ${months.map((m, i) => {
+          const x = cl + i * bw, w = Math.min(22, bw * 0.34), g = 3;
+          const x1 = x + bw / 2 - w - g / 2, x2 = x + bw / 2 + g / 2;
+          return `<rect x="${x1}" y="${cy(pc[i])}" width="${w}" height="${cy(0) - cy(pc[i])}" rx="3" fill="var(--plan)"><title>${monthName(m)} — planned: ${pc[i]} units</title></rect>
+            <rect x="${x2}" y="${cy(fcn[i])}" width="${w}" height="${cy(0) - cy(fcn[i])}" rx="3" fill="var(--accent)"><title>${monthName(m)} — forecast: ${fcn[i]} units</title></rect>
+            ${pc[i] ? `<text x="${x1 + w / 2}" y="${cy(pc[i]) - 4}" font-size="10" text-anchor="middle" fill="var(--ink-soft)" font-family="DM Mono, monospace">${pc[i]}</text>` : ''}
+            ${fcn[i] ? `<text x="${x2 + w / 2}" y="${cy(fcn[i]) - 4}" font-size="10" text-anchor="middle" fill="var(--ink)" font-family="DM Mono, monospace" font-weight="600">${fcn[i]}</text>` : ''}
+            <text x="${x + bw / 2}" y="${cH - 8}" font-size="10.5" text-anchor="middle" fill="var(--ink-soft)">${monthName(m)}</text>`;
+        }).join('')}
+      </svg>`;
+    // biggest month-end shortfall (cumulative planned − cumulative forecast)
+    let cp = 0, cf = 0, gap = 0, gapM = null;
+    months.forEach((m, i) => { cp += pc[i]; cf += fcn[i]; if (cp - cf > gap) { gap = cp - cf; gapM = m; } });
+    const output = `
+      <div class="card chart">
+        <h2 class="h2">Vehicle output by month <small>units finishing, planned vs forecast</small></h2>
+        <p class="hint">${gap > 0 ? `Biggest shortfall: by the end of <b>${D(gapM + '-01').toLocaleDateString('en-GB', { month: 'long', year: 'numeric' })}</b>, ${plural(gap, 'unit')} fewer than planned will be finished.` : 'Forecast output keeps pace with the plan every month.'}</p>
+        ${chart}
+        <div class="legend"><span><i style="background:var(--plan)"></i>Planned finish</span><span><i style="background:var(--accent)"></i>Forecast finish</span></div>
+      </div>`;
+
+    // ── 4b · build time per vehicle: plan vs actual / forecast
+    const vtList = [...new Set(units.map(u => u.v))].sort((x, y) => vOrder(x) - vOrder(y));
+    const avg = l => (l.length ? Math.round(l.reduce((a, b) => a + b, 0) / l.length) : null);
+    const btRows = vtList.map(v => {
+      const vu = units.filter(u => u.v === v).map(u => ({ u, ...buildTime(u) })).filter(x => !x.suspect);
+      const fin = vu.filter(x => x.done), open = vu.filter(x => !x.done);
+      return { v, n: vu.length, plan: avg(vu.map(x => x.plan)), actual: avg(fin.map(x => x.real)), nFin: fin.length,
+        fcst: avg(open.map(x => x.real)), nOpen: open.length, planOpen: avg(open.map(x => x.plan)), planFin: avg(fin.map(x => x.plan)) };
+    });
+    const diffChip = (real, plan) => (real == null || plan == null ? '' : `<span class="delay ${sev(real - plan)}">${real - plan > 0 ? '+' : ''}${real - plan}</span>`);
+    const buildCard = `
+      <div class="card">
+        <h2 class="h2">Build time per vehicle <small>working days from first station start to last station finish</small></h2>
+        <p class="hint">Planned = planned start to planned finish. Actual = real start to real finish (finished vehicles). Forecast = real start (or forecast start) to forecast finish (vehicles still in work).</p>
+        <table>
+          <thead><tr><th>Vehicle</th><th class="c">Units</th><th class="r">Planned</th><th class="r">Actual</th><th class="r">Forecast</th><th class="r">vs plan</th></tr></thead>
+          <tbody>${btRows.map(r => `<tr><td><span class="vt">${esc(r.v)}</span></td><td class="c num">${r.n}</td>
+            <td class="r num">${r.plan ?? '—'}</td>
+            <td class="r num">${r.nFin ? `${r.actual} <span class="na">(${r.nFin})</span>` : '<span class="na">none finished</span>'}</td>
+            <td class="r num">${r.nOpen ? `${r.fcst} <span class="na">(${r.nOpen})</span>` : '—'}</td>
+            <td class="r">${r.nOpen ? diffChip(r.fcst, r.planOpen) : diffChip(r.actual, r.planFin)}</td></tr>`).join('')}</tbody>
+        </table>
+        <p class="hint" style="margin:10px 0 0">Averages per unit, in working days. A vehicle can take longer than planned and still finish on time when it was started early.</p>
+        ${(sus => sus.length ? `<div class="alert warn" style="margin-top:10px">${ICON.warn}<div><b>Check ${plural(sus.length, 'start date')}:</b> <span>${esc(sus.map(unitLabel).join(', '))} — the first recorded date is more than 5 months before the planned start, which usually means the wrong year was typed. ${sus.length === 1 ? 'It is' : 'They are'} left out of the averages above.</span></div></div>` : '')(units.filter(u => buildTime(u).suspect))}
+      </div>`;
+
+    // ── 5 · where to act: open actions vs time already lost
+    const all = aggregateCauses(causes);
+    const open = all.filter(c => c.openUnits.size).slice(0, 6);
+    const lost = all.filter(c => !c.openUnits.size).slice(0, 5);
+    const barMax = Math.max(1, ...all.map(c => c.max));
+    const causeRow = (c, i, isOpen) => `
+      <div class="cause">
+        <span class="rank">${i + 1}</span>
+        <div>
+          <div class="cause-t"><strong>${esc(c.st)}</strong><span class="vt">${esc(c.v)}</span><span class="chip">${esc(c.line)}</span><span class="chip">${esc(c.cat)}</span></div>
+          <div class="cause-l">${isOpen ? `<b>${plural(c.openUnits.size, 'unit')} still open</b> · ${esc(unitsTxt(c.openUnits))}` : `${plural(c.units.size, 'unit')} · ${esc(unitsTxt(c.units))}`}</div>
+          <div class="cause-bar"><i style="width:${Math.max(6, Math.round(c.max / barMax * 100))}%"></i></div>
+        </div>
+        <span class="wd">+${c.max}<small>wd</small></span>
+      </div>`;
+    const act = `
+      <div class="card open-list">
+        <h2 class="h2">Act now <small>unfinished stations pushing unit finishes back</small></h2>
+        <p class="hint">Time can still be recovered here. Ranked by the delay each station adds to a unit's finish.</p>
+        ${open.length ? open.map((c, i) => causeRow(c, i, true)).join('') : '<div class="empty">No open station is delaying a unit.</div>'}
+      </div>`;
+    const lostCard = lost.length ? `
+      <div class="card lost">
+        <h2 class="h2">Time already lost <small>finished late, delay carried forward</small></h2>
+        <p class="hint">These stations are done; their delay can only be won back further down the route.</p>
+        ${lost.map((c, i) => causeRow(c, i, false)).join('')}
+      </div>` : '';
+
+    // ── 6 · battalions
+    const btlCards = battalions.filter(b => scope === 'all' || b === scope).map(b => {
+      const bu = units.filter(u => u.b === b);
+      const bp = maxIso(bu.map(u => u.pf)), bf = maxIso(bu.map(u => u.ff)), bs = Math.max(0, wd(bp, bf));
+      const a = snap.adh[b] || {};
+      const ap = a.due ? Math.round(a.dueDone / a.due * 100) : 100;
+      const vts = [...new Set(bu.map(u => u.v))].sort((x, y) => vOrder(x) - vOrder(y));
+      return `
+        <article class="card btl">
+          <div class="btl-head"><h3>${esc(b)}</h3><span class="delay ${sev(bs)}">${delayTxt(bs)}</span>
+            <span class="dates">Plan <b>${fmt(bp)}</b> → Forecast <b>${fmt(bf)}</b></span></div>
+          <div class="btl-adh">
+            <span class="${ap < 70 ? 'bad' : ''}">Plan adherence <b>${ap}%</b></span>
+            <span class="${a.notStarted ? 'bad' : ''}">Late to start <b>${a.notStarted || 0}</b></span>
+            <span>Work done <b>${a.total ? Math.round(a.done / a.total * 100) : 0}%</b></span>
+          </div>
+          <table>
+            <thead><tr><th>Vehicle</th><th class="c">Units</th><th class="c">Late</th><th>Planned finish</th><th>Forecast finish</th><th class="r">Delay</th></tr></thead>
+            <tbody>${vts.map(v => {
+              const vu = bu.filter(u => u.v === v);
+              const vp = maxIso(vu.map(u => u.pf)), vf = maxIso(vu.map(u => u.ff)), vs = Math.max(0, wd(vp, vf));
+              const vl = vu.filter(u => u.slip > 0).length;
+              const vw = Math.max(0, ...vu.map(u => u.slip));
+              return `<tr><td><span class="vt">${esc(v)}</span></td><td class="c num">${vu.length}</td>
+                <td class="c late-of"><b class="num">${vl}</b>${vl && vw > vs ? ` <span title="Worst unit in this group">· worst +${vw}</span>` : ''}</td>
+                <td class="num">${fmt(vp)}</td><td class="num">${fmt(vf)}</td><td class="r"><span class="delay ${sev(vs)}">${delayTxt(vs)}</span></td></tr>`;
+            }).join('')}</tbody>
+          </table>
+        </article>`;
+    }).join('');
+
+    // ── 7 · every unit (fixed height)
+    const dom0 = minIso(units.map(u => u.pf < today ? u.pf : today)), dom1 = maxIso(units.map(u => u.ff > u.pf ? u.ff : u.pf));
+    const dspan = Math.max(1, days(dom0, dom1));
+    const mpos = iso => (days(dom0, iso) / dspan * 100).toFixed(2);
+    const lineCell = L => {
+      if (!L) return '<span class="na">—</span>';
+      if (L.done >= L.total) return `<span class="line done"><span class="dot"></span>Finished</span>`;
+      const ls = Math.max(0, L.slip);
+      return `<span class="line ${sev(ls)}" title="Planned ${fmt(L.planned)} · forecast ${fmt(L.forecast)} · ${L.done}/${L.total} stations done"><span class="dot"></span>${fmtShort(L.forecast)}${ls > 0 ? `<b>+${ls}</b>` : ''}</span>`;
+    };
+    const setKeys = new Set(setters.map(unitKey));
+    const row = u => `
+      <tr class="${setKeys.has(unitKey(u)) && slip > 0 ? 'crit' : ''}">
+        <td><div class="unit-name">${esc(unitLabel(u))}<small>${esc(u.code || '')}${setKeys.has(unitKey(u)) ? ' · sets delivery date' : ''}</small></div></td>
+        <td><div class="prog"><div class="meter"><i style="width:${Math.round(u.done / u.total * 100)}%"></i></div><span>${u.done}/${u.total}</span></div></td>
+        <td class="now">${u.done >= u.total ? '<span class="na">Complete</span>' : !u.started ? '<span class="na">Not started</span>' : esc(u.now || '—')}</td>
+        ${LINE_COLS.map(c => `<td>${lineCell(c.pick(u.lines))}</td>`).join('')}
+        <td class="num">${fmt(u.pf)}</td>
+        <td class="num">${fmt(u.ff)}</td>
+        <td class="bt num">${(bt => bt.suspect
+          ? `${bt.plan} → <span class="na">?</span><small style="color:var(--warn)">check start date (${fmtShort(u.as)} ${u.as.slice(0, 4)})</small>`
+          : `${bt.plan} → <b>${bt.real}</b> ${diffChip(bt.real, bt.plan)}<small>${bt.done ? 'actual' : 'forecast'}</small>`)(buildTime(u))}</td>
+        <td><div class="mini" title="Plan ${fmt(u.pf)} → forecast ${fmt(u.ff)}">
+          <span class="t" style="left:${mpos(today)}%"></span>
+          ${u.ff > u.pf ? `<span class="seg-l" style="left:${mpos(u.pf)}%;width:${(mpos(u.ff) - mpos(u.pf)).toFixed(2)}%"></span>` : ''}
+          <span class="p" style="left:${mpos(u.pf)}%"></span>
+          <span class="f ${sev(u.slip)}" style="left:${mpos(u.ff)}%"></span></div></td>
+        <td class="r"><span class="delay ${sev(u.slip)}">${delayTxt(u.slip)}</span></td>
+      </tr>`;
+    let body;
+    if (sortMode === 'worst') {
+      body = units.slice().sort((a, b) => b.slip - a.slip || b.ff.localeCompare(a.ff) || planCmp(a, b)).map(row).join('');
+    } else {
+      let g = '';
+      body = units.slice().sort(planCmp).map(u => { const k = `${u.b} · ${u.v}`; const h = k !== g ? `<tr class="grp"><td colspan="11">${esc(k)}</td></tr>` : ''; g = k; return h + row(u); }).join('');
+    }
+    const unitTable = `
+      <section class="card units">
+        <div class="units-head">
+          <h2 class="h2">Every unit <small>${units.length} units · planned vs forecast finish</small></h2>
+          <span class="grow"></span>
+          <div class="seg" id="sortSeg" role="group" aria-label="Sort units">
+            <button type="button" data-s="worst" aria-pressed="${sortMode === 'worst'}">Worst first</button>
+            <button type="button" data-s="plan" aria-pressed="${sortMode === 'plan'}">Plan order</button>
+          </div>
+        </div>
+        <div class="scroll"><table>
+          <thead><tr><th>Unit</th><th>Stations done</th><th>Now at</th>${LINE_COLS.map(c => `<th>${c.label}</th>`).join('')}
+            <th>Planned finish</th><th>Forecast finish</th><th>Build time (wd)<br><span style="text-transform:none;letter-spacing:0">plan → actual / forecast</span></th>
+            <th><div class="mini-axis"><span>${fmtShort(dom0)}</span><span>plan ▏ forecast ●</span><span>${fmtShort(dom1)}</span></div></th>
+            <th class="r">Delay</th></tr></thead>
+          <tbody>${body}</tbody>
+        </table></div>
+      </section>`;
+
+    const note = `
+      <section class="card note">
+        ${ICON.info}
+        <div><b>How the figures are calculated</b>
+          <ul>
+            <li>Each unit follows its process order. Finished stations use their actual completion dates; the rest start after the stations before them (not before today or their planned start) and take their planned duration.</li>
+            <li>A station waits only for the stations the plan finishes before it starts, so work the plan runs side by side (Hull and Turret; the turret and gun-barrel sub-assemblies next to the hull-side Assembly work) does not wait. Assembly, Processing &amp; Testing starts when the Hull and Turret (K9) or the Structure (K10 / K11) are finished.</li>
+            <li>Delay = forecast finish minus planned finish, in working days (Fridays excluded). Forecast delivery = the last unit's forecast finish. Same figures as the Delivery card and the Executive Report.</li>
+            <li>Plan adherence = station tasks planned to finish by today that are marked finished. Late to start = tasks past their planned start with no actual start.</li>
+            <li>Delay trend = the same forecast run as it would have looked on each past day (daily for the last two weeks, weekly before), using only the dates recorded by then and today's plan. Dates entered late make past days look better than they were.</li>
+            <li>Build time = working days from a vehicle's first station start to its last station finish. Actual start is the first real start or completion recorded on any of its stations.</li>
+          </ul></div>
+      </section>`;
+
+    main.innerHTML = verdict + alertHtml + kpis
+      + `<section class="row2">${output}${buildCard}</section>`
+      + `<section class="row2">${act}${lostCard || '<div></div>'}</section>`
+      + `<section><h2 class="h2">By battalion and vehicle</h2><div class="btls">${btlCards}</div></section>`
+      + unitTable + note;
+    document.getElementById('sortSeg').onclick = e => {
+      const k = e.target.closest('button')?.dataset.s; if (!k) return;
+      sortMode = k; try { localStorage.setItem('ppms_dd_sort', k); } catch {}
+      render();
+    };
+  }
+  render();
+})();
+</script>
+</body>
+</html>

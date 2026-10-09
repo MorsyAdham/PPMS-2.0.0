@@ -227,6 +227,9 @@ def set_base_styles(doc):
         st.paragraph_format.keep_with_next = True
 
 
+AUTHOR = 'Adham Morsy'  # footer credit, as on the hand-edited 07 Oct 2026 manual
+
+
 def header_footer(section, edition):
     section.different_first_page_header_footer = True  # clean cover
     hp = section.header.paragraphs[0]
@@ -236,7 +239,7 @@ def header_footer(section, edition):
 
     fp = section.footer.paragraphs[0]
     fp.alignment = WD_ALIGN_PARAGRAPH.CENTER
-    a = fp.add_run(f'Production Planning & Monitoring System  ·  {edition}  ·  Page ')
+    a = fp.add_run(f'Production Planning & Monitoring System  ·  {AUTHOR}  ·  Page ')  # edition date is on the cover
     a.font.size = Pt(8); a.font.color.rgb = MUTED
     b = fp.add_run(); b.font.size = Pt(8); b.font.color.rgb = MUTED; field(b, 'PAGE')
     c = fp.add_run(' of '); c.font.size = Pt(8); c.font.color.rgb = MUTED

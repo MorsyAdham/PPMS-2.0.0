@@ -214,6 +214,11 @@ ROWS = [
     ('Show the manual for one role — only the topics that role can use. Word downloads the same selection.', '한 역할의 매뉴얼만 표시합니다 — 해당 역할이 사용할 수 있는 주제만 보입니다. Word도 같은 선택으로 내려받습니다.', 'اعرض الدليل لدور واحد — المواضيع التي يمكن لذلك الدور استخدامها فقط. يُنزَّل ملف Word بالاختيار نفسه.'),
     ('Download the {a} edition of the manual as a Word document', '{a}용 매뉴얼을 Word 문서로 다운로드', 'تنزيل نسخة {a} من الدليل كمستند Word'),
     ('Pick a chapter, search above, or ask the assistant at the bottom left. Topics marked with a lock are not available for your role. Use "Topics for" at the top to see — and download — the manual for one role.', '장을 선택하거나, 위에서 검색하거나, 왼쪽 아래 어시스턴트에게 물어보세요. 자물쇠 표시 항목은 현재 역할로 사용할 수 없습니다. 위의 "대상 역할"에서 한 역할의 매뉴얼을 보고 다운로드할 수 있습니다.', 'اختر فصلًا، أو ابحث في الأعلى، أو اسأل المساعد أسفل اليسار. الموضوعات المعلَّمة بقفل غير متاحة لدورك. استخدم "المواضيع لـ" في الأعلى لعرض الدليل — وتنزيله — لدور واحد.'),
+    # VPX matrix date editor and Plan Table filter search (user feedback, 2026-10)
+    ('Enter / update dates', '날짜 입력 / 수정', 'إدخال / تحديث التواريخ'),
+    ('Dates cannot be in the future.', '미래 날짜는 입력할 수 없습니다.', 'لا يمكن أن تكون التواريخ في المستقبل.'),
+    ('Completion date cannot be before the actual start.', '완료일은 실제 시작일보다 앞설 수 없습니다.', 'لا يمكن أن يكون تاريخ الإنجاز قبل البدء الفعلي.'),
+    ('Search…', '검색…', 'بحث…'),
 ]
 TR = {en: (ko, ar) for en, ko, ar in ROWS}
 AREA = {en: G for en, _, _ in ROWS}
