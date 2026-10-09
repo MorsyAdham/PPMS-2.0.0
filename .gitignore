@@ -1,3 +1,6 @@
 reference_repo/
 .claude/
 .vscode/
+
+# Contains account passwords — never commit
+docs/communications/PPMS_shared_accounts_email_MrLee.*
