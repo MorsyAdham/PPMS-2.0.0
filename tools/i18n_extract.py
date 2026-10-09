@@ -59,7 +59,9 @@ DYNAMIC = {
     'KD2 planning': ['{a} ticked unit has no start date', '{a} ticked units have no start date',
                      '{a} was planned by someone else in the meantime and has been left out. Check the list and try again.',
                      '{a} were planned by someone else in the meantime and have been left out. Check the list and try again.'],
-    'Screens & messages': ['Revision "{a}" created.', 'Revision "{a}" created (empty).'],
+    'Screens & messages': ['Revision "{a}" created.', 'Revision "{a}" created (empty).',
+                           # KD2 category names shown in the Delivery Outlook chips (from the database)
+                           'Shot Blasting and Painting', 'Final Test', 'Processing'],
     'Gantt / shared': ['Delete {n} block', 'Delete {n} blocks', 'Shifting 1 vehicle ({b} blocks)…',
                        'Shifting {n} vehicles ({b} blocks)…', 'Saving {n} block…', 'Saving {n} blocks…',
                        '{n} block rescheduled ✓', '{n} blocks rescheduled ✓',
