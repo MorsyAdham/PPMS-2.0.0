@@ -1,0 +1,538 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="panel-token" content="__PANEL_TOKEN__">
+<title>PPMS Control Panel</title>
+<style>
+:root {
+    --bg: #f4f6fa; --surface: #fff; --surface-2: #eef1f6; --border: #d9dee8;
+    --text: #18202e; --muted: #5d6b82; --accent: #2563eb;
+    --ok: #15803d; --warn: #b45309; --bad: #b91c1c; --ok-bg: #dcfce7; --warn-bg: #fef3c7; --bad-bg: #fee2e2;
+    --mono: ui-monospace, "Cascadia Mono", Consolas, monospace;
+}
+@media (prefers-color-scheme: dark) {
+    :root {
+        --bg: #0f1117; --surface: #161b27; --surface-2: #1e2537; --border: #2a3350;
+        --text: #e2e8f4; --muted: #8b9ab5; --accent: #60a5fa;
+        --ok: #4ade80; --warn: #fbbf24; --bad: #f87171; --ok-bg: #14321f; --warn-bg: #3a2c0b; --bad-bg: #3b1515;
+    }
+}
+* { box-sizing: border-box; }
+body { margin: 0; background: var(--bg); color: var(--text); font: 14px/1.45 system-ui, "Segoe UI", sans-serif; }
+header { display: flex; align-items: center; gap: 16px; padding: 12px 20px; background: var(--surface); border-bottom: 1px solid var(--border); position: sticky; top: 0; z-index: 5; flex-wrap: wrap; }
+header h1 { font-size: 16px; margin: 0; }
+header .sub { color: var(--muted); font-size: 12px; }
+nav { display: flex; gap: 4px; flex-wrap: wrap; }
+nav button { border: 0; background: none; color: var(--muted); padding: 6px 12px; border-radius: 6px; cursor: pointer; font: inherit; }
+nav button[aria-current="page"] { background: var(--surface-2); color: var(--text); font-weight: 600; }
+.spacer { flex: 1; }
+main { padding: 20px; max-width: 1400px; margin: 0 auto; }
+section[hidden] { display: none; }
+.grid { display: grid; gap: 16px; grid-template-columns: repeat(auto-fit, minmax(320px, 1fr)); margin-bottom: 16px; }
+.card { background: var(--surface); border: 1px solid var(--border); border-radius: 10px; padding: 16px; min-width: 0; }
+.card h2 { font-size: 13px; text-transform: uppercase; letter-spacing: .04em; color: var(--muted); margin: 0 0 12px; display: flex; align-items: center; gap: 8px; }
+.card h2 .right { margin-left: auto; text-transform: none; letter-spacing: 0; }
+.tiles { display: grid; grid-template-columns: repeat(auto-fit, minmax(130px, 1fr)); gap: 12px; margin-bottom: 16px; }
+.tile { background: var(--surface); border: 1px solid var(--border); border-radius: 10px; padding: 12px 14px; }
+.tile .label { color: var(--muted); font-size: 12px; }
+.tile .value { font-size: 24px; font-weight: 650; font-variant-numeric: tabular-nums; }
+.tile .note { color: var(--muted); font-size: 12px; }
+.pill { display: inline-flex; align-items: center; gap: 6px; padding: 2px 9px; border-radius: 999px; font-size: 12px; font-weight: 600; white-space: nowrap; }
+.pill::before { content: ""; width: 7px; height: 7px; border-radius: 50%; background: currentColor; }
+.pill.ok { color: var(--ok); background: var(--ok-bg); }
+.pill.warn { color: var(--warn); background: var(--warn-bg); }
+.pill.bad { color: var(--bad); background: var(--bad-bg); }
+.pill.idle { color: var(--muted); background: var(--surface-2); }
+dl.kv { display: grid; grid-template-columns: max-content 1fr; gap: 6px 16px; margin: 0; }
+dl.kv dt { color: var(--muted); }
+dl.kv dd { margin: 0; min-width: 0; overflow-wrap: anywhere; }
+table { width: 100%; border-collapse: collapse; font-size: 13px; }
+th, td { text-align: left; padding: 6px 8px; border-bottom: 1px solid var(--border); vertical-align: top; }
+th { color: var(--muted); font-weight: 600; font-size: 12px; position: sticky; top: 0; background: var(--surface); }
+td.num, th.num { text-align: right; font-variant-numeric: tabular-nums; }
+.scroll { max-height: 420px; overflow: auto; }
+.table-wrap { overflow-x: auto; }
+button.btn { font: inherit; border: 1px solid var(--border); background: var(--surface-2); color: var(--text); padding: 6px 12px; border-radius: 6px; cursor: pointer; }
+button.btn:hover:not(:disabled) { border-color: var(--muted); }
+button.btn.primary { background: var(--accent); border-color: var(--accent); color: #fff; }
+button.btn.danger { background: var(--bad); border-color: var(--bad); color: #fff; }
+button.btn:disabled { opacity: .5; cursor: not-allowed; }
+input[type=text], textarea, select { font: inherit; color: var(--text); background: var(--surface-2); border: 1px solid var(--border); border-radius: 6px; padding: 6px 8px; }
+textarea { width: 100%; min-height: 70px; resize: vertical; }
+.row { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; margin: 8px 0; }
+.muted { color: var(--muted); }
+.small { font-size: 12px; }
+.mono { font-family: var(--mono); font-size: 12px; }
+pre.log { background: #0b0e14; color: #d6deeb; padding: 12px; border-radius: 8px; max-height: 360px; overflow: auto; font: 12px/1.45 var(--mono); white-space: pre-wrap; margin: 8px 0 0; }
+.bar { height: 8px; background: var(--surface-2); border-radius: 4px; overflow: hidden; min-width: 80px; }
+.bar > span { display: block; height: 100%; background: var(--ok); }
+.err { color: var(--bad); }
+.list { margin: 0; padding-left: 18px; }
+.toast { position: fixed; bottom: 20px; right: 20px; background: var(--text); color: var(--bg); padding: 10px 16px; border-radius: 8px; max-width: 420px; z-index: 50; opacity: 0; transition: opacity .2s; pointer-events: none; }
+.toast.show { opacity: 1; }
+label.chk { display: inline-flex; gap: 4px; align-items: center; margin-right: 8px; }
+@media (max-width: 640px) { main { padding: 16px; } header { padding: 10px 16px; } }
+</style>
+</head>
+<body>
+<header>
+    <div>
+        <h1>PPMS Control Panel</h1>
+        <div class="sub" id="hdrSub">Local · 127.0.0.1</div>
+    </div>
+    <nav id="nav">
+        <button data-tab="overview" aria-current="page">Overview</button>
+        <button data-tab="deploy">Deploy</button>
+        <button data-tab="users">Users</button>
+        <button data-tab="notice">Notice &amp; maintenance</button>
+        <button data-tab="activity">Activity</button>
+        <button data-tab="data">Backups &amp; SQL</button>
+    </nav>
+    <span class="spacer"></span>
+    <span class="small muted" id="lastRefresh"></span>
+    <label class="small muted chk"><input type="checkbox" id="autoRefresh" checked> Auto-refresh 60s</label>
+    <button class="btn" id="btnRefresh">Refresh</button>
+</header>
+
+<main>
+<!-- OVERVIEW -->
+<section id="tab-overview">
+    <div class="tiles" id="ovTiles"></div>
+    <div class="grid">
+        <div class="card"><h2>Live site</h2><div id="ovSite">Loading…</div></div>
+        <div class="card"><h2>Deploy state</h2><div id="ovDeploy">Loading…</div></div>
+        <div class="card"><h2>Database</h2><div id="ovDb">Loading…</div></div>
+    </div>
+    <div class="grid">
+        <div class="card"><h2>Security check <span class="right small muted">public (anon) key, no sign-in</span></h2><div id="ovExposure">Loading…</div></div>
+        <div class="card"><h2>Today</h2><div id="ovToday">Loading…</div></div>
+    </div>
+    <div class="card"><h2>KD2 production <span class="right small muted" id="kpiVersion"></span></h2><div id="ovKpis">Loading…</div></div>
+</section>
+
+<!-- DEPLOY -->
+<section id="tab-deploy" hidden>
+    <div class="grid">
+        <div class="card"><h2>Workspace</h2><div id="dpWorkspace">Loading…</div>
+            <div class="row"><button class="btn" id="btnFetch">Fetch origin + production</button><button class="btn" id="btnPush">Push to origin</button></div>
+        </div>
+        <div class="card"><h2>Deploy</h2>
+            <p class="small muted">Runs <span class="mono">tools/deploy.sh</span>. It refuses to deploy uncommitted changes. The message defaults to the latest commit message.</p>
+            <div class="row"><input type="text" id="deployMsg" placeholder="Deploy message (optional)" style="flex:1;min-width:200px"></div>
+            <div class="row">
+                <button class="btn primary" id="btnDeployApp">Deploy app/ → live site</button>
+                <button class="btn" id="btnDeployV2">Deploy app-v2/ → v2 (Vercel)</button>
+            </div>
+            <div id="dpTargets"></div>
+        </div>
+    </div>
+    <div class="card"><h2>Job output <span class="right small" id="jobState"></span></h2><pre class="log" id="jobLog">No job run yet.</pre></div>
+    <div class="grid" style="margin-top:16px">
+        <div class="card"><h2>app/ vs app-v2/ (committed)</h2><div id="dpDrift"></div></div>
+        <div class="card"><h2>Recent commits</h2><div id="dpCommits"></div></div>
+    </div>
+</section>
+
+<!-- USERS -->
+<section id="tab-users" hidden>
+    <div class="card">
+        <h2>User accounts <span class="right"><input type="text" id="userFilter" placeholder="Filter…"></span></h2>
+        <p class="small muted">Changes save immediately and reach a signed-in user live (deactivating signs them out). Every change is written to the audit log as <span class="mono">control-panel@local</span>. Passwords are never read.</p>
+        <div class="table-wrap" id="usersTable">Loading…</div>
+    </div>
+</section>
+
+<!-- NOTICE -->
+<section id="tab-notice" hidden>
+    <div class="grid">
+        <div class="card">
+            <h2>Banner &amp; maintenance mode</h2>
+            <div id="noticeMissing" hidden class="err small"></div>
+            <div class="row"><label class="chk"><input type="checkbox" id="nActive"> Show banner to all users</label></div>
+            <div class="row">
+                <label>Level <select id="nLevel"><option value="info">Info (blue)</option><option value="warning">Warning (amber)</option><option value="critical">Critical (red)</option></select></label>
+            </div>
+            <textarea id="nMessage" maxlength="500" placeholder="e.g. PPMS will be updated at 15:00 — please save your work."></textarea>
+            <div class="row"><label class="chk"><input type="checkbox" id="nReadOnly"> Read-only (maintenance) — everyone except Master Admin works as a viewer</label></div>
+            <div class="row"><button class="btn primary" id="btnSaveNotice">Save &amp; publish</button><button class="btn" id="btnClearNotice">Turn everything off</button></div>
+            <p class="small muted" id="noticeMeta"></p>
+        </div>
+        <div class="card">
+            <h2>How it works</h2>
+            <ul class="list small">
+                <li>The banner and read-only switch reach open sessions within seconds (realtime) and every new sign-in.</li>
+                <li>Read-only is enforced by the app, not the database. Until the security cut-over, the database itself still accepts writes from anyone with the public key.</li>
+                <li>Needs migration <span class="mono">61_system_notice.sql</span> run once in the Supabase SQL editor, and the app version that reads it deployed.</li>
+            </ul>
+        </div>
+    </div>
+</section>
+
+<!-- ACTIVITY -->
+<section id="tab-activity" hidden>
+    <div class="grid">
+        <div class="card"><h2>Active today</h2><div id="acUsers">Loading…</div></div>
+        <div class="card"><h2>New production issues (7 days)</h2><div id="acIssues">Loading…</div></div>
+    </div>
+    <div class="card"><h2>Latest audit log</h2><div class="scroll" id="acRecent">Loading…</div></div>
+</section>
+
+<!-- DATA -->
+<section id="tab-data" hidden>
+    <div class="grid">
+        <div class="card">
+            <h2>Backups</h2>
+            <p class="small muted">Exports every PPMS table (not the other apps sharing the project) as JSON to <span class="mono" id="bkDir"></span>. Includes the users table, so keep the folder private.</p>
+            <div class="row"><button class="btn primary" id="btnBackup">Back up now</button></div>
+            <div id="bkList">Loading…</div>
+        </div>
+        <div class="card">
+            <h2>Table sizes</h2>
+            <div class="scroll" id="dbTables">Loading…</div>
+        </div>
+    </div>
+    <div class="card">
+        <h2>Saved SQL checks</h2>
+        <p class="small muted">Read-only queries from <span class="mono">database/schema/security_inventory.sql</span> and <span class="mono">tools/control-panel/checks/*.sql</span>, run through the Supabase Management API. Add your own by dropping a <span class="mono">.sql</span> file in that folder (first comment line = title).</p>
+        <div class="row" id="checkButtons">Loading…</div>
+        <div class="table-wrap scroll" id="checkResult"></div>
+    </div>
+</section>
+</main>
+<div class="toast" id="toast"></div>
+
+<script>
+'use strict';
+const TOKEN = document.querySelector('meta[name="panel-token"]').content;
+const $ = id => document.getElementById(id);
+const esc = v => String(v ?? '').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+const fmtN = n => n == null ? '—' : Number(n).toLocaleString('en-GB');
+const fmtDate = iso => iso ? new Date(iso).toLocaleString('en-GB', { day: '2-digit', month: 'short', hour: '2-digit', minute: '2-digit' }) : '—';
+const fmtDay = d => d ? new Date(d + 'T00:00:00').toLocaleDateString('en-GB', { day: '2-digit', month: 'short', year: 'numeric' }) : '—';
+const ago = iso => {
+    if (!iso) return 'never';
+    const s = (Date.now() - new Date(iso)) / 1000;
+    if (s < 90) return 'just now';
+    if (s < 5400) return Math.round(s / 60) + ' min ago';
+    if (s < 129600) return Math.round(s / 3600) + ' h ago';
+    return Math.round(s / 86400) + ' days ago';
+};
+const pill = (cls, text) => `<span class="pill ${cls}">${esc(text)}</span>`;
+const pct = (a, b) => b ? Math.round(a / b * 100) : 0;
+
+async function api(path, opts = {}) {
+    const res = await fetch(path, {
+        method: opts.method || 'GET',
+        headers: { 'X-Panel-Token': TOKEN, ...(opts.body ? { 'Content-Type': 'application/json' } : {}) },
+        body: opts.body ? JSON.stringify(opts.body) : undefined,
+    });
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok) throw new Error(data.error || res.statusText);
+    return data;
+}
+function toast(msg) {
+    const t = $('toast');
+    t.textContent = msg;
+    t.classList.add('show');
+    clearTimeout(toast._t);
+    toast._t = setTimeout(() => t.classList.remove('show'), 4000);
+}
+const fail = (el, e) => {
+    $(el).innerHTML = /SUPABASE_SERVICE_KEY/.test(e.message)
+        ? `${pill('idle', 'Not configured')}<p class="small">Add SUPABASE_SERVICE_KEY to tools/control-panel/.env, then restart the panel.</p>`
+        : `<span class="err">${esc(e.message)}</span>`;
+};
+
+/* ── Tabs ── */
+let currentTab = 'overview';
+try { currentTab = localStorage.getItem('ppmsPanelTab') || 'overview'; } catch {}
+function showTab(tab) {
+    if (!$('tab-' + tab)) tab = 'overview';
+    currentTab = tab;
+    document.querySelectorAll('main > section').forEach(s => { s.hidden = s.id !== 'tab-' + tab; });
+    document.querySelectorAll('#nav button').forEach(b => { if (b.dataset.tab === tab) b.setAttribute('aria-current', 'page'); else b.removeAttribute('aria-current'); });
+    try { localStorage.setItem('ppmsPanelTab', tab); } catch {}
+    refresh();
+}
+$('nav').addEventListener('click', e => { const b = e.target.closest('button[data-tab]'); if (b) showTab(b.dataset.tab); });
+
+/* ── State ── */
+let CFG = null, GIT = null, SITE = null, DB = null;
+
+async function loadConfig() {
+    CFG = await api('/api/config');
+    $('hdrSub').textContent = `Local · 127.0.0.1 · Supabase ${CFG.project}${CFG.serviceKey ? '' : ' (no service key)'}`;
+}
+
+/* ── Overview ── */
+async function loadSite() {
+    try { SITE = await api('/api/site'); } catch (e) { return fail('ovSite', e); }
+    const s = SITE.live;
+    const block = (name, x) => x ? `
+        <dl class="kv">
+            <dt>${esc(name)}</dt><dd>${x.up ? pill('ok', 'Up') : pill('bad', x.error ? 'Down' : 'HTTP ' + x.status)} <span class="muted small">${x.ms != null ? x.ms + ' ms' : ''}</span></dd>
+            <dt>URL</dt><dd><a href="${esc(x.url)}" target="_blank" rel="noopener">${esc(x.url)}</a></dd>
+            <dt>Version</dt><dd><strong>${esc(x.version?.label || '—')}</strong> <span class="muted small">${x.version ? 'deployed ' + esc(fmtDate(x.version.deployedAt)) : ''}</span></dd>
+            ${x.version?.notes ? `<dt>Notes</dt><dd class="small">${esc(x.version.notes)}</dd>` : ''}
+        </dl>` : '';
+    $('ovSite').innerHTML = block('Live (GitHub Pages)', s) + (SITE.v2 ? '<hr style="border:0;border-top:1px solid var(--border);margin:12px 0">' + block('v2 (Vercel)', SITE.v2) : '');
+}
+
+function deployLine(name, d, changes) {
+    if (!d.known) return `<dt>${esc(name)}</dt><dd>${pill('idle', 'Unknown')} <span class="small muted">fetch production first</span></dd>`;
+    const uncommitted = changes.length;
+    let st = d.inSync ? pill('ok', 'Matches HEAD') : pill('warn', `${d.fileCount} file(s) not deployed`);
+    if (uncommitted) st += ' ' + pill('warn', `${uncommitted} uncommitted`);
+    return `<dt>${esc(name)}</dt><dd>${st}<div class="small muted">last deploy: ${esc(d.lastDeploy?.subject || '')} · ${esc(d.lastDeploy?.when || '')}</div></dd>`;
+}
+async function loadGit() {
+    try { GIT = await api('/api/git'); } catch (e) { fail('ovDeploy', e); return fail('dpWorkspace', e); }
+    const g = GIT;
+    const originTxt = g.origin.known
+        ? (g.origin.ahead || g.origin.behind ? pill('warn', `${g.origin.ahead} ahead · ${g.origin.behind} behind`) : pill('ok', 'In sync'))
+        : pill('idle', 'Unknown');
+    const html = `<dl class="kv">
+        <dt>Branch</dt><dd class="mono">${esc(g.branch)}</dd>
+        <dt>origin/main</dt><dd>${originTxt}</dd>
+        ${deployLine('Live (app/)', g.deploy.app, g.changes.app)}
+        ${deployLine('v2 (app-v2/)', g.deploy.appV2, g.changes.appV2)}
+        <dt>app vs app-v2</dt><dd>${g.appVsV2.length ? pill('warn', g.appVsV2.length + ' file(s) differ') : pill('ok', 'Identical')}</dd>
+    </dl>`;
+    $('ovDeploy').innerHTML = html;
+
+    const ch = [...g.changes.app, ...g.changes.appV2, ...g.changes.other];
+    $('dpWorkspace').innerHTML = html + (ch.length
+        ? `<p class="small muted" style="margin:12px 0 4px">Uncommitted (${ch.length})</p><div class="scroll" style="max-height:180px"><table>${ch.map(c => `<tr><td class="mono">${esc(c.code)}</td><td class="mono">${esc(c.file)}</td></tr>`).join('')}</table></div>`
+        : '<p class="small muted">Working tree clean.</p>');
+    $('dpTargets').innerHTML = [['app/', g.deploy.app], ['app-v2/', g.deploy.appV2]].map(([n, d]) => d.known && !d.inSync
+        ? `<p class="small"><strong>${n}</strong> not yet deployed:</p><ul class="list small mono">${d.files.map(f => `<li>${esc(f)}</li>`).join('')}${d.fileCount > d.files.length ? `<li>… ${d.fileCount - d.files.length} more</li>` : ''}</ul>` : '').join('');
+    $('dpDrift').innerHTML = g.appVsV2.length
+        ? `<p class="small muted">Bug fixes in app/ must be mirrored into app-v2/. Files that differ:</p><ul class="list small mono">${g.appVsV2.map(f => `<li>${esc(f)}</li>`).join('')}</ul>`
+        : '<p class="small muted">app/ and app-v2/ are identical at HEAD.</p>';
+    $('dpCommits').innerHTML = `<table>${g.commits.map(c => `<tr><td class="mono">${esc(c.hash)}</td><td>${esc(c.subject)}</td><td class="small muted" style="white-space:nowrap">${esc(c.when)}</td></tr>`).join('')}</table>`;
+    if (!g.bash) $('dpTargets').innerHTML += '<p class="err small">Git Bash not found — deploy buttons need Git for Windows.</p>';
+}
+
+async function loadDb() {
+    try { DB = await api('/api/db'); } catch (e) { fail('ovDb', e); fail('ovExposure', e); return fail('dbTables', e); }
+    const d = DB;
+    if (!d.configured || !d.reachable) {
+        const msg = `${pill(d.configured ? 'bad' : 'idle', d.configured ? 'Unreachable' : 'Not configured')}<p class="small">${esc(d.error || '')}</p>`;
+        $('ovDb').innerHTML = msg; $('ovExposure').innerHTML = msg; $('dbTables').innerHTML = msg;
+        return;
+    }
+    const totalRows = d.tables.reduce((a, t) => a + (t.rows || 0), 0);
+    $('ovDb').innerHTML = `<dl class="kv">
+        <dt>Supabase</dt><dd>${pill(d.ms > 1500 ? 'warn' : 'ok', 'Reachable')} <span class="small muted">${d.ms} ms</span></dd>
+        <dt>PPMS rows</dt><dd>${fmtN(totalRows)} in ${d.tables.filter(t => t.rows != null).length} tables${d.tables.some(t => t.error) ? ` · <span class="err">${d.tables.filter(t => t.error).length} unreadable</span>` : ''}</dd>
+        ${d.users ? `<dt>Accounts</dt><dd>${d.users.active} active of ${d.users.total} · ${d.users.masterAdmins} Master Admin${d.users.masterAdmins === 1 ? '' : 's'}</dd>` : ''}
+        ${d.checks.map(c => `<dt>${esc(c.label)}</dt><dd>${c.error ? '<span class="muted small">n/a</span>' : fmtN(c.value)}</dd>`).join('')}
+    </dl>`;
+    const exposed = d.exposure.filter(x => x.readable);
+    $('ovExposure').innerHTML = (exposed.length
+        ? `<p>${pill('bad', `${exposed.length} of ${d.exposure.length} tables readable without login`)}</p>`
+        : `<p>${pill('ok', 'Public key cannot read these tables')}</p>`)
+        + `<table>${d.exposure.map(x => `<tr><td class="mono">${esc(x.table)}</td><td>${x.readable ? pill('bad', 'Readable · ' + fmtN(x.rows) + ' rows') : pill('ok', 'Blocked')}</td></tr>`).join('')}</table>
+        <p class="small muted">Fixed by the SC-01 security rebuild (Supabase Auth + row-level security). This check keeps watching for regressions afterwards.</p>`;
+    $('dbTables').innerHTML = `<table><tr><th>Table</th><th class="num">Rows</th></tr>${d.tables.map(t => `<tr><td class="mono">${esc(t.table)}</td><td class="num">${t.error ? `<span class="err small" title="${esc(t.error)}">error</span>` : fmtN(t.rows)}</td></tr>`).join('')}</table>`;
+}
+
+async function loadActivity() {
+    let a;
+    try { a = await api('/api/activity'); } catch (e) { ['ovToday', 'acUsers', 'acIssues', 'acRecent'].forEach(id => fail(id, e)); return; }
+    $('ovToday').innerHTML = `<dl class="kv">
+        <dt>Active users</dt><dd><strong>${a.today.users.length}</strong></dd>
+        <dt>Sign-ins</dt><dd>${fmtN(a.today.logins)}</dd>
+        <dt>Logged actions</dt><dd>${fmtN(a.today.actions)}</dd>
+        <dt>New issues (7 d)</dt><dd>${a.newIssues.length}</dd>
+        <dt>Last action</dt><dd>${a.recent[0] ? `${esc(a.recent[0].user_email)} · ${esc(a.recent[0].action)} ${esc(a.recent[0].table_name || '')} · ${ago(a.recent[0].created_at)}` : '—'}</dd>
+    </dl>`;
+    $('acUsers').innerHTML = a.today.users.length
+        ? `<table><tr><th>User</th><th class="num">Actions</th><th class="num">Sign-ins</th><th>Last</th></tr>${a.today.users.map(u => `<tr><td>${esc(u.email)}</td><td class="num">${u.actions}</td><td class="num">${u.logins}</td><td class="small muted">${ago(u.last)}</td></tr>`).join('')}</table>`
+        : '<p class="muted">No activity yet today.</p>';
+    const prCls = { critical: 'bad', high: 'warn', medium: 'idle', low: 'idle' };
+    $('acIssues').innerHTML = a.newIssues.length
+        ? `<table><tr><th>Issue</th><th>Priority</th><th>Status</th><th>Raised</th></tr>${a.newIssues.map(i => `<tr><td>${esc(i.title)}<div class="small muted">${esc(i.category)} · ${esc(i.reporter_name || '')}</div></td><td>${pill(prCls[i.priority] || 'idle', i.priority)}</td><td>${esc(i.status)}</td><td class="small muted">${ago(i.created_at)}</td></tr>`).join('')}</table>`
+        : '<p class="muted">No new issues in the last 7 days.</p>';
+    $('acRecent').innerHTML = `<table><tr><th>When</th><th>User</th><th>Action</th><th>Table</th><th>Record</th><th>Version</th></tr>${a.recent.map(r => `<tr><td class="small" style="white-space:nowrap">${esc(fmtDate(r.created_at))}</td><td>${esc(r.user_email)}<div class="small muted">${esc(r.user_role || '')}</div></td><td class="mono">${esc(r.action)}</td><td class="mono">${esc(r.table_name || '')}</td><td class="mono">${esc(r.record_id || '')}</td><td class="small">${esc(r.plan_version_name || '')}</td></tr>`).join('')}</table>`;
+}
+
+async function loadKpis() {
+    let k;
+    try { k = await api('/api/kpis'); } catch (e) { return fail('ovKpis', e); }
+    $('kpiVersion').textContent = k.version ? `${k.version.name} · as of ${fmtDay(k.today)}` : 'no KD2 baseline version';
+    const t = k.kd2;
+    $('ovTiles').innerHTML = [
+        ['KD2 steps complete', `${pct(t.done, t.steps)}%`, `${fmtN(t.done)} of ${fmtN(t.steps)}`],
+        ['In progress', fmtN(t.started), 'started, not complete'],
+        ['Overdue steps', fmtN(t.overdue), 'planned end passed'],
+        ['Open issues', fmtN(k.issues.open), ['critical', 'high'].map(p => `${k.issues.byPriority[p] || 0} ${p}`).join(' · ')],
+        ['Site', SITE?.live?.up ? 'Up' : (SITE ? 'Down' : '…'), SITE?.live?.version?.label || ''],
+    ].map(([l, v, n]) => `<div class="tile"><div class="label">${esc(l)}</div><div class="value">${esc(v)}</div><div class="note">${esc(n)}</div></div>`).join('');
+    const typeRows = Object.entries(k.byType).sort().map(([vt, x]) => `<tr><td><strong>${esc(vt)}</strong></td><td class="num">${fmtN(x.steps)}</td><td><div class="bar"><span style="width:${pct(x.done, x.steps)}%"></span></div></td><td class="num">${pct(x.done, x.steps)}%</td><td class="num">${fmtN(x.overdue)}</td><td>${fmtDay(x.lastPlannedEnd)}</td></tr>`).join('');
+    const btlRows = k.battalions.map(b => {
+        const late = b.delivery_deadline && b.lastPlannedEnd > b.delivery_deadline;
+        return `<tr><td><strong>${esc(b.battalion_code)}</strong> <span class="small muted">${esc(b.battalion_name || '')}</span></td><td class="num">${fmtN(b.steps)}</td><td><div class="bar"><span style="width:${pct(b.done, b.steps)}%"></span></div></td><td class="num">${pct(b.done, b.steps)}%</td><td class="num">${b.overdue ? `<span class="err">${fmtN(b.overdue)}</span>` : 0}</td><td>${fmtDay(b.lastPlannedEnd)}</td><td>${b.delivery_deadline ? fmtDay(b.delivery_deadline) + ' ' + (late ? pill('bad', 'plan ends late') : pill('ok', 'on time')) : '<span class="muted">—</span>'}</td></tr>`;
+    }).join('');
+    const head = extra => `<tr><th></th><th class="num">Steps</th><th>Progress</th><th class="num">Done</th><th class="num">Overdue</th><th>Plan ends</th>${extra}</tr>`;
+    $('ovKpis').innerHTML = `<div class="table-wrap"><table>${head('')}${typeRows}</table></div>
+        <div class="table-wrap" style="margin-top:16px"><table>${head('<th>Deadline</th>')}${btlRows}</table></div>
+        <p class="small muted">Simple counts from the KD2 baseline plan. The in-app Executive Report remains the reference for delivery forecasts.</p>`;
+}
+
+/* ── Users ── */
+let USERS = [];
+const ROLE_LABEL = { viewer: 'Viewer', operator: 'Operator', planner: 'Planner', master_admin: 'Master Admin' };
+const MOD_LABEL = { kd1: 'KD1', kd2: 'KD2', f100kd2: 'F100' };
+async function loadUsers() {
+    try { USERS = await api('/api/users'); } catch (e) { return fail('usersTable', e); }
+    renderUsers();
+}
+function renderUsers() {
+    const q = $('userFilter').value.trim().toLowerCase();
+    const list = USERS.filter(u => !q || `${u.full_name} ${u.email} ${u.role}`.toLowerCase().includes(q));
+    $('usersTable').innerHTML = `<table><tr><th>Name</th><th>Role</th><th>Modules</th><th>Export</th><th>Active</th><th>Last sign-in</th></tr>${list.map(u => `
+        <tr data-id="${esc(u.id)}">
+            <td><strong>${esc(u.full_name || '—')}</strong><div class="small muted">${esc(u.email)}</div></td>
+            <td><select data-f="role">${Object.entries(ROLE_LABEL).map(([v, l]) => `<option value="${v}"${u.role === v ? ' selected' : ''}>${l}</option>`).join('')}</select></td>
+            <td>${Object.entries(MOD_LABEL).map(([m, l]) => `<label class="chk small"><input type="checkbox" data-f="module" value="${m}"${(u.modules || []).includes(m) ? ' checked' : ''}>${l}</label>`).join('')}</td>
+            <td><input type="checkbox" data-f="can_export"${u.can_export ? ' checked' : ''}></td>
+            <td><label class="chk"><input type="checkbox" data-f="is_active"${u.is_active ? ' checked' : ''}>${u.is_active ? pill('ok', 'Active') : pill('idle', 'Disabled')}</label></td>
+            <td class="small muted">${u.last_login ? esc(ago(u.last_login)) : 'never'}</td>
+        </tr>`).join('')}</table>`;
+}
+$('userFilter').addEventListener('input', renderUsers);
+$('usersTable').addEventListener('change', async e => {
+    const el = e.target.closest('[data-f]');
+    const tr = e.target.closest('tr[data-id]');
+    if (!el || !tr) return;
+    const u = USERS.find(x => String(x.id) === tr.dataset.id);
+    let body;
+    if (el.dataset.f === 'module') body = { modules: [...tr.querySelectorAll('[data-f=module]:checked')].map(x => x.value) };
+    else if (el.dataset.f === 'role') body = { role: el.value };
+    else body = { [el.dataset.f]: el.checked };
+    const what = el.dataset.f === 'is_active' ? (el.checked ? 'Re-activate' : 'Disable — this signs them out') : 'Change';
+    if (el.dataset.f === 'is_active' || el.dataset.f === 'role') {
+        if (!confirm(`${what} ${u.full_name || u.email}${el.dataset.f === 'role' ? ` → ${ROLE_LABEL[el.value]}` : ''}?`)) { renderUsers(); return; }
+    }
+    try {
+        const r = await api('/api/users/' + encodeURIComponent(u.id), { method: 'PATCH', body });
+        Object.assign(u, r.user);
+        toast(`Saved ${u.full_name || u.email}${r.audited ? '' : ' (audit log write failed)'}`);
+    } catch (err) { toast('Not saved: ' + err.message); }
+    renderUsers();
+});
+
+/* ── Notice ── */
+async function loadNotice() {
+    let r;
+    try { r = await api('/api/notice'); } catch (e) { return toast(e.message); }
+    $('noticeMissing').hidden = r.installed;
+    $('noticeMissing').textContent = r.installed ? '' : /SUPABASE_SERVICE_KEY/.test(r.error || '') ? 'Add SUPABASE_SERVICE_KEY to tools/control-panel/.env, then restart the panel.' : 'Table ppms_system_notice not found — run database/migrations/61_system_notice.sql in the Supabase SQL editor first.';
+    ['btnSaveNotice', 'btnClearNotice'].forEach(id => { $(id).disabled = !r.installed; });
+    const n = r.notice || {};
+    $('nActive').checked = !!n.active;
+    $('nLevel').value = n.level || 'info';
+    $('nMessage').value = n.message || '';
+    $('nReadOnly').checked = !!n.read_only;
+    $('noticeMeta').textContent = n.updated_at ? `Last changed ${fmtDate(n.updated_at)} by ${n.updated_by || '—'}` : '';
+}
+async function saveNotice(body) {
+    if (body.read_only && body.active && !confirm('Turn on read-only mode? Everyone except Master Admin will be unable to edit until you switch it off.')) return;
+    try { await api('/api/notice', { method: 'PUT', body }); toast('Published'); } catch (e) { toast('Not saved: ' + e.message); }
+    loadNotice();
+}
+$('btnSaveNotice').onclick = () => saveNotice({ active: $('nActive').checked, level: $('nLevel').value, message: $('nMessage').value, read_only: $('nReadOnly').checked });
+$('btnClearNotice').onclick = () => saveNotice({ active: false, level: 'info', message: '', read_only: false });
+
+/* ── Jobs ── */
+async function startJob(path, body, confirmMsg) {
+    if (confirmMsg && !confirm(confirmMsg)) return;
+    let job;
+    try { job = await api(path, { method: 'POST', body: body || {} }); } catch (e) { return toast(e.message); }
+    if (currentTab !== 'deploy' && currentTab !== 'data') showTab('deploy');
+    watchJob(job.id);
+}
+async function watchJob(id) {
+    document.querySelectorAll('button.job').forEach(b => { b.disabled = true; });
+    for (;;) {
+        let j;
+        try { j = await api('/api/jobs/' + id); } catch (e) { toast(e.message); break; }
+        $('jobLog').textContent = j.output;
+        $('jobLog').scrollTop = $('jobLog').scrollHeight;
+        if (currentTab === 'data') $('checkResult').innerHTML = `<pre class="log">${esc(j.output)}</pre>`;
+        $('jobState').innerHTML = `${esc(j.title)} ${j.status === 'running' ? pill('warn', 'Running') : j.status === 'done' ? pill('ok', 'Done') : pill('bad', 'Failed')}`;
+        if (j.status !== 'running') {
+            toast(`${j.title}: ${j.status}`);
+            break;
+        }
+        await new Promise(r => setTimeout(r, 1000));
+    }
+    document.querySelectorAll('button.job').forEach(b => { b.disabled = false; });
+    refresh();
+}
+['btnFetch', 'btnPush', 'btnDeployApp', 'btnDeployV2', 'btnBackup'].forEach(id => $(id).classList.add('job'));
+$('btnFetch').onclick = () => startJob('/api/git/fetch');
+$('btnPush').onclick = () => startJob('/api/git/push', null, `Push ${GIT?.branch || 'this branch'} to origin?`);
+$('btnDeployApp').onclick = () => startJob('/api/deploy', { target: 'app', message: $('deployMsg').value }, 'Deploy app/ to the LIVE site now? All users will be offered the new version.');
+$('btnDeployV2').onclick = () => startJob('/api/deploy', { target: 'v2', message: $('deployMsg').value }, 'Deploy app-v2/ to the v2 branch (Vercel)?');
+$('btnBackup').onclick = () => startJob('/api/backup', null, 'Export all PPMS tables now?');
+
+/* ── Backups & SQL ── */
+async function loadBackups() {
+    let b;
+    try { b = await api('/api/backups'); } catch (e) { return fail('bkList', e); }
+    $('bkDir').textContent = b.dir;
+    if (!b.safe) { $('bkList').innerHTML = '<p class="err">BACKUP_DIR is inside the repository (which is public). Set it to a folder outside it.</p>'; $('btnBackup').disabled = true; return; }
+    $('bkList').innerHTML = b.backups.length
+        ? `<table><tr><th>Backup</th><th class="num">Tables</th><th class="num">Size</th><th></th></tr>${b.backups.slice(0, 15).map(x => `<tr><td class="mono">${esc(x.name)}</td><td class="num">${x.tables ?? '—'}</td><td class="num">${(x.bytes / 1048576).toFixed(1)} MB</td><td>${x.complete ? pill('ok', 'Complete') : pill('warn', 'Partial')}</td></tr>`).join('')}</table>`
+        : '<p class="muted">No backups yet.</p>';
+}
+async function loadChecks() {
+    let list;
+    try { list = await api('/api/checks'); } catch (e) { return fail('checkButtons', e); }
+    $('checkButtons').innerHTML = (CFG && !CFG.accessToken ? '<p class="small err" style="width:100%">Add SUPABASE_ACCESS_TOKEN to tools/control-panel/.env to run these.</p>' : '')
+        + list.map(c => `<button class="btn" data-check="${esc(c.id)}" title="${esc(c.rel)}">${esc(c.title.replace(/—.*$/, '').trim())}</button>`).join('');
+}
+$('checkButtons').addEventListener('click', async e => {
+    const b = e.target.closest('[data-check]');
+    if (!b) return;
+    $('checkResult').innerHTML = '<p class="muted">Running…</p>';
+    try {
+        const r = await api('/api/checks/run', { method: 'POST', body: { id: b.dataset.check } });
+        const cols = r.rows.length ? Object.keys(r.rows[0]) : [];
+        $('checkResult').innerHTML = `<p class="small muted">${esc(r.title)} · ${r.rows.length} rows · ${r.ms} ms</p>`
+            + (cols.length ? `<table><tr>${cols.map(c => `<th>${esc(c)}</th>`).join('')}</tr>${r.rows.map(row => `<tr>${cols.map(c => `<td class="small">${esc(typeof row[c] === 'object' && row[c] !== null ? JSON.stringify(row[c]) : row[c])}</td>`).join('')}</tr>`).join('')}</table>` : '<p class="muted">No rows.</p>');
+    } catch (err) { $('checkResult').innerHTML = `<p class="err">${esc(err.message)}</p>`; }
+});
+
+/* ── Refresh ── */
+let refreshing = false;
+async function refresh() {
+    if (refreshing) return;
+    refreshing = true;
+    try {
+        const jobs = {
+            overview: () => Promise.all([loadSite(), loadGit(), loadDb(), loadActivity()]).then(loadKpis),
+            deploy: () => loadGit(),
+            users: () => loadUsers(),
+            notice: () => loadNotice(),
+            activity: () => loadActivity(),
+            data: () => Promise.all([loadBackups(), loadChecks(), loadDb()]),
+        };
+        await jobs[currentTab]();
+        $('lastRefresh').textContent = 'Updated ' + new Date().toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit', second: '2-digit' });
+    } finally { refreshing = false; }
+}
+$('btnRefresh').onclick = refresh;
+setInterval(() => {
+    // Users and notice tabs hold unsaved edits, so they only refresh on demand.
+    if ($('autoRefresh').checked && document.visibilityState === 'visible' && !['users', 'notice'].includes(currentTab)) refresh();
+}, 60000);
+
+loadConfig().catch(e => toast(e.message)).finally(() => showTab(currentTab));
+</script>
+</body>
+</html>

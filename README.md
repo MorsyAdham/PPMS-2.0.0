@@ -29,6 +29,7 @@ PPMS web app that tracks the plans against actual production.
 │   └── bug-log.txt      Running log of reported issues and fixes
 ├── data/workbooks/      Reference Excel plans
 └── tools/
+    ├── control-panel/         Local monitoring & admin dashboard (see its README)
     ├── deploy.sh              Publish app/ to the live site
     ├── upload_to_supabase.py  Import an Excel plan into Supabase
     └── i18n_*.py              Interface translations: extract, build, export review sheet, import reviewed sheet
