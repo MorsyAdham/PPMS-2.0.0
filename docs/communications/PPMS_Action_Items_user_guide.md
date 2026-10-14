@@ -7,14 +7,16 @@ read it, who has accepted it and who has finished it. Applies to all modules
 
 ## 1. Where to find it
 
-A round blue **speech-bubble button** sits at the **top right**, just under the
-top bar (hover over it to see “Action Items”).
+A small blue **tab with an arrow (‹)** sticks out of the **right edge of the
+screen, half-way down** (left edge when PPMS is in Arabic).
 
-- When an action item **or a reply** arrives for you, the button **flashes orange**
-  and shows a **red number**. It keeps flashing until you open it.
-- Click it to open the Action Items window. Click it again, press **✕** or **Esc**
-  to close it.
-- The **?** button in the window shows a short version of this guide.
+- When an action item **or a reply** arrives for you, the tab **flashes
+  orange** and shows a **red number**. It keeps flashing until you open it.
+- Click the tab to slide in the **Action Items sidebar** (full screen height).
+  The page stays visible on the left.
+- To close it: click the tab again (the arrow now points ›), press **✕** or
+  **Esc**, or click anywhere on the page.
+- The **?** button in the sidebar shows a short version of this guide.
 
 ## 2. Who can do what
 
@@ -25,7 +27,7 @@ top bar (hover over it to see “Action Items”).
 | Planner | Yes | Yes |
 | Master Admin | Yes | Yes |
 
-## 3. Reading the window
+## 3. Reading the sidebar
 
 Action Items are shown as **cards**, oldest at the top and newest at the bottom,
 grouped by day (Today, Yesterday, …). Each card has:
