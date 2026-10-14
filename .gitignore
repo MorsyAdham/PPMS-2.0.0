@@ -7,3 +7,6 @@ docs/communications/PPMS_shared_accounts_email_MrLee.*
 
 # Control panel secrets (service key)
 tools/control-panel/.env
+
+# Local design previews (never committed)
+.preview/
