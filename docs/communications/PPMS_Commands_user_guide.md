@@ -27,36 +27,39 @@ top bar (hover over it to see “Commands”).
 
 ## 3. Reading the window
 
-The window works like a chat:
+Commands are shown as **cards**, oldest at the top and newest at the bottom,
+grouped by day (Today, Yesterday, …). Each card has:
 
-- **Oldest at the top, newest at the bottom**, grouped by day (Today,
-  Yesterday, …).
-- Commands from **others are on the left** with their initials. **Your own are
-  on the right** in blue.
-- A command with a **blue outline** is new. A **red left edge** means Urgent.
-- Under a command you may see: **URGENT**, **due 16 Oct** (red when the date
-  has passed) and **↗ what it is about** (e.g. BTL-01 · K9 M3 · Hull).
-- Replies appear indented under the command.
+1. **Header** — who sent it, the time, **to** whom (the tags), and a red
+   **URGENT** badge when urgent.
+2. **The instruction.**
+3. **Details** — 📅 due date (red **Overdue** when it has passed) and 🏷 what
+   it is about (e.g. BTL-01 · K9 M3 · Hull).
+4. **Replies** — “2 replies”; click to show or hide them.
+5. **Footer** — the status on the left, the buttons on the right.
 
-Filters at the top:
+Cards you sent have a **blue left edge**; urgent ones a **red** one; a new card
+has a blue glow.
 
-| Filter | Shows |
+Tabs at the top:
+
+| Tab | Shows |
 |---|---|
 | **All** | Everything you sent or received |
-| **To do** | Commands sent to you that you have not marked done |
+| **To do** | Commands sent to you that you have not marked done (orange count) |
 | **Sent** | Commands you sent (not shown to Viewers) |
 
 ## 4. Answering a command sent to you
 
-Opening the window marks your new commands as **Seen**. Then, under the
-command:
+Opening the window marks your new commands as seen. The footer shows
+**Waiting for you** until you answer:
 
 | Button | Means | The sender sees |
 |---|---|---|
-| **Acknowledge** | “I have read it and will do it.” | Acknowledged |
-| **Done** | “It is finished.” | Done |
-| **Reply** | Answer or ask a question (Enter sends). | Your reply under the command |
-| **undo** (after Done) | Marked done by mistake. | Back to Acknowledged |
+| **✓ Acknowledge** | “I have read it and will do it.” | Acknowledged |
+| **✓✓ Done** | “It is finished.” | Done |
+| **↩ Reply** | Answer or ask a question (Enter sends). | Your reply on the card |
+| **Undo** (after Done) | Marked done by mistake. | Back to Acknowledged |
 
 **Urgent commands** appear in the middle of the screen as soon as they arrive
 and stay there until you press **Acknowledge** (or **Open Commands** to read
@@ -64,45 +67,45 @@ it in the window first).
 
 ## 5. Sending a command (everyone except Viewers)
 
-1. Open the window. The message box is at the bottom.
-2. Press **@ Tag people** under the box (or type **@**) and choose who must act. Keep typing to filter, use ↑ ↓ to move,
-   and **Enter** or **Tab** to choose. You can tag several people or groups.
+The box at the bottom of the window has three parts:
 
-   | Tag | Who receives it |
+1. **To** — press **@ Add** and pick people or groups (search by typing). Each
+   one becomes a chip; press **×** on a chip to remove it. You can also type
+   **@** in the message — the person moves into the To row.
+
+   | Choice | Who receives it |
    |---|---|
    | `@all` | Every active user (except you) |
    | `@admins` | All Master Admins |
    | `@planners` | All Planners |
    | `@operators` | All Operators |
    | `@viewers` | All Viewers |
-   | `@name.surname` | One person — the part of their email before the @ |
+   | A person | That person only |
 
-3. Check the line above the box. It shows exactly how many people will receive
-   it and who they are. Someone tagged twice receives it once.
-4. Write the instruction after the tags.
-5. Optional, under the box:
-   - **Urgent** — pops up on their screen until they acknowledge. Use it only
-     when work must stop or change now.
-   - **More** → **Due** (the date it must be finished) and **About** (what it
-     concerns, e.g. `BTL-01 · K9 M3 · Hull welding`).
-6. Press the **blue arrow** (or **Ctrl+Enter**).
+   Under the To row you see how many people will receive it. Someone chosen
+   twice receives it once.
+2. **Message** — write the instruction.
+3. **Toolbar** — **⚠ Urgent** (pops up on their screen until acknowledged —
+   only for real stoppages), **📅 due date**, **🏷 About** (what it concerns),
+   then **Send** (or **Ctrl+Enter**).
 
 ### Example
 
-> `@omar.hassan @youssef.samir` Hull welding on K9 M3 is 2 days late. Confirm
-> the new finish date and record the delay reason.
-> Urgent · Due 16 Oct · About: BTL-01 · K9 M3 · Hull welding
+> To: **Omar Hassan**, **Youssef Samir**
+> Hull welding on K9 M3 is 2 days late. Confirm the new finish date and record
+> the delay reason.
+> ⚠ Urgent · 📅 16 Oct · 🏷 BTL-01 · K9 M3 · Hull welding
 
 ## 6. Following up on what you sent
 
 Under each of your commands there is a status line, for example
-**1 of 3 done · 1 not opened yet**. It changes to **✓ All done**
+**1 of 3 done · 1 not opened**. It changes to **✓ All done**
 when everyone has finished. Click the line to see each person and their
 status. Everything updates live — no refresh needed — and the button flashes
 when someone replies.
 
-**Withdraw** deletes a command for everyone it was sent to — use it for a
-command sent by mistake.
+The **bin** button on your own cards (Withdraw) deletes a command for
+everyone it was sent to — use it for a command sent by mistake.
 
 ## 7. Good practice
 
