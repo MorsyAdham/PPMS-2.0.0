@@ -55,7 +55,15 @@ const PPMS_TABLES = [
     'ppms_system_notice',
 ];
 // Checked with the PUBLIC key: if any of these answer, anyone on the internet can read them.
-const EXPOSURE_TABLES = ['planning_app_users', 'planning_audit_log', 'kd2_plan', 'production_issues', 'users'];
+const EXPOSURE_TABLES = [
+    // [label, table, columns tried]
+    ['planning_app_users', 'planning_app_users', 'id'],
+    ['planning_app_users.password_hash', 'planning_app_users', 'password_hash'],
+    ['planning_audit_log', 'planning_audit_log', 'id'],
+    ['kd2_plan', 'kd2_plan', 'id'],
+    ['production_issues', 'production_issues', 'id'],
+    ['users (SIMS)', 'users', '*'],
+];
 const USER_COLS = 'id,email,full_name,role,is_active,modules,can_export,created_at';
 const ROLES = ['viewer', 'operator', 'planner', 'master_admin'];
 const MODULES = ['kd1', 'kd2', 'f100kd2'];
@@ -86,8 +94,8 @@ async function sb(pathq, { method = 'GET', body, key = SERVICE_KEY, prefer, rang
     return { data, ms, status: res.status, headers: res.headers };
 }
 
-async function count(table, filter = '', key = SERVICE_KEY) {
-    const r = await sb(`${table}?select=*&limit=1${filter}`, { method: 'HEAD', key, prefer: 'count=exact' });
+async function count(table, filter = '', key = SERVICE_KEY, cols = '*') {
+    const r = await sb(`${table}?select=${cols}&limit=1${filter}`, { method: 'HEAD', key, prefer: 'count=exact' });
     const total = (r.headers.get('content-range') || '').split('/')[1];
     return total && total !== '*' ? Number(total) : null;
 }
@@ -248,11 +256,11 @@ async function dbStatus() {
     out.tables = await Promise.all(PPMS_TABLES.map(async t => {
         try { return { table: t, rows: await count(t) }; } catch (e) { return { table: t, rows: null, error: e.message }; }
     }));
-    out.exposure = await Promise.all(EXPOSURE_TABLES.map(async t => {
+    out.exposure = await Promise.all(EXPOSURE_TABLES.map(async ([label, t, cols]) => {
         try {
-            const rows = await count(t, '', ANON_KEY);
-            return { table: t, readable: rows !== null && rows > 0, rows };
-        } catch (e) { return { table: t, readable: false, status: e.status || null }; }
+            const rows = await count(t, '', ANON_KEY, cols);
+            return { table: label, readable: rows !== null && rows > 0, rows };
+        } catch (e) { return { table: label, readable: false, status: e.status || null }; }
     }));
     try {
         const users = await sb('planning_app_users?select=role,is_active');
