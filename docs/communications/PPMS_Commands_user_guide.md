@@ -7,8 +7,8 @@ read it, who has accepted it and who has finished it. Applies to all modules
 
 ## 1. Where to find it
 
-A blue **Commands** button sits at the **top right**, just under the top bar
-(the twin of the **Ask PPMS** button at the bottom left).
+A round blue **speech-bubble button** sits at the **top right**, just under the
+top bar (hover over it to see “Commands”).
 
 - When a command **or a reply** arrives for you, the button **flashes orange**
   and shows a **red number**. It keeps flashing until you open it.
