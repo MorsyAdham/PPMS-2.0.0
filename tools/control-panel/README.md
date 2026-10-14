@@ -21,14 +21,23 @@ browser opens automatically (`--no-open` to skip). Stop with Ctrl+C.
 
 ## What it does
 
-| Tab | Monitor | Control |
+Every page starts with a short explanation, and **Help & glossary** explains
+the terms. **Overview → Needs attention** lists anything wrong, with a button to
+the page that fixes it.
+
+| Page | Monitor | Control |
 |---|---|---|
-| Overview | Site up/response time and version, deploy sync, database health, public-key exposure check, today's activity, KD2 progress by vehicle type and battalion | — |
-| Deploy | Uncommitted files, origin ahead/behind, files not yet deployed, app vs app-v2 drift | Fetch, push to origin, `deploy.sh` for app/ or app-v2/ |
-| Users | Accounts, roles, modules, last sign-in | Role, modules, export, activate/disable (audited; last Master Admin protected) |
-| Notice & maintenance | Current banner | Banner text/level, read-only mode for everyone except Master Admin |
-| Activity | Active users today, new issues, latest audit log | — |
-| Backups & SQL | Table row counts, existing backups | JSON backup of all PPMS tables to `BACKUP_DIR`; saved read-only SQL checks (`checks/*.sql`) |
+| Overview | Site up/speed/version, database health, security, today's users, KD2 progress per plan version | — |
+| Activity & audit log | Who is active today, new issues, searchable audit log with before/after detail | — |
+| Users & access | All accounts, role, modules, export, last sign-in | Add user, edit, reset password, disable/enable, delete (last Master Admin protected) |
+| Plan versions | Every KD1/KD2/F100 plan revision with row counts | Rename, archive, restore (won't archive a baseline or the last available version) |
+| Production issues | Open / in progress / critical counts, full list | Change status and priority |
+| Announcements | Current banner | Banner text and colour, maintenance (read-only) mode, live preview |
+| Releases & app version | Version users are on, full version history, unpublished/uncommitted code, app vs app-v2 drift | Publish to live or test site, **restore an earlier version** (`tools/rollback.sh`), push to GitHub |
+| Database & backups | Public-key exposure check, table sizes, backups | One-click JSON backup; read-only SQL checks (`checks/*.sql`) |
+
+Every change made from the panel is written to the PPMS audit log as
+`control-panel@local`.
 
 ## Safety
 
