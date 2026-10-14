@@ -189,6 +189,7 @@ dialog h3 { margin: 0 0 4px; font-size: 17px; }
             <button data-tab="users">Users &amp; access</button>
             <button data-tab="plans">Plan versions</button>
             <button data-tab="issues">Production issues</button>
+            <button data-tab="commands">Commands</button>
             <button data-tab="notice">Announcements</button>
         </div>
         <div class="nav-group"><div>System</div>
@@ -292,6 +293,23 @@ dialog h3 { margin: 0 0 4px; font-size: 17px; }
         <p class="help"><em>Open</em> = new, nobody on it. <em>In progress</em> = being handled. <em>Resolved</em> = fixed. <em>Closed</em> = finished or not needed.</p>
         <div class="table-wrap scroll" id="isTable">Loading…</div>
     </div>
+</section>
+
+<!-- COMMANDS -->
+<section id="tab-commands" hidden>
+    <div class="page-head"><h1>Commands</h1>
+        <p>Instructions sent to people inside PPMS with @ tags (speech-bubble button in the PPMS top bar). Here you decide <strong>who can see the feature</strong> and follow what has been sent. The full user guide is <span class="mono">docs/communications/PPMS_Commands_user_guide.md</span>.</p></div>
+    <div id="cmdMissing" class="callout bad" hidden></div>
+    <div class="grid">
+        <div class="card"><h2>Who can see Commands</h2>
+            <p class="help">Changes reach open PPMS sessions within seconds — the button appears or disappears without a reload.</p>
+            <div id="cmdAudience"></div>
+            <p class="small muted" id="cmdAudienceMeta"></p></div>
+        <div class="card"><h2>At a glance</h2><p class="help">The last 50 commands.</p><div id="cmdStats"></div></div>
+    </div>
+    <div class="card"><h2>Recent commands</h2>
+        <p class="help">Counts per command: <em>done · acknowledged · seen · not opened</em>. Open PPMS to reply or withdraw.</p>
+        <div class="table-wrap scroll" id="cmdList">Loading…</div></div>
 </section>
 
 <!-- ANNOUNCEMENTS -->
@@ -840,6 +858,39 @@ $('isTable').addEventListener('change', async e => {
     catch (err) { toast('Not saved: ' + err.message); loadIssues(); }
 });
 
+/* ═════ COMMANDS ═════ */
+const AUDIENCE_OPTS = [
+    ['off', 'Off', 'Nobody sees the Commands button.'],
+    ['admins', 'Pilot — Master Admins only', 'Only Master Admins see it and can only tag each other (or themselves). Use this to try it out.'],
+    ['everyone', 'Everyone', 'All users receive commands. Master Admins and Planners can send.'],
+];
+async function loadCommands() {
+    let r;
+    try { r = await api('/api/commands'); } catch (e) { ['cmdAudience', 'cmdList', 'cmdStats'].forEach(id => fail(id, e)); return; }
+    $('cmdMissing').hidden = r.installed;
+    if (!r.installed) {
+        $('cmdMissing').textContent = NOKEY.test(r.error || '') ? 'Add SUPABASE_SERVICE_KEY to tools/control-panel/.env, then restart the panel.' : 'Not installed yet: run database/migrations/63_commands.sql once in the Supabase SQL editor, then refresh this page.';
+        ['cmdAudience', 'cmdList', 'cmdStats'].forEach(id => { $(id).innerHTML = '<p class="muted">—</p>'; });
+        return;
+    }
+    $('cmdAudience').innerHTML = AUDIENCE_OPTS.map(([v, l, d]) => `<label class="chk" style="display:flex;align-items:flex-start;gap:8px;margin:8px 0"><input type="radio" name="cmdAud" value="${v}"${r.audience === v ? ' checked' : ''}><span><strong>${esc(l)}</strong><br><span class="small muted">${esc(d)}</span></span></label>`).join('');
+    $('cmdAudienceMeta').textContent = r.audienceChangedAt ? `Last changed ${fmtDate(r.audienceChangedAt)} by ${r.audienceChangedBy || '—'}.` : '';
+    const c = r.commands;
+    const sum = k => c.reduce((a, x) => a + x.status[k], 0);
+    $('cmdStats').innerHTML = `<dl class="kv"><dt>Commands</dt><dd>${c.length}</dd><dt>Urgent</dt><dd>${c.filter(x => x.priority === 'urgent').length}</dd>
+        <dt>Deliveries</dt><dd>${sum('new') + sum('seen') + sum('ack') + sum('done')} — ${sum('done')} done, ${sum('ack')} acknowledged, ${sum('seen')} seen, <span class="${sum('new') ? 'err' : ''}">${sum('new')} not opened</span></dd></dl>`;
+    $('cmdList').innerHTML = c.length ? `<table><tr><th>Sent</th><th>From</th><th>Command</th><th class="num">Done</th><th class="num">Ack.</th><th class="num">Seen</th><th class="num">Not opened</th></tr>${c.map(x => `<tr>
+        <td class="small" style="white-space:nowrap">${esc(fmtDate(x.created_at))}</td><td>${esc(x.sender_name)}</td>
+        <td>${x.priority === 'urgent' ? pill('bad', 'Urgent') + ' ' : ''}${esc(x.body.slice(0, 140))}${x.about ? `<div class="small muted">↗ ${esc(x.about)}</div>` : ''}${x.due_date ? `<div class="small muted">due ${esc(fmtDay(x.due_date))}</div>` : ''}</td>
+        <td class="num">${x.status.done}</td><td class="num">${x.status.ack}</td><td class="num">${x.status.seen}</td><td class="num">${x.status.new ? `<span class="err">${x.status.new}</span>` : 0}</td></tr>`).join('')}</table>` : '<p class="muted">No commands sent yet.</p>';
+}
+$('cmdAudience').addEventListener('change', async e => {
+    const v = e.target.value;
+    if (v === 'everyone' && !await ask({ title: 'Turn Commands on for everyone?', body: 'Every user sees the speech-bubble button on the PPMS top bar within seconds. Tell your team first — the user guide is in docs/communications/PPMS_Commands_user_guide.md.', ok: 'Turn on' })) return loadCommands();
+    try { await api('/api/commands/audience', { method: 'PUT', body: { audience: v } }); toast('Saved — open PPMS sessions update within seconds'); } catch (err) { toast('Not saved: ' + err.message); }
+    loadCommands();
+});
+
 /* ═════ ANNOUNCEMENTS ═════ */
 function previewNotice() {
     const p = $('nPreview');
@@ -1008,6 +1059,7 @@ async function refresh() {
             users: loadUsers,
             plans: loadPlans,
             issues: loadIssues,
+            commands: loadCommands,
             notice: loadNotice,
             releases: async () => { await Promise.all([loadSite(), loadGit()]); renderReleases(); await loadReleases(); },
             data: async () => { await Promise.all([loadDb(), loadBackups(), loadChecks()]); renderDb(); },
@@ -1029,7 +1081,7 @@ $('themePick').addEventListener('change', e => {
 });
 setInterval(() => {
     // Pages with forms or edits refresh only on demand, so nothing being typed is lost.
-    const quiet = ['overview', 'activity', 'releases', 'data'];
+    const quiet = ['overview', 'activity', 'releases', 'data', 'commands'];
     if ($('autoRefresh').checked && document.visibilityState === 'visible' && quiet.includes(currentTab) && !document.querySelector('dialog[open]')) refresh();
 }, 60000);
 

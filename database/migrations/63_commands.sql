@@ -57,13 +57,30 @@ create index if not exists idx_ppms_command_replies_command on public.ppms_comma
 grant select, insert, update on public.ppms_commands, public.ppms_command_recipients, public.ppms_command_replies to anon, authenticated;
 grant delete on public.ppms_commands to anon, authenticated;
 
+-- Small settings table, changed only from the local admin panel (service key).
+-- commands_audience: 'off' | 'admins' (pilot: Master Admins only) | 'everyone'
+create table if not exists public.ppms_settings (
+    key         text primary key,
+    value       jsonb not null,
+    updated_by  text,
+    updated_at  timestamptz not null default timezone('utc', now())
+);
+insert into public.ppms_settings (key, value, updated_by)
+values ('commands_audience', '"admins"'::jsonb, 'migration 63')
+on conflict (key) do nothing;
+alter table public.ppms_settings enable row level security;
+drop policy if exists ppms_settings_read on public.ppms_settings;
+create policy ppms_settings_read on public.ppms_settings for select to anon, authenticated using (true);
+revoke insert, update, delete on public.ppms_settings from anon, authenticated;
+grant select on public.ppms_settings to anon, authenticated;
+
 commit;
 
 -- Live delivery: new commands, status changes and replies reach open sessions at once.
 do $$
 declare t text;
 begin
-    foreach t in array array['ppms_commands', 'ppms_command_recipients', 'ppms_command_replies'] loop
+    foreach t in array array['ppms_commands', 'ppms_command_recipients', 'ppms_command_replies', 'ppms_settings'] loop
         begin
             execute format('alter publication supabase_realtime add table public.%I', t);
         exception

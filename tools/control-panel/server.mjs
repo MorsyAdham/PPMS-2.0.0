@@ -542,6 +542,33 @@ async function updateIssue(id, body) {
     return data?.[0];
 }
 
+/* ── Commands (migration 63) ────────────────────────────────── */
+const AUDIENCES = ['off', 'admins', 'everyone'];
+async function commandsOverview() {
+    let audience = null;
+    try {
+        const { data } = await sb('ppms_settings?select=value,updated_at,updated_by&key=eq.commands_audience');
+        audience = data?.[0] || null;
+    } catch (e) {
+        return { installed: false, error: e.message };
+    }
+    const [{ data: cmds }, { data: recs }] = await Promise.all([
+        sb('ppms_commands?select=id,sender_name,body,priority,due_date,about,created_at&order=id.desc&limit=50'),
+        sb('ppms_command_recipients?select=command_id,status&order=command_id.desc&limit=5000'),
+    ]);
+    const tally = {};
+    for (const r of recs || []) (tally[r.command_id] ||= { new: 0, seen: 0, ack: 0, done: 0 })[r.status]++;
+    return { installed: true, audience: audience?.value || 'admins', audienceChangedAt: audience?.updated_at, audienceChangedBy: audience?.updated_by,
+        commands: (cmds || []).map(c => ({ ...c, status: tally[c.id] || { new: 0, seen: 0, ack: 0, done: 0 } })) };
+}
+async function setAudience(value) {
+    if (!AUDIENCES.includes(value)) throw httpError(400, 'Pick off, admins or everyone');
+    await sb('ppms_settings?on_conflict=key', { method: 'POST', prefer: 'resolution=merge-duplicates,return=minimal',
+        body: { key: 'commands_audience', value, updated_by: PANEL_NAME, updated_at: new Date().toISOString() } });
+    await writeAudit('UPDATE', 'ppms_settings', 'commands_audience', null, { commands_audience: value });
+    return commandsOverview();
+}
+
 /* ── Audit log search ────────────────────────────────────────── */
 async function auditSearch(q) {
     const f = ['select=created_at,user_email,user_role,action,table_name,record_id,plan_version_name,data_before,data_after', 'order=created_at.desc', 'limit=300'];
@@ -719,6 +746,8 @@ const routes = {
     },
     'GET /api/plan-versions': planVersions,
     'GET /api/issues': listIssues,
+    'GET /api/commands': commandsOverview,
+    'PUT /api/commands/audience': (req, body) => setAudience(String(body.audience || '')),
     'GET /api/audit': (req, body, url) => auditSearch(url.searchParams),
     'GET /api/notice': getNotice,
     'PUT /api/notice': (req, body) => setNotice(body),
