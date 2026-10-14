@@ -44,7 +44,6 @@ Filters at the top:
 |---|---|
 | **All** | Everything you sent or received |
 | **To do** | Commands sent to you that you have not marked done |
-| **To me** | Every command sent to you |
 | **Sent** | Commands you sent (not shown to Viewers) |
 
 ## 4. Answering a command sent to you
@@ -66,7 +65,7 @@ it in the window first).
 ## 5. Sending a command (everyone except Viewers)
 
 1. Open the window. The message box is at the bottom.
-2. Type **@** and choose who must act. Keep typing to filter, use ↑ ↓ to move,
+2. Press **@ Tag people** under the box (or type **@**) and choose who must act. Keep typing to filter, use ↑ ↓ to move,
    and **Enter** or **Tab** to choose. You can tag several people or groups.
 
    | Tag | Who receives it |
@@ -84,8 +83,8 @@ it in the window first).
 5. Optional, under the box:
    - **Urgent** — pops up on their screen until they acknowledge. Use it only
      when work must stop or change now.
-   - **Due** — the date it must be finished.
-   - **About** — what it concerns, e.g. `BTL-01 · K9 M3 · Hull welding`.
+   - **More** → **Due** (the date it must be finished) and **About** (what it
+     concerns, e.g. `BTL-01 · K9 M3 · Hull welding`).
 6. Press the **blue arrow** (or **Ctrl+Enter**).
 
 ### Example
@@ -97,7 +96,7 @@ it in the window first).
 ## 6. Following up on what you sent
 
 Under each of your commands there is a status line, for example
-**1/3 done · 1 acknowledged · 1 not opened**. It changes to **✓ All done**
+**1 of 3 done · 1 not opened yet**. It changes to **✓ All done**
 when everyone has finished. Click the line to see each person and their
 status. Everything updates live — no refresh needed — and the button flashes
 when someone replies.
@@ -119,7 +118,8 @@ command sent by mistake.
 
 - Who can see Commands is set in the local admin panel → **Commands**:
   **Off**, **Pilot — Master Admins only**, or **Everyone**. Open PPMS sessions
-  follow the change within seconds.
+  follow the change within seconds. During the pilot you can still tag anyone;
+  they find those commands waiting when you switch it on for everyone.
 - Database: `database/migrations/63_commands.sql` (tables `ppms_commands`,
   `ppms_command_recipients`, `ppms_command_replies`, `ppms_settings`). The
   button stays hidden until this migration has been run.
