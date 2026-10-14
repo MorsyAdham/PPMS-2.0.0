@@ -862,7 +862,7 @@ $('isTable').addEventListener('change', async e => {
 const AUDIENCE_OPTS = [
     ['off', 'Off', 'Nobody sees the Commands button.'],
     ['admins', 'Pilot — Master Admins only', 'Only Master Admins see it and can only tag each other (or themselves). Use this to try it out.'],
-    ['everyone', 'Everyone', 'All users receive commands. Master Admins and Planners can send.'],
+    ['everyone', 'Everyone', 'All users receive commands. Everyone except Viewers can send.'],
 ];
 async function loadCommands() {
     let r;
