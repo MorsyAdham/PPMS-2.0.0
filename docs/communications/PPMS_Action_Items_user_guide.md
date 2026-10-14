@@ -1,6 +1,6 @@
-# PPMS Commands — User Guide
+# PPMS Action Items — User Guide
 
-Commands is a message window for **work instructions**. You tag the people
+Action Items is a message window for **work instructions**. You tag the people
 who must act with **@**, write what needs doing, and PPMS shows you who has
 read it, who has accepted it and who has finished it. Applies to all modules
 (F200-KD1, F200-KD2, F100-KD2).
@@ -8,17 +8,17 @@ read it, who has accepted it and who has finished it. Applies to all modules
 ## 1. Where to find it
 
 A round blue **speech-bubble button** sits at the **top right**, just under the
-top bar (hover over it to see “Commands”).
+top bar (hover over it to see “Action Items”).
 
-- When a command **or a reply** arrives for you, the button **flashes orange**
+- When an action item **or a reply** arrives for you, the button **flashes orange**
   and shows a **red number**. It keeps flashing until you open it.
-- Click it to open the Commands window. Click it again, press **✕** or **Esc**
+- Click it to open the Action Items window. Click it again, press **✕** or **Esc**
   to close it.
 - The **?** button in the window shows a short version of this guide.
 
 ## 2. Who can do what
 
-| Role | Receive, acknowledge, mark done, reply | Send commands |
+| Role | Receive, acknowledge, mark done, reply | Send action items |
 |---|---|---|
 | Viewer | Yes | No |
 | Operator | Yes | Yes |
@@ -27,7 +27,7 @@ top bar (hover over it to see “Commands”).
 
 ## 3. Reading the window
 
-Commands are shown as **cards**, oldest at the top and newest at the bottom,
+Action Items are shown as **cards**, oldest at the top and newest at the bottom,
 grouped by day (Today, Yesterday, …). Each card has:
 
 1. **Header** — who sent it, the time, **to** whom (the tags), and a red
@@ -46,12 +46,12 @@ Tabs at the top:
 | Tab | Shows |
 |---|---|
 | **All** | Everything you sent or received |
-| **To do** | Commands sent to you that you have not marked done (orange count) |
-| **Sent** | Commands you sent (not shown to Viewers) |
+| **To do** | Action Items sent to you that you have not marked done (orange count) |
+| **Sent** | Action Items you sent (not shown to Viewers) |
 
-## 4. Answering a command sent to you
+## 4. Answering an action item sent to you
 
-Opening the window marks your new commands as seen. The footer shows
+Opening the window marks your new action items as seen. The footer shows
 **Waiting for you** until you answer:
 
 | Button | Means | The sender sees |
@@ -61,11 +61,11 @@ Opening the window marks your new commands as seen. The footer shows
 | **↩ Reply** | Answer or ask a question (Enter sends). | Your reply on the card |
 | **Undo** (after Done) | Marked done by mistake. | Back to Acknowledged |
 
-**Urgent commands** appear in the middle of the screen as soon as they arrive
-and stay there until you press **Acknowledge** (or **Open Commands** to read
+**Urgent action items** appear in the middle of the screen as soon as they arrive
+and stay there until you press **Acknowledge** (or **Open Action Items** to read
 it in the window first).
 
-## 5. Sending a command (everyone except Viewers)
+## 5. Sending an action item (everyone except Viewers)
 
 The box at the bottom of the window has three parts:
 
@@ -98,31 +98,31 @@ The box at the bottom of the window has three parts:
 
 ## 6. Following up on what you sent
 
-Under each of your commands there is a status line, for example
+Under each of your action items there is a status line, for example
 **1 of 3 done · 1 not opened**. It changes to **✓ All done**
 when everyone has finished. Click the line to see each person and their
 status. Everything updates live — no refresh needed — and the button flashes
 when someone replies.
 
-The **bin** button on your own cards (Withdraw) deletes a command for
-everyone it was sent to — use it for a command sent by mistake.
+The **bin** button on your own cards (Withdraw) deletes an action item for
+everyone it was sent to — use it for an action item sent by mistake.
 
 ## 7. Good practice
 
-- One command = one clear instruction: what, where and by when.
+- One action item = one clear instruction: what, where and by when.
 - Tag only the people who must act. Use `@all` for things everyone must know.
 - Keep **Urgent** for real stoppages and safety issues, so people keep taking
   it seriously.
-- Do **not** put passwords or confidential information in commands. Until the
+- Do **not** put passwords or confidential information in action items. Until the
   planned security upgrade (SC-01) is finished, PPMS data is not yet fully
   protected.
 
 ## 8. For the administrator
 
-- Who can see Commands is set in the local admin panel → **Commands**:
+- Who can see Action Items is set in the local admin panel → **Action Items**:
   **Off**, **Pilot — Master Admins only**, or **Everyone**. Open PPMS sessions
   follow the change within seconds. During the pilot you can still tag anyone;
-  they find those commands waiting when you switch it on for everyone.
+  they find those action items waiting when you switch it on for everyone.
 - Database: `database/migrations/63_commands.sql` (tables `ppms_commands`,
   `ppms_command_recipients`, `ppms_command_replies`, `ppms_settings`). The
   button stays hidden until this migration has been run.

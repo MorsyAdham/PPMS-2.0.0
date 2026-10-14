@@ -189,7 +189,7 @@ dialog h3 { margin: 0 0 4px; font-size: 17px; }
             <button data-tab="users">Users &amp; access</button>
             <button data-tab="plans">Plan versions</button>
             <button data-tab="issues">Production issues</button>
-            <button data-tab="commands">Commands</button>
+            <button data-tab="commands">Action Items</button>
             <button data-tab="notice">Announcements</button>
         </div>
         <div class="nav-group"><div>System</div>
@@ -297,18 +297,18 @@ dialog h3 { margin: 0 0 4px; font-size: 17px; }
 
 <!-- COMMANDS -->
 <section id="tab-commands" hidden>
-    <div class="page-head"><h1>Commands</h1>
-        <p>Instructions sent to people inside PPMS with @ tags (speech-bubble button in the PPMS top bar). Here you decide <strong>who can see the feature</strong> and follow what has been sent. The full user guide is <span class="mono">docs/communications/PPMS_Commands_user_guide.md</span>.</p></div>
+    <div class="page-head"><h1>Action Items</h1>
+        <p>Instructions sent to people inside PPMS with @ tags (round speech-bubble button at the top right of PPMS). Here you decide <strong>who can see the feature</strong> and follow what has been sent. The full user guide is <span class="mono">docs/communications/PPMS_Action_Items_user_guide.md</span>.</p></div>
     <div id="cmdMissing" class="callout bad" hidden></div>
     <div class="grid">
-        <div class="card"><h2>Who can see Commands</h2>
+        <div class="card"><h2>Who can see Action Items</h2>
             <p class="help">Changes reach open PPMS sessions within seconds — the button appears or disappears without a reload.</p>
             <div id="cmdAudience"></div>
             <p class="small muted" id="cmdAudienceMeta"></p></div>
-        <div class="card"><h2>At a glance</h2><p class="help">The last 50 commands.</p><div id="cmdStats"></div></div>
+        <div class="card"><h2>At a glance</h2><p class="help">The last 50 action items.</p><div id="cmdStats"></div></div>
     </div>
-    <div class="card"><h2>Recent commands</h2>
-        <p class="help">Counts per command: <em>done · acknowledged · seen · not opened</em>. Open PPMS to reply or withdraw.</p>
+    <div class="card"><h2>Recent action items</h2>
+        <p class="help">Counts per action item: <em>done · acknowledged · seen · not opened</em>. Open PPMS to reply or withdraw.</p>
         <div class="table-wrap scroll" id="cmdList">Loading…</div></div>
 </section>
 
@@ -860,9 +860,9 @@ $('isTable').addEventListener('change', async e => {
 
 /* ═════ COMMANDS ═════ */
 const AUDIENCE_OPTS = [
-    ['off', 'Off', 'Nobody sees the Commands button.'],
+    ['off', 'Off', 'Nobody sees the Action Items button.'],
     ['admins', 'Pilot — Master Admins only', 'Only Master Admins see it and can only tag each other (or themselves). Use this to try it out.'],
-    ['everyone', 'Everyone', 'All users receive commands. Everyone except Viewers can send.'],
+    ['everyone', 'Everyone', 'All users receive action items. Everyone except Viewers can send.'],
 ];
 async function loadCommands() {
     let r;
@@ -877,16 +877,16 @@ async function loadCommands() {
     $('cmdAudienceMeta').textContent = r.audienceChangedAt ? `Last changed ${fmtDate(r.audienceChangedAt)} by ${r.audienceChangedBy || '—'}.` : '';
     const c = r.commands;
     const sum = k => c.reduce((a, x) => a + x.status[k], 0);
-    $('cmdStats').innerHTML = `<dl class="kv"><dt>Commands</dt><dd>${c.length}</dd><dt>Urgent</dt><dd>${c.filter(x => x.priority === 'urgent').length}</dd>
+    $('cmdStats').innerHTML = `<dl class="kv"><dt>Action items</dt><dd>${c.length}</dd><dt>Urgent</dt><dd>${c.filter(x => x.priority === 'urgent').length}</dd>
         <dt>Deliveries</dt><dd>${sum('new') + sum('seen') + sum('ack') + sum('done')} — ${sum('done')} done, ${sum('ack')} acknowledged, ${sum('seen')} seen, <span class="${sum('new') ? 'err' : ''}">${sum('new')} not opened</span></dd></dl>`;
-    $('cmdList').innerHTML = c.length ? `<table><tr><th>Sent</th><th>From</th><th>Command</th><th class="num">Done</th><th class="num">Ack.</th><th class="num">Seen</th><th class="num">Not opened</th></tr>${c.map(x => `<tr>
+    $('cmdList').innerHTML = c.length ? `<table><tr><th>Sent</th><th>From</th><th>Action item</th><th class="num">Done</th><th class="num">Ack.</th><th class="num">Seen</th><th class="num">Not opened</th></tr>${c.map(x => `<tr>
         <td class="small" style="white-space:nowrap">${esc(fmtDate(x.created_at))}</td><td>${esc(x.sender_name)}</td>
         <td>${x.priority === 'urgent' ? pill('bad', 'Urgent') + ' ' : ''}${esc(x.body.slice(0, 140))}${x.about ? `<div class="small muted">↗ ${esc(x.about)}</div>` : ''}${x.due_date ? `<div class="small muted">due ${esc(fmtDay(x.due_date))}</div>` : ''}</td>
-        <td class="num">${x.status.done}</td><td class="num">${x.status.ack}</td><td class="num">${x.status.seen}</td><td class="num">${x.status.new ? `<span class="err">${x.status.new}</span>` : 0}</td></tr>`).join('')}</table>` : '<p class="muted">No commands sent yet.</p>';
+        <td class="num">${x.status.done}</td><td class="num">${x.status.ack}</td><td class="num">${x.status.seen}</td><td class="num">${x.status.new ? `<span class="err">${x.status.new}</span>` : 0}</td></tr>`).join('')}</table>` : '<p class="muted">No action items sent yet.</p>';
 }
 $('cmdAudience').addEventListener('change', async e => {
     const v = e.target.value;
-    if (v === 'everyone' && !await ask({ title: 'Turn Commands on for everyone?', body: 'Every user sees the speech-bubble button on the PPMS top bar within seconds. Tell your team first — the user guide is in docs/communications/PPMS_Commands_user_guide.md.', ok: 'Turn on' })) return loadCommands();
+    if (v === 'everyone' && !await ask({ title: 'Turn Action Items on for everyone?', body: 'Every user sees the speech-bubble button on the PPMS top bar within seconds. Tell your team first — the user guide is in docs/communications/PPMS_Action_Items_user_guide.md.', ok: 'Turn on' })) return loadCommands();
     try { await api('/api/commands/audience', { method: 'PUT', body: { audience: v } }); toast('Saved — open PPMS sessions update within seconds'); } catch (err) { toast('Not saved: ' + err.message); }
     loadCommands();
 });
