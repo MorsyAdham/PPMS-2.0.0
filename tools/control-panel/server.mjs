@@ -632,15 +632,29 @@ function listChecks() {
         return { ...c, title, rel: path.relative(ROOT, c.file).split(path.sep).join('/') };
     });
 }
+/** Comment-free, semicolon-free SQL so it fits in a URL and inside a subquery. */
+function compactSql(sql) {
+    return sql.split(/\r?\n/).map(l => l.replace(/^\s*--.*$/, '')).filter(l => l.trim()).join('\n').trim().replace(/;\s*$/, '');
+}
 async function runCheck(id) {
-    if (!ACCESS_TOKEN) throw httpError(400, 'Add SUPABASE_ACCESS_TOKEN (a personal access token) to tools/control-panel/.env to run SQL checks.');
     const check = listChecks().find(c => c.id === id);
     if (!check) throw httpError(404, 'Unknown check');
+    const sql = compactSql(fs.readFileSync(check.file, 'utf8'));
     const t0 = performance.now();
+    // Preferred: ppms_admin_query (migration 62) with the service key, over GET so
+    // PostgREST runs it in a read-only transaction. No extra credential needed.
+    try {
+        const { data } = await sb(`rpc/ppms_admin_query?q=${encodeURIComponent(sql)}`);
+        return { id, title: check.title, ms: Math.round(performance.now() - t0), rows: Array.isArray(data) ? data : [] };
+    } catch (e) {
+        const missing = e.status === 404 || /could not find the function/i.test(e.message);
+        if (!missing) throw httpError(e.status || 500, e.message);
+        if (!ACCESS_TOKEN) throw httpError(400, 'Run database/migrations/62_hide_password_hashes_and_admin_checks.sql in the Supabase SQL editor to switch on diagnostic queries.');
+    }
     const res = await fetch(`https://api.supabase.com/v1/projects/${PROJECT_REF}/database/query`, {
         method: 'POST',
         headers: { Authorization: `Bearer ${ACCESS_TOKEN}`, 'Content-Type': 'application/json' },
-        body: JSON.stringify({ query: fs.readFileSync(check.file, 'utf8') }),
+        body: JSON.stringify({ query: sql }),
         signal: AbortSignal.timeout(60000),
     });
     const data = await res.json().catch(() => null);
